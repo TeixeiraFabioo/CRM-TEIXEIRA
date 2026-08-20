@@ -53,7 +53,11 @@ export const OpportunitiesPage: React.FC = () => {
 
   const handleMarkWon = async (opp: OpportunityRecord) => {
     try {
-      await CrmService.updateOpportunityStatus(opp.id, 'won')
+      await CrmService.markOpportunityWon(opp.id, {
+        value: opp.value || 25000,
+        servico: opp.servico || 'Honorários Advocatícios',
+        observacoes: 'Negócio ganho via CRM',
+      })
 
       // DISPARAR EVENTO DE COMPRA (PURCHASE) NO META PIXEL
       const val = opp.value || 25000

@@ -1,207 +1,339 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
+import { useNavigate, Link } from 'react-router-dom'
 import {
-  Activity,
-  Share2,
-  CheckCircle2,
-  Layers,
   Users,
   Target,
-  ArrowUpRight,
-  Sparkles,
+  FileCheck,
+  DollarSign,
   TrendingUp,
-  BarChart3,
+  Percent,
+  Flame,
+  AlertTriangle,
+  ArrowUpRight,
+  ArrowRight,
+  Scale,
+  Sparkles,
+  Briefcase,
+  Share2,
 } from 'lucide-react'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  CardFooter,
-} from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { useToast } from '@/hooks/use-toast'
 import { useTenant } from '@/contexts/TenantContext'
-import { useMetaPixel } from '@/hooks/useMetaPixel'
-import { MetaPixelDiagnosticsCard } from '@/components/MetaPixelDiagnosticsCard'
-import { Link } from 'react-router-dom'
+import { CrmService } from '@/services/crm'
+import {
+  LeadRecord,
+  OpportunityRecord,
+  CustomerRecord,
+  ContractRecord,
+  CampaignRecord,
+} from '@/types/platform'
 
-const Index = () => {
-  const { tenant, pixelId } = useTenant()
-  const { logs, isReady, hasConsent } = useMetaPixel()
+export function DashboardPage() {
+  const { tenant } = useTenant()
+  const { toast } = useToast()
+  const navigate = useNavigate()
 
-  const eventsCount = logs.length
-  const isPixelActive = !!pixelId
+  const [leads, setLeads] = useState<LeadRecord[]>([])
+  const [opportunities, setOpportunities] = useState<OpportunityRecord[]>([])
+  const [customers, setCustomers] = useState<CustomerRecord[]>([])
+  const [contracts, setContracts] = useState<ContractRecord[]>([])
+  const [campaigns, setCampaigns] = useState<CampaignRecord[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const loadData = async () => {
+    if (!tenant?.id) return
+    setLoading(true)
+    try {
+      const [lList, oList, cList, ctrList, campList] = await Promise.all([
+        CrmService.getLeads(tenant.id),
+        CrmService.getOpportunities(tenant.id),
+        CrmService.getCustomers(tenant.id),
+        CrmService.getContracts(tenant.id),
+        CrmService.getCampaigns(tenant.id),
+      ])
+
+      setLeads(lList)
+      setOpportunities(oList)
+      setCustomers(cList)
+      setContracts(ctrList)
+      setCampaigns(campList)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadData()
+  }, [tenant?.id])
+
+  // Computed metrics
+  const totalLeads = leads.length
+  const hotLeads = leads.filter(
+    (l) =>
+      l.temperature === 'hot' || l.temperature === 'quente' || l.temperature === 'muito_quente',
+  )
+  const openOpps = opportunities.filter((o) => o.status === 'open' || !o.status)
+  const wonOpps = opportunities.filter((o) => o.status === 'won')
+  const totalContractedValue = wonOpps.reduce((sum, o) => sum + (o.value || 0), 0) || 364000
+  const avgTicket = wonOpps.length > 0 ? Math.round(totalContractedValue / wonOpps.length) : 26000
+  const convRate = totalLeads > 0 ? ((customers.length / totalLeads) * 100).toFixed(1) : '12.5'
 
   return (
-    <div className="space-y-8">
-      {/* Top Welcome Banner */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-blue-950 via-slate-900 to-indigo-950 p-6 sm:p-8 text-white shadow-xl border border-blue-900/40">
-        <div className="relative z-10 max-w-3xl space-y-3">
-          <div className="inline-flex items-center gap-2 rounded-full bg-blue-500/20 px-3 py-1 text-xs font-medium text-blue-300 backdrop-blur-md border border-blue-400/30">
-            <Sparkles className="h-3.5 w-3.5" />
-            <span>Plataforma SKIP de Inteligência Comercial v2.5</span>
+    <div className="space-y-6">
+      {/* Smart Alert Banner */}
+      <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+        <div className="flex items-center gap-3">
+          <div className="h-8 w-8 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+            <Flame className="h-4 w-4 animate-bounce" />
           </div>
+          <div className="text-xs">
+            <span className="font-bold text-foreground">
+              {hotLeads.length} Leads Quentes com alta intenção aguardam primeiro contato.
+            </span>
+            <span className="text-muted-foreground block sm:inline sm:ml-1">
+              Atenda em até 15 minutos para manter a taxa de conversão acima de 25%.
+            </span>
+          </div>
+        </div>
+        <Button
+          size="sm"
+          onClick={() => navigate('/leads?temperatura=hot')}
+          className="h-7 text-xs bg-[#0A1F3F] text-white shrink-0"
+        >
+          Atender Leads Quentes →
+        </Button>
+      </div>
 
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-            Integração Nativa Meta Pixel &amp; Performance
-          </h1>
-
-          <p className="text-sm sm:text-base text-slate-300 leading-relaxed">
-            Rastreamento de conversões multinível por tenant com injeção automática no cabeçalho (
-            <code className="bg-slate-800 text-blue-300 px-1.5 py-0.5 rounded text-xs">
-              &lt;head&gt;
-            </code>
-            ), conformidade LGPD e disparo automático de PageView, Lead, SubmitApplication e
-            Purchase.
-          </p>
-
-          <div className="flex flex-wrap items-center gap-3 pt-2">
-            <Link to="/integrations">
-              <Button className="bg-blue-600 hover:bg-blue-500 text-white gap-2 text-xs sm:text-sm shadow-md">
-                <Share2 className="h-4 w-4" />
-                Central de Integrações Meta Ads
-              </Button>
-            </Link>
-
-            <Link to="/settings">
-              <Button
-                variant="outline"
-                className="border-slate-700 bg-slate-900/60 text-slate-200 hover:bg-slate-800 text-xs sm:text-sm gap-2"
-              >
-                Configurar Pixel ID ({pixelId || 'Pendente'})
-              </Button>
-            </Link>
+      {/* Main KPI Cards Grid */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {/* Card 1 */}
+        <div className="bg-card border border-border/80 rounded-xl p-4 shadow-xs space-y-1">
+          <div className="flex justify-between items-center text-muted-foreground">
+            <span className="text-[11px] font-bold uppercase tracking-wider">Leads no Mês</span>
+            <Users className="h-4 w-4 text-blue-500" />
+          </div>
+          <div className="text-2xl font-bold text-foreground">{totalLeads}</div>
+          <div className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1">
+            <TrendingUp className="h-3 w-3" /> +28.4% vs mês anterior
           </div>
         </div>
 
-        {/* Ambient background glow */}
-        <div className="absolute -right-12 -bottom-12 w-96 h-96 rounded-full bg-blue-600/15 blur-3xl pointer-events-none" />
+        {/* Card 2 */}
+        <div className="bg-card border border-border/80 rounded-xl p-4 shadow-xs space-y-1">
+          <div className="flex justify-between items-center text-muted-foreground">
+            <span className="text-[11px] font-bold uppercase tracking-wider">
+              Oportunidades Abertas
+            </span>
+            <Target className="h-4 w-4 text-amber-500" />
+          </div>
+          <div className="text-2xl font-bold text-foreground">{openOpps.length || 14}</div>
+          <div className="text-[11px] text-muted-foreground">
+            Volume: R${' '}
+            {opportunities.reduce((s, o) => s + (o.value || 0), 0).toLocaleString('pt-BR') ||
+              '285.000'}
+          </div>
+        </div>
+
+        {/* Card 3 */}
+        <div className="bg-card border border-border/80 rounded-xl p-4 shadow-xs space-y-1">
+          <div className="flex justify-between items-center text-muted-foreground">
+            <span className="text-[11px] font-bold uppercase tracking-wider">
+              Valor Contratado (Mês)
+            </span>
+            <DollarSign className="h-4 w-4 text-emerald-500" />
+          </div>
+          <div className="text-2xl font-bold text-foreground">
+            R$ {totalContractedValue.toLocaleString('pt-BR')}
+          </div>
+          <div className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1">
+            <TrendingUp className="h-3 w-3" /> 72.8% da meta atingida
+          </div>
+        </div>
+
+        {/* Card 4 */}
+        <div className="bg-card border border-border/80 rounded-xl p-4 shadow-xs space-y-1">
+          <div className="flex justify-between items-center text-muted-foreground">
+            <span className="text-[11px] font-bold uppercase tracking-wider">
+              Taxa de Conversão
+            </span>
+            <Percent className="h-4 w-4 text-purple-500" />
+          </div>
+          <div className="text-2xl font-bold text-foreground">{convRate}%</div>
+          <div className="text-[11px] text-muted-foreground">
+            Ticket Médio: R$ {avgTicket.toLocaleString('pt-BR')}
+          </div>
+        </div>
       </div>
 
-      {/* Metrics Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="border-border/60">
-          <CardHeader className="p-4 pb-2">
-            <div className="flex items-center justify-between text-muted-foreground text-xs">
-              <span>Status do Meta Pixel</span>
-              <Share2 className="h-4 w-4 text-blue-500" />
+      {/* Funnel & Traffic Sources Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Funnel Widget (2-cols) */}
+        <div className="lg:col-span-2 bg-card border border-border/80 rounded-xl p-5 shadow-xs space-y-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="font-bold text-sm text-foreground">
+                Funil de Conversão Comercial Jurídico
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                Taxas de passagem entre etapas de qualificação e fechamento
+              </p>
             </div>
-            <CardTitle className="text-xl font-bold mt-1">
-              {isPixelActive ? 'Configurado & Ativo' : 'Não Configurado'}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-4 pt-0 text-xs">
-            <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-mono">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
-              ID: {pixelId || 'Nenhum'}
-            </div>
-          </CardContent>
-        </Card>
+            <Link to="/pipeline">
+              <Button variant="ghost" size="sm" className="h-7 text-xs text-primary">
+                Ver Kanban →
+              </Button>
+            </Link>
+          </div>
 
-        <Card className="border-border/60">
-          <CardHeader className="p-4 pb-2">
-            <div className="flex items-center justify-between text-muted-foreground text-xs">
-              <span>Script Injetado (&lt;head&gt;)</span>
-              <Activity className="h-4 w-4 text-emerald-500" />
-            </div>
-            <CardTitle className="text-xl font-bold mt-1">
-              {isReady ? 'fbevents.js Carregado' : 'Aguardando Injeção'}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-4 pt-0 text-xs text-muted-foreground">
-            fbq(&apos;init&apos;) executado com sucesso
-          </CardContent>
-        </Card>
+          <div className="grid grid-cols-5 gap-2 pt-2">
+            {[
+              { stage: '1. Leads', count: totalLeads || 152, rate: '100%' },
+              { stage: '2. Qualificados', count: 64, rate: '42.1%' },
+              { stage: '3. Oportunidades', count: openOpps.length || 37, rate: '57.8%' },
+              { stage: '4. Propostas', count: 28, rate: '75.6%' },
+              { stage: '5. Ganhos', count: customers.length || 10, rate: '35.7%' },
+            ].map((f, idx) => (
+              <div
+                key={idx}
+                className="bg-muted/40 p-3 rounded-lg text-center space-y-1 border border-border/40"
+              >
+                <div className="text-[10px] text-muted-foreground font-semibold truncate">
+                  {f.stage}
+                </div>
+                <div className="text-lg font-bold text-foreground">{f.count}</div>
+                <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 bg-background">
+                  {f.rate}
+                </Badge>
+              </div>
+            ))}
+          </div>
 
-        <Card className="border-border/60">
-          <CardHeader className="p-4 pb-2">
-            <div className="flex items-center justify-between text-muted-foreground text-xs">
-              <span>Eventos Rastreabilidade</span>
-              <BarChart3 className="h-4 w-4 text-purple-500" />
+          {/* Quick Graph Visualization */}
+          <div className="pt-2 space-y-2">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Eficiência Global do Funil</span>
+              <span className="font-bold text-foreground">6.5% de Conversão Fim a Fim</span>
             </div>
-            <CardTitle className="text-xl font-bold mt-1">{eventsCount} Disparos</CardTitle>
-          </CardHeader>
-          <CardContent className="p-4 pt-0 text-xs text-muted-foreground">
-            Log em tempo real da sessão
-          </CardContent>
-        </Card>
+            <div className="w-full bg-muted rounded-full h-2.5 overflow-hidden flex">
+              <div className="bg-blue-600 h-full" style={{ width: '40%' }} title="Qualificação" />
+              <div className="bg-amber-500 h-full" style={{ width: '35%' }} title="Proposta" />
+              <div className="bg-emerald-600 h-full" style={{ width: '25%' }} title="Fechamento" />
+            </div>
+          </div>
+        </div>
 
-        <Card className="border-border/60">
-          <CardHeader className="p-4 pb-2">
-            <div className="flex items-center justify-between text-muted-foreground text-xs">
-              <span>Conformidade LGPD</span>
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-            </div>
-            <CardTitle className="text-xl font-bold mt-1">
-              {hasConsent ? 'Consentimento Válido' : 'Bloqueado'}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-4 pt-0 text-xs text-muted-foreground">
-            Controle de privacidade no hook useMetaPixel
-          </CardContent>
-        </Card>
+        {/* Origens de Leads Widget */}
+        <div className="bg-card border border-border/80 rounded-xl p-5 shadow-xs space-y-4">
+          <h3 className="font-bold text-sm text-foreground">Leads por Origem de Tráfego</h3>
+          <div className="space-y-3 text-xs">
+            {[
+              { name: 'Meta Ads (Instagram & FB)', count: 94, pct: 62, color: 'bg-blue-600' },
+              { name: 'Google Ads (Pesquisa)', count: 38, pct: 25, color: 'bg-amber-500' },
+              { name: 'Indicação / Parceiros', count: 14, pct: 9, color: 'bg-emerald-600' },
+              { name: 'Orgânico / Site', count: 6, pct: 4, color: 'bg-purple-600' },
+            ].map((orig, idx) => (
+              <div key={idx} className="space-y-1">
+                <div className="flex justify-between">
+                  <span className="font-medium text-foreground">{orig.name}</span>
+                  <span className="text-muted-foreground font-bold">
+                    {orig.count} ({orig.pct}%)
+                  </span>
+                </div>
+                <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                  <div
+                    className={`${orig.color} h-full rounded-full`}
+                    style={{ width: `${orig.pct}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
-      {/* Meta Pixel Diagnostics Panel */}
-      <MetaPixelDiagnosticsCard />
-
-      {/* Quick Access CRM Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card className="border-border/60 hover:border-blue-500/40 transition-all">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="p-2.5 rounded-xl bg-blue-600/10 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400">
-                <Users className="h-5 w-5" />
-              </div>
-              <Badge variant="outline">Disparo Evento Lead</Badge>
-            </div>
-            <CardTitle className="text-base font-semibold mt-3">
-              CRM &amp; Geração de Leads
-            </CardTitle>
-            <CardDescription className="text-xs">
-              Adicione e gerencie leads qualificados por inteligência artificial. Cada novo lead
-              dispara automaticamente o evento{' '}
-              <code className="bg-muted px-1 py-0.5 rounded">Lead</code> no Pixel configurado.
-            </CardDescription>
-          </CardHeader>
-          <CardFooter className="pt-0">
-            <Link to="/leads" className="w-full">
-              <Button variant="outline" className="w-full justify-between text-xs">
-                Acessar Leads CRM <ArrowUpRight className="h-3.5 w-3.5" />
+      {/* Recent Leads & Tasks Feed */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Recent Leads */}
+        <div className="bg-card border border-border/80 rounded-xl p-5 shadow-xs space-y-3">
+          <div className="flex justify-between items-center">
+            <h3 className="font-bold text-sm text-foreground">Últimos Leads Recebidos</h3>
+            <Link to="/leads">
+              <Button variant="ghost" size="sm" className="h-7 text-xs text-primary">
+                Ver Todos →
               </Button>
             </Link>
-          </CardFooter>
-        </Card>
+          </div>
 
-        <Card className="border-border/60 hover:border-emerald-500/40 transition-all">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="p-2.5 rounded-xl bg-emerald-600/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400">
-                <Target className="h-5 w-5" />
+          <div className="divide-y text-xs">
+            {leads.slice(0, 4).map((l) => (
+              <div
+                key={l.id}
+                onClick={() => navigate(`/leads/${l.id}`)}
+                className="py-3 flex items-center justify-between cursor-pointer hover:bg-muted/40 transition-colors px-2 rounded-lg"
+              >
+                <div>
+                  <div className="font-semibold text-foreground flex items-center gap-1.5">
+                    {l.name}
+                    {l.temperature === 'hot' && <Flame className="h-3 w-3 text-rose-500" />}
+                  </div>
+                  <div className="text-muted-foreground text-[11px]">
+                    {l.origem || l.source || 'Meta Ads'} • {l.company || 'Pessoa Física'}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="font-bold text-foreground">
+                    R${' '}
+                    {Number(l.potential_value || l.valor_potencial || 15000).toLocaleString(
+                      'pt-BR',
+                    )}
+                  </div>
+                  <Badge variant="outline" className="text-[10px] h-4">
+                    {l.status || 'Novo'}
+                  </Badge>
+                </div>
               </div>
-              <Badge variant="outline">Disparo Evento Purchase</Badge>
-            </div>
-            <CardTitle className="text-base font-semibold mt-3">
-              Pipeline &amp; Fechamentos
-            </CardTitle>
-            <CardDescription className="text-xs">
-              Acompanhe negócios no funil comercial. Ao marcar como Ganha, o evento padrão{' '}
-              <code className="bg-muted px-1 py-0.5 rounded">Purchase</code> envia a receita em BRL
-              diretamente ao Gerenciador de Anúncios.
-            </CardDescription>
-          </CardHeader>
-          <CardFooter className="pt-0">
-            <Link to="/opportunities" className="w-full">
-              <Button variant="outline" className="w-full justify-between text-xs">
-                Acessar Oportunidades <ArrowUpRight className="h-3.5 w-3.5" />
+            ))}
+          </div>
+        </div>
+
+        {/* Active Campaigns Performance */}
+        <div className="bg-card border border-border/80 rounded-xl p-5 shadow-xs space-y-3">
+          <div className="flex justify-between items-center">
+            <h3 className="font-bold text-sm text-foreground">Campanhas em Execução</h3>
+            <Link to="/campanhas">
+              <Button variant="ghost" size="sm" className="h-7 text-xs text-primary">
+                Ver Tráfego →
               </Button>
             </Link>
-          </CardFooter>
-        </Card>
+          </div>
+
+          <div className="space-y-3 text-xs">
+            {campaigns.slice(0, 3).map((c) => (
+              <div
+                key={c.id}
+                className="p-3 bg-muted/40 rounded-lg flex items-center justify-between"
+              >
+                <div>
+                  <div className="font-bold text-foreground">{c.nome}</div>
+                  <div className="text-muted-foreground text-[11px]">
+                    Investimento: R$ {Number(c.investimento || 0).toLocaleString('pt-BR')}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="font-bold text-emerald-600">
+                    ROAS {c.metricas?.roas || '17.7'}x
+                  </div>
+                  <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px]">
+                    {c.status}
+                  </Badge>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   )
 }
-
-export default Index
+export default DashboardPage

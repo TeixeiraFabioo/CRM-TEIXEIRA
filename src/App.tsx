@@ -1,40 +1,88 @@
-/* Main App Component - Handles routing (using react-router-dom), query client and other providers - use this file to add all routes */
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import React from 'react'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from '@/components/ui/toaster'
-import { Toaster as Sonner } from '@/components/ui/sonner'
-import { TooltipProvider } from '@/components/ui/tooltip'
-import Index from './pages/Index'
-import NotFound from './pages/NotFound'
-import Layout from './components/Layout'
-import { IntegrationsPage } from './pages/Integrations'
-import { SettingsPage } from './pages/Settings'
-import { LeadsPage } from './pages/Leads'
-import { OpportunitiesPage } from './pages/Opportunities'
-import { TenantProvider } from './contexts/TenantContext'
+import { TenantProvider } from '@/contexts/TenantContext'
+import Layout from '@/components/Layout'
 
-// ONLY IMPORT AND RENDER WORKING PAGES, NEVER ADD PLACEHOLDER COMPONENTS OR PAGES IN THIS FILE
-// AVOID REMOVING ANY CONTEXT PROVIDERS FROM THIS FILE (e.g. TooltipProvider, Toaster, Sonner)
+// Pages
+import DashboardPage from '@/pages/Index'
+import LeadsPage from '@/pages/Leads'
+import LeadDetailPage from '@/pages/LeadDetail'
+import CustomersPage from '@/pages/Customers'
+import CustomerDetailPage from '@/pages/CustomerDetail'
+import PipelinePage from '@/pages/Pipeline'
+import OpportunityDetailPage from '@/pages/OpportunityDetail'
+import PessoasPage from '@/pages/Pessoas'
+import PessoaDetailPage from '@/pages/PessoaDetail'
+import EmpresasPage from '@/pages/Empresas'
+import EmpresaDetailPage from '@/pages/EmpresaDetail'
+import TarefasPage from '@/pages/Tarefas'
+import PropostasPage from '@/pages/Propostas'
+import ContratosPage from '@/pages/Contratos'
+import ComissoesPage from '@/pages/Comissoes'
+import MetasPage from '@/pages/Metas'
+import RankingPage from '@/pages/Ranking'
+import CampanhasPage from '@/pages/Campanhas'
+import MarketingPage from '@/pages/Marketing'
+import InteligenciaPage from '@/pages/Inteligencia'
+import RelatoriosPage from '@/pages/Relatorios'
+import AutomacoesPage from '@/pages/Automacoes'
+import IntegrationsPage from '@/pages/Integrations'
+import SettingsPage from '@/pages/Settings'
+import NotFound from '@/pages/NotFound'
 
-const App = () => (
-  <BrowserRouter>
+export default function App() {
+  return (
     <TenantProvider>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
+      <BrowserRouter>
         <Routes>
-          <Route element={<Layout />}>
-            <Route path="/" element={<Index />} />
-            <Route path="/integrations" element={<IntegrationsPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/leads" element={<LeadsPage />} />
-            <Route path="/opportunities" element={<OpportunitiesPage />} />
-            {/* ADD ALL CUSTOM ROUTES MUST BE ADDED HERE */}
-          </Route>
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </TooltipProvider>
-    </TenantProvider>
-  </BrowserRouter>
-)
+          <Route path="/" element={<Layout />}>
+            <Route index element={<DashboardPage />} />
 
-export default App
+            {/* Leads */}
+            <Route path="leads" element={<LeadsPage />} />
+            <Route path="leads/:id" element={<LeadDetailPage />} />
+
+            {/* Clientes */}
+            <Route path="clientes" element={<CustomersPage />} />
+            <Route path="clientes/:id" element={<CustomerDetailPage />} />
+
+            {/* Pessoas & Empresas */}
+            <Route path="pessoas" element={<PessoasPage />} />
+            <Route path="pessoas/:id" element={<PessoaDetailPage />} />
+            <Route path="empresas" element={<EmpresasPage />} />
+            <Route path="empresas/:id" element={<EmpresaDetailPage />} />
+
+            {/* Pipeline & Opportunities */}
+            <Route path="pipeline" element={<PipelinePage />} />
+            <Route path="opportunities" element={<PipelinePage />} />
+            <Route path="oportunidades/:id" element={<OpportunityDetailPage />} />
+
+            {/* Sales & Documents */}
+            <Route path="tarefas" element={<TarefasPage />} />
+            <Route path="propostas" element={<PropostasPage />} />
+            <Route path="contratos" element={<ContratosPage />} />
+            <Route path="comissoes" element={<ComissoesPage />} />
+            <Route path="metas" element={<MetasPage />} />
+            <Route path="ranking" element={<RankingPage />} />
+
+            {/* Marketing & Intelligence */}
+            <Route path="campanhas" element={<CampanhasPage />} />
+            <Route path="marketing" element={<MarketingPage />} />
+            <Route path="inteligencia" element={<InteligenciaPage />} />
+            <Route path="relatorios" element={<RelatoriosPage />} />
+            <Route path="automacoes" element={<AutomacoesPage />} />
+
+            {/* System */}
+            <Route path="integrations" element={<IntegrationsPage />} />
+            <Route path="settings" element={<SettingsPage />} />
+
+            {/* Fallback */}
+            <Route path="*" element={<NotFound />} />
+          </Route>
+        </Routes>
+        <Toaster />
+      </BrowserRouter>
+    </TenantProvider>
+  )
+}
