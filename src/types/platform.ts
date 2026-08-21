@@ -34,6 +34,7 @@ export interface UserRecord {
   role: 'admin' | 'manager' | 'user'
   role_id?: string
   tenant_id: string
+  team?: 'comercial' | 'juridico' | 'financeiro' | string
   status?: 'active' | 'inactive' | 'invited'
   active?: boolean
   avatar?: string
@@ -114,6 +115,7 @@ export interface LeadRecord {
   assigned_to?: string
   responsavel_id?: string
   team?: string
+  team_owner?: 'comercial' | 'juridico' | 'financeiro' | string
   score?: number
   temperature?: 'hot' | 'warm' | 'cold' | 'frio' | 'morno' | 'quente' | 'muito_quente'
   status?: string
@@ -293,6 +295,22 @@ export interface NoteRecord {
   categoria?: string
   expand?: {
     autor_id?: UserRecord
+  }
+  created?: string
+  updated?: string
+}
+
+export interface LeadMessageRecord {
+  id: string
+  tenant_id: string
+  lead_id: string
+  author_id: string
+  team: 'comercial' | 'juridico' | 'financeiro'
+  type: 'nota' | 'sistema'
+  content: string
+  expand?: {
+    author_id?: UserRecord
+    lead_id?: LeadRecord
   }
   created?: string
   updated?: string

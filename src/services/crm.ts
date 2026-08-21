@@ -7,6 +7,7 @@ import {
   EmpresaRecord,
   TaskRecord,
   NoteRecord,
+  LeadMessageRecord,
   ProposalRecord,
   ContractRecord,
   CampaignRecord,
@@ -496,6 +497,31 @@ export const CrmService = {
 
   async updateNote(id: string, data: Partial<NoteRecord>): Promise<NoteRecord> {
     return await pb.collection('notes').update<NoteRecord>(id, data)
+  },
+
+  // --- LEAD MESSAGES (CHAT / NOTAS DO LEAD) ---
+  async getLeadMessages(leadId: string): Promise<LeadMessageRecord[]> {
+    try {
+      return await pb.collection('lead_messages').getFullList<LeadMessageRecord>({
+        filter: `lead_id = "${leadId}"`,
+        sort: '+created',
+        expand: 'author_id',
+      })
+    } catch (e) {
+      console.warn('Failed to load lead messages', e)
+      return []
+    }
+  },
+
+  async createLeadMessage(data: {
+    tenant_id: string
+    lead_id: string
+    author_id: string
+    team: 'comercial' | 'juridico' | 'financeiro'
+    type: 'nota' | 'sistema'
+    content: string
+  }): Promise<LeadMessageRecord> {
+    return await pb.collection('lead_messages').create<LeadMessageRecord>(data)
   },
 
   // --- PROPOSALS (PROPOSTAS) ---

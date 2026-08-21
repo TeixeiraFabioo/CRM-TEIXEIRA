@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -23,6 +23,10 @@ import {
   AlertTriangle,
   Scale,
   Sparkles,
+  MessageSquare,
+  ArrowRightLeft,
+  Bot,
+  User,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -44,13 +48,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { useToast } from '@/hooks/use-toast'
 import { useTenant } from '@/contexts/TenantContext'
+import { useRealtime } from '@/hooks/use-realtime'
 import { CrmService } from '@/services/crm'
+import pb from '@/lib/pocketbase/client'
 import { TimelineView, TimelineItem } from '@/components/TimelineView'
 import {
   LeadRecord,
   NoteRecord,
+  LeadMessageRecord,
   TaskRecord,
   OpportunityRecord,
   ProposalRecord,
@@ -59,13 +67,70 @@ import {
   PipelineStageRecord,
 } from '@/types/platform'
 
+type TeamType = 'comercial' | 'juridico' | 'financeiro'
+
+const formatMessageDate = (dateStr?: string) => {
+  if (!dateStr) return ''
+  const date = new Date(dateStr)
+  const now = new Date()
+
+  const isToday =
+    date.getDate() === now.getDate() &&
+    date.getMonth() === now.getMonth() &&
+    date.getFullYear() === now.getFullYear()
+
+  const yesterday = new Date(now)
+  yesterday.setDate(yesterday.getDate() - 1)
+  const isYesterday =
+    date.getDate() === yesterday.getDate() &&
+    date.getMonth() === yesterday.getMonth() &&
+    date.getFullYear() === yesterday.getFullYear()
+
+  const timeStr = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+
+  if (isToday) {
+    return `Hoje às ${timeStr}`
+  }
+  if (isYesterday) {
+    return `Ontem às ${timeStr}`
+  }
+  return `${date.toLocaleDateString('pt-BR')} às ${timeStr}`
+}
+
+const getTeamBadge = (team: string) => {
+  switch (team?.toLowerCase()) {
+    case 'comercial':
+      return {
+        label: 'Comercial',
+        className: 'bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30',
+      }
+    case 'juridico':
+    case 'jurídico':
+      return {
+        label: 'Jurídico',
+        className: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30',
+      }
+    case 'financeiro':
+      return {
+        label: 'Financeiro',
+        className: 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30',
+      }
+    default:
+      return {
+        label: team || 'Geral',
+        className: 'bg-muted text-muted-foreground border-border',
+      }
+  }
+}
+
 export function LeadDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const { tenant } = useTenant()
+  const { tenant, user } = useTenant()
   const { toast } = useToast()
   const navigate = useNavigate()
 
   const [lead, setLead] = useState<LeadRecord | null>(null)
+  const [messages, setMessages] = useState<LeadMessageRecord[]>([])
   const [notes, setNotes] = useState<NoteRecord[]>([])
   const [tasks, setTasks] = useState<TaskRecord[]>([])
   const [opportunities, setOpportunities] = useState<OpportunityRecord[]>([])
@@ -73,6 +138,19 @@ export function LeadDetailPage() {
   const [users, setUsers] = useState<UserRecord[]>([])
   const [stages, setStages] = useState<PipelineStageRecord[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Chat message input state
+  const defaultUserTeam: TeamType =
+    (user?.team as TeamType) || ((user?.settings as any)?.team as TeamType) || 'comercial'
+  const [selectedTeam, setSelectedTeam] = useState<TeamType>(defaultUserTeam)
+  const [messageContent, setMessageContent] = useState('')
+  const [sendingMessage, setSendingMessage] = useState(false)
+  const chatBottomRef = useRef<HTMLDivElement>(null)
+
+  // Transfer Team Modal
+  const [transferModalOpen, setTransferModalOpen] = useState(false)
+  const [targetTeam, setTargetTeam] = useState<TeamType>('juridico')
+  const [transferring, setTransferring] = useState(false)
 
   // Modals
   const [noteModalOpen, setNoteModalOpen] = useState(false)
@@ -110,20 +188,84 @@ export function LeadDetailPage() {
     observacoes: '',
   })
 
+  const loadMessages = async (leadId: string) => {
+    try {
+      const msgs = await CrmService.getLeadMessages(leadId)
+      setMessages(msgs)
+    } catch (e) {
+      console.warn('Erro ao carregar mensagens do lead:', e)
+    }
+  }
+
+  // Realtime subscription for lead_messages
+  useRealtime(
+    'lead_messages',
+    (e) => {
+      const rec = e.record as unknown as LeadMessageRecord
+      if (rec.lead_id !== id) return
+      if (e.action === 'create') {
+        // Fetch fresh message to ensure expand author_id is populated
+        pb.collection('lead_messages')
+          .getOne<LeadMessageRecord>(rec.id, { expand: 'author_id' })
+          .then((freshMsg) => {
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === freshMsg.id)) return prev
+              return [...prev, freshMsg]
+            })
+            setTimeout(() => {
+              chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+            }, 100)
+          })
+          .catch(() => {
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === rec.id)) return prev
+              return [...prev, rec]
+            })
+          })
+      } else if (e.action === 'delete') {
+        setMessages((prev) => prev.filter((m) => m.id !== rec.id))
+      } else if (e.action === 'update') {
+        pb.collection('lead_messages')
+          .getOne<LeadMessageRecord>(rec.id, { expand: 'author_id' })
+          .then((freshMsg) => {
+            setMessages((prev) => prev.map((m) => (m.id === freshMsg.id ? freshMsg : m)))
+          })
+          .catch(() => {
+            setMessages((prev) => prev.map((m) => (m.id === rec.id ? rec : m)))
+          })
+      }
+    },
+    !!id,
+  )
+
+  // Realtime subscription for lead updates (e.g. team_owner changes)
+  useRealtime(
+    'leads',
+    (e) => {
+      const rec = e.record as unknown as LeadRecord
+      if (rec.id === id && e.action === 'update') {
+        setLead((prev) => (prev ? { ...prev, ...rec } : rec))
+      }
+    },
+    !!id,
+  )
   const loadAll = async () => {
     if (!id || !tenant?.id) return
     setLoading(true)
     try {
-      const [leadData, allNotes, allTasks, allOpps, allProps, allUsers] = await Promise.all([
-        CrmService.getLeadById(id),
-        CrmService.getNotes(tenant.id, `lead_id = "${id}"`),
-        CrmService.getTasks(tenant.id),
-        CrmService.getOpportunities(tenant.id),
-        CrmService.getProposals(tenant.id),
-        CrmService.getUsers(tenant.id),
-      ])
+      const [leadData, leadMsgs, allNotes, allTasks, allOpps, allProps, allUsers] =
+        await Promise.all([
+          CrmService.getLeadById(id),
+          CrmService.getLeadMessages(id),
+          CrmService.getNotes(tenant.id, `lead_id = "${id}"`),
+          CrmService.getTasks(tenant.id),
+          CrmService.getOpportunities(tenant.id),
+          CrmService.getProposals(tenant.id),
+          CrmService.getUsers(tenant.id),
+        ])
 
       setLead(leadData)
+      setMessages(leadMsgs)
       setNotes(allNotes)
       setTasks(allTasks.filter((t) => t.lead_id === id))
       setOpportunities(allOpps.filter((o) => o.lead_id === id))
@@ -155,20 +297,141 @@ export function LeadDetailPage() {
     loadAll()
   }, [id, tenant?.id])
 
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!messageContent.trim() || !id || !tenant?.id) return
+    const authorId = user?.id || pb.authStore.record?.id
+    if (!authorId) {
+      toast({
+        title: 'Usuário não identificado',
+        description: 'Faça login novamente para enviar mensagens.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setSendingMessage(true)
+    try {
+      await pb.collection('lead_messages').create({
+        lead_id: id,
+        tenant_id: tenant.id,
+        author_id: authorId,
+        team: selectedTeam,
+        type: 'nota',
+        content: messageContent.trim(),
+      })
+      setMessageContent('')
+      loadMessages(id)
+      setTimeout(() => {
+        chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+      }, 100)
+    } catch (err: any) {
+      console.error(err)
+      toast({
+        title: 'Erro ao enviar mensagem',
+        description: err?.message || 'Falha ao registrar no chat',
+        variant: 'destructive',
+      })
+    } finally {
+      setSendingMessage(false)
+    }
+  }
+
+  const handleTransferTeam = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!id || !tenant?.id) return
+    const authorId = user?.id || pb.authStore.record?.id
+    const authorName = user?.name || pb.authStore.record?.name || 'Usuário'
+
+    const currentTeam = (lead?.team_owner || lead?.team || 'comercial') as TeamType
+    if (currentTeam === targetTeam) {
+      toast({
+        title: 'Equipe já selecionada',
+        description: `O lead já está atribuído à equipe ${getTeamBadge(targetTeam).label}.`,
+      })
+      setTransferModalOpen(false)
+      return
+    }
+
+    setTransferring(true)
+    try {
+      // 1. Atualizar lead com novo team_owner
+      const updatedLead = await pb.collection('leads').update<LeadRecord>(id, {
+        team_owner: targetTeam,
+        team: targetTeam,
+      })
+      setLead(updatedLead)
+
+      // 2. Formatar data e hora atual
+      const nowFormatted = new Date().toLocaleString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+
+      const teamOriginLabel = getTeamBadge(currentTeam).label
+      const teamDestLabel = getTeamBadge(targetTeam).label
+
+      const systemContent = `🔁 ${authorName} transferiu este lead da equipe ${teamOriginLabel} para ${teamDestLabel} em ${nowFormatted}`
+
+      // 3. Inserir mensagem de sistema na thread
+      await pb.collection('lead_messages').create({
+        lead_id: id,
+        tenant_id: tenant.id,
+        author_id: authorId,
+        team: targetTeam,
+        type: 'sistema',
+        content: systemContent,
+      })
+
+      toast({
+        title: 'Lead repassado com sucesso!',
+        description: `Transferido para a equipe ${teamDestLabel}.`,
+      })
+
+      setTransferModalOpen(false)
+      loadMessages(id)
+    } catch (err: any) {
+      console.error(err)
+      toast({
+        title: 'Erro ao transferir lead',
+        description: err?.message || 'Não foi possível repassar o lead.',
+        variant: 'destructive',
+      })
+    } finally {
+      setTransferring(false)
+    }
+  }
+
   const handleCreateNote = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!noteContent.trim() || !tenant?.id || !id) return
+    const authorId = user?.id || pb.authStore.record?.id || ''
     try {
+      // 1. Create in lead_messages so it appears in the chat thread
+      await pb.collection('lead_messages').create({
+        lead_id: id,
+        tenant_id: tenant.id,
+        author_id: authorId,
+        team: selectedTeam,
+        type: 'nota',
+        content: noteContent.trim(),
+      })
+
+      // 2. Also keep legacy note record if needed for historical notes
       await CrmService.createNote(tenant.id, {
         conteudo: noteContent,
         lead_id: id,
         fixada: notePinned,
         categoria: 'Atendimento Jurídico',
       })
+
       setNoteContent('')
       setNotePinned(false)
       setNoteModalOpen(false)
-      toast({ title: 'Nota interna registrada com sucesso' })
+      toast({ title: 'Nota interna registrada com sucesso na thread' })
       loadAll()
     } catch (err: any) {
       toast({ title: 'Erro ao criar nota', variant: 'destructive' })
@@ -271,6 +534,20 @@ export function LeadDetailPage() {
     })
   }
 
+  messages.forEach((m) => {
+    timelineItems.push({
+      id: `msg_${m.id}`,
+      type: m.type === 'sistema' ? 'task' : 'note',
+      title:
+        m.type === 'sistema'
+          ? 'Transferência / Sistema'
+          : `Mensagem (${getTeamBadge(m.team).label})`,
+      description: m.content,
+      date: m.created || '',
+      author: m.expand?.author_id?.name || (m.type === 'sistema' ? 'Sistema' : 'Usuário'),
+    })
+  })
+
   notes.forEach((n) => {
     timelineItems.push({
       id: n.id,
@@ -344,6 +621,15 @@ export function LeadDetailPage() {
                 <Flame className="h-3 w-3" /> {lead.temperature || 'Quente'}
               </Badge>
               <Badge variant="outline">{lead.status || 'Em Atendimento'}</Badge>
+              {(() => {
+                const currentTeam = lead.team_owner || lead.team || 'comercial'
+                const tBadge = getTeamBadge(currentTeam)
+                return (
+                  <Badge variant="outline" className={`gap-1 font-medium ${tBadge.className}`}>
+                    Equipe Responsável: {tBadge.label}
+                  </Badge>
+                )
+              })()}
             </div>
             <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-3 flex-wrap">
               <span>
@@ -369,6 +655,21 @@ export function LeadDetailPage() {
 
         {/* Quick Action Buttons */}
         <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const cur = (lead.team_owner || lead.team || 'comercial') as TeamType
+              // set default target to next team
+              if (cur === 'comercial') setTargetTeam('juridico')
+              else if (cur === 'juridico') setTargetTeam('financeiro')
+              else setTargetTeam('comercial')
+              setTransferModalOpen(true)
+            }}
+            className="h-9 gap-1.5 text-xs font-semibold border-primary/40 hover:bg-primary/5 text-primary"
+          >
+            <ArrowRightLeft className="h-4 w-4" /> Repassar Equipe
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -465,13 +766,24 @@ export function LeadDetailPage() {
 
               <div>
                 <span className="text-muted-foreground block text-[11px]">
-                  Advogado Responsável:
+                  Equipe &amp; Responsável:
                 </span>
-                <span className="font-semibold text-foreground">
-                  {lead.expand?.assigned_to?.name ||
-                    lead.expand?.responsavel_id?.name ||
-                    'Equipe Geral'}
-                </span>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="font-semibold text-foreground">
+                    {lead.expand?.assigned_to?.name ||
+                      lead.expand?.responsavel_id?.name ||
+                      'Equipe Geral'}
+                  </span>
+                  {(() => {
+                    const curTeam = lead.team_owner || lead.team || 'comercial'
+                    const tb = getTeamBadge(curTeam)
+                    return (
+                      <Badge variant="outline" className={`text-[10px] h-4.5 ${tb.className}`}>
+                        {tb.label}
+                      </Badge>
+                    )
+                  })()}
+                </div>
               </div>
 
               <div>
@@ -537,16 +849,16 @@ export function LeadDetailPage() {
           <Tabs defaultValue="timeline" className="w-full">
             <TabsList className="w-full justify-start border-b rounded-none p-0 h-10 bg-transparent gap-4">
               <TabsTrigger
+                value="chat"
+                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 flex items-center gap-1.5"
+              >
+                <MessageSquare className="h-3.5 w-3.5" /> Chat / Notas do Lead ({messages.length})
+              </TabsTrigger>
+              <TabsTrigger
                 value="timeline"
                 className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2"
               >
                 Linha do Tempo 360º ({timelineItems.length})
-              </TabsTrigger>
-              <TabsTrigger
-                value="notes"
-                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2"
-              >
-                Notas Internas ({notes.length})
               </TabsTrigger>
               <TabsTrigger
                 value="tasks"
@@ -568,62 +880,213 @@ export function LeadDetailPage() {
               </TabsTrigger>
             </TabsList>
 
+            {/* TAB CHAT / NOTAS DO LEAD */}
+            <TabsContent value="chat" className="pt-4 space-y-4">
+              <div className="bg-card border border-border/80 rounded-xl p-5 shadow-xs flex flex-col min-h-[460px]">
+                {/* Chat Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-border/60 gap-3">
+                  <div>
+                    <h4 className="text-sm font-bold flex items-center gap-2">
+                      <MessageSquare className="h-4 w-4 text-primary" />
+                      Thread de Comunicação e Notas do Lead
+                    </h4>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Troca de mensagens entre equipes (Comercial, Jurídico e Financeiro) com
+                      sincronização em tempo real.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const cur = (lead.team_owner || lead.team || 'comercial') as TeamType
+                        if (cur === 'comercial') setTargetTeam('juridico')
+                        else if (cur === 'juridico') setTargetTeam('financeiro')
+                        else setTargetTeam('comercial')
+                        setTransferModalOpen(true)
+                      }}
+                      className="h-8 gap-1.5 text-xs text-primary border-primary/30 hover:bg-primary/5"
+                    >
+                      <ArrowRightLeft className="h-3.5 w-3.5" /> Repassar para outra equipe
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Messages Container */}
+                <div className="flex-1 overflow-y-auto py-4 space-y-3.5 max-h-[480px] pr-1">
+                  {messages.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-14 text-center text-muted-foreground space-y-2">
+                      <div className="h-10 w-10 rounded-full bg-muted/60 flex items-center justify-center">
+                        <MessageSquare className="h-5 w-5 text-muted-foreground/70" />
+                      </div>
+                      <p className="text-xs font-medium">
+                        Nenhuma mensagem registrada neste lead ainda.
+                      </p>
+                      <p className="text-[11px] text-muted-foreground/70 max-w-sm">
+                        Seja o primeiro a adicionar uma nota de alinhamento ou repassar o lead entre
+                        equipes.
+                      </p>
+                    </div>
+                  ) : (
+                    messages.map((msg) => {
+                      const isSystem = msg.type === 'sistema'
+                      const isCurrentUser =
+                        (user?.id && msg.author_id === user.id) ||
+                        (pb.authStore.record?.id && msg.author_id === pb.authStore.record.id)
+                      const teamInfo = getTeamBadge(msg.team)
+                      const authorName =
+                        msg.expand?.author_id?.name || (isSystem ? 'Sistema' : 'Membro da Equipe')
+
+                      if (isSystem) {
+                        return (
+                          <div key={msg.id} className="flex justify-center my-3 text-center">
+                            <div className="bg-muted/70 text-foreground/85 border border-border/60 text-xs px-4 py-2 rounded-xl max-w-lg shadow-2xs">
+                              <p className="font-medium leading-relaxed">{msg.content}</p>
+                              <span className="text-[10px] text-muted-foreground block mt-1">
+                                {formatMessageDate(msg.created)}
+                              </span>
+                            </div>
+                          </div>
+                        )
+                      }
+
+                      return (
+                        <div
+                          key={msg.id}
+                          className={`flex items-start gap-2.5 ${
+                            isCurrentUser ? 'flex-row-reverse' : 'flex-row'
+                          }`}
+                        >
+                          <Avatar className="h-8 w-8 shrink-0 mt-0.5 border">
+                            <AvatarFallback
+                              className={`text-[11px] font-bold ${
+                                msg.team === 'comercial'
+                                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
+                                  : msg.team === 'juridico'
+                                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                                    : 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
+                              }`}
+                            >
+                              {authorName.slice(0, 2).toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+
+                          <div
+                            className={`max-w-[78%] rounded-2xl p-3.5 space-y-1.5 shadow-2xs border ${
+                              isCurrentUser
+                                ? 'bg-primary/10 border-primary/20 text-foreground rounded-tr-xs'
+                                : 'bg-card border-border/80 text-foreground rounded-tl-xs'
+                            }`}
+                          >
+                            {/* Message Bubble Header */}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-semibold text-xs text-foreground">
+                                {authorName}
+                              </span>
+                              <Badge
+                                variant="outline"
+                                className={`text-[10px] px-1.5 py-0 h-4 font-medium border ${teamInfo.className}`}
+                              >
+                                {teamInfo.label}
+                              </Badge>
+                              <span className="text-[10px] text-muted-foreground ml-auto">
+                                {formatMessageDate(msg.created)}
+                              </span>
+                            </div>
+
+                            {/* Message Content */}
+                            <p className="text-xs leading-relaxed whitespace-pre-line text-foreground/90">
+                              {msg.content}
+                            </p>
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                  <div ref={chatBottomRef} />
+                </div>
+
+                {/* Chat Input Box */}
+                <form
+                  onSubmit={handleSendMessage}
+                  className="pt-3 border-t border-border/60 space-y-2.5"
+                >
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    <div className="flex items-center gap-2 min-w-[190px]">
+                      <Label className="text-xs font-semibold text-muted-foreground whitespace-nowrap">
+                        Enviar como:
+                      </Label>
+                      <Select
+                        value={selectedTeam}
+                        onValueChange={(val: TeamType) => setSelectedTeam(val)}
+                      >
+                        <SelectTrigger className="h-8 text-xs font-medium">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="comercial">
+                            <span className="flex items-center gap-1.5">
+                              <span className="h-2 w-2 rounded-full bg-blue-500" />
+                              Comercial
+                            </span>
+                          </SelectItem>
+                          <SelectItem value="juridico">
+                            <span className="flex items-center gap-1.5">
+                              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                              Jurídico
+                            </span>
+                          </SelectItem>
+                          <SelectItem value="financeiro">
+                            <span className="flex items-center gap-1.5">
+                              <span className="h-2 w-2 rounded-full bg-amber-500" />
+                              Financeiro
+                            </span>
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="text-[11px] text-muted-foreground ml-auto hidden sm:block">
+                      Pressione <strong>Enter</strong> para enviar
+                    </div>
+                  </div>
+
+                  <div className="flex items-end gap-2">
+                    <Textarea
+                      required
+                      rows={2}
+                      value={messageContent}
+                      onChange={(e) => setMessageContent(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          if (messageContent.trim()) {
+                            handleSendMessage(e)
+                          }
+                        }
+                      }}
+                      placeholder="Escreva uma nota interna ou mensagem para as equipes..."
+                      className="text-xs resize-none min-h-[60px]"
+                    />
+                    <Button
+                      type="submit"
+                      disabled={sendingMessage || !messageContent.trim()}
+                      className="h-10 px-4 bg-primary text-primary-foreground gap-1.5 shrink-0 text-xs font-semibold"
+                    >
+                      <Send className="h-3.5 w-3.5" />
+                      {sendingMessage ? 'Enviando...' : 'Enviar'}
+                    </Button>
+                  </div>
+                </form>
+              </div>
+            </TabsContent>
+
             {/* TAB TIMELINE */}
             <TabsContent value="timeline" className="pt-4">
               <div className="bg-card border border-border/80 rounded-xl p-5 shadow-xs">
                 <TimelineView items={timelineItems} />
-              </div>
-            </TabsContent>
-
-            {/* TAB NOTES */}
-            <TabsContent value="notes" className="pt-4 space-y-4">
-              <div className="flex justify-between items-center">
-                <h4 className="text-sm font-bold">Notas Internas &amp; Pareceres</h4>
-                <Button
-                  size="sm"
-                  onClick={() => setNoteModalOpen(true)}
-                  className="h-8 gap-1 text-xs"
-                >
-                  <Plus className="h-3.5 w-3.5" /> Adicionar Nota
-                </Button>
-              </div>
-
-              <div className="space-y-3">
-                {notes.length === 0 ? (
-                  <div className="text-center py-10 text-xs text-muted-foreground border rounded-xl border-dashed">
-                    Nenhuma nota interna registrada ainda.
-                  </div>
-                ) : (
-                  notes.map((note) => (
-                    <div
-                      key={note.id}
-                      className={`p-4 rounded-xl border transition-colors ${
-                        note.fixada
-                          ? 'bg-amber-500/5 border-amber-500/30'
-                          : 'bg-card border-border/80'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2 mb-2">
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-xs">
-                            {note.expand?.autor_id?.name || 'Advogado'}
-                          </span>
-                          {note.fixada && (
-                            <Badge className="bg-amber-500/20 text-amber-700 dark:text-amber-300 text-[10px] h-4 gap-1">
-                              <Pin className="h-2.5 w-2.5" /> Fixada
-                            </Badge>
-                          )}
-                        </div>
-                        <span className="text-[11px] text-muted-foreground">
-                          {note.created ? new Date(note.created).toLocaleString('pt-BR') : ''}
-                        </span>
-                      </div>
-                      <p className="text-xs text-foreground whitespace-pre-line leading-relaxed">
-                        {note.conteudo}
-                      </p>
-                    </div>
-                  ))
-                )}
               </div>
             </TabsContent>
 
@@ -793,6 +1256,90 @@ export function LeadDetailPage() {
           </Tabs>
         </div>
       </div>
+
+      {/* TRANSFER TEAM MODAL */}
+      <Dialog open={transferModalOpen} onOpenChange={setTransferModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-legal-serif flex items-center gap-2">
+              <ArrowRightLeft className="h-4 w-4 text-primary" />
+              Repassar Lead para Outra Equipe
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleTransferTeam} className="space-y-4 pt-2">
+            <div className="bg-muted/40 p-3 rounded-lg text-xs space-y-1.5 border border-border/50">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Lead:</span>
+                <span className="font-semibold text-foreground">{lead.name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Equipe atual:</span>
+                {(() => {
+                  const currentTeam = lead.team_owner || lead.team || 'comercial'
+                  const tb = getTeamBadge(currentTeam)
+                  return (
+                    <Badge variant="outline" className={`text-[10px] h-4.5 ${tb.className}`}>
+                      {tb.label}
+                    </Badge>
+                  )
+                })()}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold">Selecione a Equipe Destino *</Label>
+              <Select value={targetTeam} onValueChange={(val: TeamType) => setTargetTeam(val)}>
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="comercial">
+                    <span className="flex items-center gap-2 font-medium">
+                      <span className="h-2.5 w-2.5 rounded-full bg-blue-500" />
+                      Comercial (Prospecção, Atendimento Inicial e Propostas)
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="juridico">
+                    <span className="flex items-center gap-2 font-medium">
+                      <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                      Jurídico (Análise Técnica, Pareceres e Contratos)
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="financeiro">
+                    <span className="flex items-center gap-2 font-medium">
+                      <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
+                      Financeiro (Faturamento, Cobrança e Comissões)
+                    </span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                Ao confirmar, o responsável de equipe do lead será atualizado e uma mensagem de
+                sistema será registrada automaticamente no chat para notificar os membros.
+              </p>
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setTransferModalOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={transferring}
+                className="bg-[#0A1F3F] text-white"
+              >
+                {transferring ? 'Transferindo...' : 'Confirmar Transferência'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* CREATE NOTE MODAL */}
       <Dialog open={noteModalOpen} onOpenChange={setNoteModalOpen}>

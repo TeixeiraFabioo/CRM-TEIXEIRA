@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-21T12:36:30.241Z",
+  "generatedAt": "2026-08-21T12:43:40.190Z",
   "collections": [
     {
       "name": "users",
@@ -793,6 +793,13 @@
           "type": "bool",
           "required": false,
           "system": false
+        },
+        {
+          "name": "team_owner",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["comercial", "juridico", "financeiro"]
         }
       ],
       "indexes": ["CREATE INDEX idx_leads_tenant ON leads (tenant_id, created DESC)"]
@@ -3152,6 +3159,77 @@
         }
       ],
       "indexes": []
+    },
+    {
+      "name": "lead_messages",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
+        "view": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
+        "delete": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')"
+      },
+      "fields": [
+        {
+          "name": "tenant_id",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "lead_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "leads"
+        },
+        {
+          "name": "author_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "team",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["comercial", "juridico", "financeiro"]
+        },
+        {
+          "name": "type",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["nota", "sistema"]
+        },
+        {
+          "name": "content",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_lead_messages_lead ON lead_messages (lead_id, created)",
+        "CREATE INDEX idx_lead_messages_tenant ON lead_messages (tenant_id)"
+      ]
     }
   ]
 }
