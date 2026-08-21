@@ -16,6 +16,8 @@ import {
   ServiceRecord,
   TagRecord,
   TemplateRecord,
+  MessageTemplateRecord,
+  CustomFieldRecord,
   AutomationRecord,
   AuditLogRecord,
   SlaConfigRecord,
@@ -755,6 +757,10 @@ export const CrmService = {
     return await pb.collection('goals').update<GoalRecord>(id, data)
   },
 
+  async deleteGoal(id: string): Promise<boolean> {
+    return await pb.collection('goals').delete(id)
+  },
+
   // --- COMMISSIONS (COMISSÕES) ---
   async getCommissions(tenantId: string): Promise<CommissionRecord[]> {
     try {
@@ -775,10 +781,18 @@ export const CrmService = {
   ): Promise<CommissionRecord> {
     return await pb.collection('commissions').create<CommissionRecord>({
       tenant_id: tenantId,
-      status: 'pendente',
-      data_geracao: new Date().toISOString(),
+      status: data.status || 'pendente',
+      data_geracao: data.data_geracao || new Date().toISOString(),
       ...data,
     })
+  },
+
+  async updateCommission(id: string, data: Partial<CommissionRecord>): Promise<CommissionRecord> {
+    return await pb.collection('commissions').update<CommissionRecord>(id, data)
+  },
+
+  async deleteCommission(id: string): Promise<boolean> {
+    return await pb.collection('commissions').delete(id)
   },
 
   async updateCommission(id: string, data: Partial<CommissionRecord>): Promise<CommissionRecord> {
@@ -828,6 +842,102 @@ export const CrmService = {
       tenant_id: tenantId,
       ...data,
     })
+  },
+
+  async getTagsByIds(tagIds: string[]): Promise<TagRecord[]> {
+    if (!tagIds || tagIds.length === 0) return []
+    try {
+      const filter = tagIds.map((id) => `id = "${id}"`).join(' || ')
+      return await pb.collection('tags').getFullList<TagRecord>({
+        filter,
+      })
+    } catch (e) {
+      console.warn('Failed to fetch tags by ids', e)
+      return []
+    }
+  },
+
+  async updateTag(id: string, data: Partial<TagRecord>): Promise<TagRecord> {
+    return await pb.collection('tags').update<TagRecord>(id, data)
+  },
+
+  async deleteTag(id: string): Promise<boolean> {
+    return await pb.collection('tags').delete(id)
+  },
+
+  // --- MESSAGE TEMPLATES (TEMPLATES DE MENSAGEM) ---
+  async getMessageTemplates(tenantId: string): Promise<MessageTemplateRecord[]> {
+    try {
+      return await pb.collection('message_templates').getFullList<MessageTemplateRecord>({
+        filter: `tenant_id = "${tenantId}"`,
+        sort: '-created',
+      })
+    } catch (e) {
+      console.warn('Failed to load message templates', e)
+      return []
+    }
+  },
+
+  async createMessageTemplate(
+    tenantId: string,
+    data: Partial<MessageTemplateRecord>,
+  ): Promise<MessageTemplateRecord> {
+    return await pb.collection('message_templates').create<MessageTemplateRecord>({
+      tenant_id: tenantId,
+      status: data.status || 'ativo',
+      ...data,
+    })
+  },
+
+  async updateMessageTemplate(
+    id: string,
+    data: Partial<MessageTemplateRecord>,
+  ): Promise<MessageTemplateRecord> {
+    return await pb.collection('message_templates').update<MessageTemplateRecord>(id, data)
+  },
+
+  async deleteMessageTemplate(id: string): Promise<boolean> {
+    return await pb.collection('message_templates').delete(id)
+  },
+
+  // --- CUSTOM FIELDS (CAMPOS PERSONALIZADOS) ---
+  async getCustomFields(tenantId: string, modulo?: string): Promise<CustomFieldRecord[]> {
+    try {
+      let filter = `tenant_id = "${tenantId}"`
+      if (modulo) {
+        filter += ` && modulo = "${modulo}"`
+      }
+      return await pb.collection('custom_fields').getFullList<CustomFieldRecord>({
+        filter,
+        sort: 'ordem,nome',
+      })
+    } catch (e) {
+      console.warn('Failed to load custom fields', e)
+      return []
+    }
+  },
+
+  async createCustomField(
+    tenantId: string,
+    data: Partial<CustomFieldRecord>,
+  ): Promise<CustomFieldRecord> {
+    return await pb.collection('custom_fields').create<CustomFieldRecord>({
+      tenant_id: tenantId,
+      obrigatorio: data.obrigatorio ?? false,
+      ordem: data.ordem ?? 0,
+      ...data,
+    })
+  },
+
+  async updateCustomField(
+    id: string,
+    data: Partial<CustomFieldRecord>,
+  ): Promise<CustomFieldRecord> {
+    return await pb.collection('custom_fields').update<CustomFieldRecord>(id, data)
+  },
+
+  async deleteCustomField(id: string): Promise<boolean> {
+    return await pb.collection('custom_fields').delete(id)
   },
 
   // --- TEMPLATES ---

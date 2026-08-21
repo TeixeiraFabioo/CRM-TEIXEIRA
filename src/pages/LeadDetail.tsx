@@ -74,7 +74,12 @@ import {
   ContractRecord,
   UserRecord,
   PipelineStageRecord,
+  TagRecord,
+  CustomFieldRecord,
+  MessageTemplateRecord,
 } from '@/types/platform'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { MessageSquareText } from 'lucide-react'
 
 type TeamType = 'comercial' | 'juridico' | 'financeiro'
 
@@ -147,6 +152,16 @@ export function LeadDetailPage() {
   const [users, setUsers] = useState<UserRecord[]>([])
   const [stages, setStages] = useState<PipelineStageRecord[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Tags and Custom Fields State
+  const [availableTags, setAvailableTags] = useState<TagRecord[]>([])
+  const [customFields, setCustomFields] = useState<CustomFieldRecord[]>([])
+  const [customFieldValues, setCustomFieldValues] = useState<Record<string, any>>({})
+  const [savingCustomFields, setSavingCustomFields] = useState(false)
+
+  // Message Templates State
+  const [activeMessageTemplates, setActiveMessageTemplates] = useState<MessageTemplateRecord[]>([])
+  const [templatePopoverOpen, setTemplatePopoverOpen] = useState(false)
 
   // Chat message input state
   const defaultUserTeam: TeamType =
@@ -281,16 +296,29 @@ export function LeadDetailPage() {
     if (!id || !tenant?.id) return
     setLoading(true)
     try {
-      const [leadData, leadMsgs, allNotes, allTasks, allOpps, allProps, allUsers] =
-        await Promise.all([
-          CrmService.getLeadById(id),
-          CrmService.getLeadMessages(id),
-          CrmService.getNotes(tenant.id, `lead_id = "${id}"`),
-          CrmService.getTasks(tenant.id),
-          CrmService.getOpportunities(tenant.id),
-          CrmService.getProposals(tenant.id),
-          CrmService.getUsers(tenant.id),
-        ])
+      const [
+        leadData,
+        leadMsgs,
+        allNotes,
+        allTasks,
+        allOpps,
+        allProps,
+        allUsers,
+        allTags,
+        leadCustomFields,
+        allTemplates,
+      ] = await Promise.all([
+        CrmService.getLeadById(id),
+        CrmService.getLeadMessages(id),
+        CrmService.getNotes(tenant.id, `lead_id = "${id}"`),
+        CrmService.getTasks(tenant.id),
+        CrmService.getOpportunities(tenant.id),
+        CrmService.getProposals(tenant.id),
+        CrmService.getUsers(tenant.id),
+        CrmService.getTags(tenant.id),
+        CrmService.getCustomFields(tenant.id, 'lead'),
+        CrmService.getMessageTemplates(tenant.id),
+      ])
 
       setLead(leadData)
       setMessages(leadMsgs)
@@ -299,6 +327,15 @@ export function LeadDetailPage() {
       setOpportunities(allOpps.filter((o) => o.lead_id === id))
       setProposals(allProps.filter((p) => p.lead_id === id))
       setUsers(allUsers)
+      setAvailableTags(allTags)
+      setCustomFields(leadCustomFields)
+      setActiveMessageTemplates(allTemplates.filter((t) => t.status === 'ativo'))
+
+      if (leadData && leadData.custom_fields) {
+        setCustomFieldValues(leadData.custom_fields)
+      } else {
+        setCustomFieldValues({})
+      }
 
       if (leadData) {
         setOppData((prev) => ({
@@ -507,6 +544,50 @@ ${formattedHistory}
     } finally {
       setSavingNoteId(null)
     }
+  }
+
+  const handleToggleTag = async (tagId: string) => {
+    if (!lead || !id) return
+    try {
+      const currentTags = Array.isArray(lead.tags) ? [...lead.tags] : []
+      let newTags: string[]
+      if (currentTags.includes(tagId)) {
+        newTags = currentTags.filter((t) => t !== tagId)
+      } else {
+        newTags = [...currentTags, tagId]
+      }
+      const updated = await pb.collection('leads').update<LeadRecord>(id, { tags: newTags })
+      setLead(updated)
+      toast({ title: 'Tags atualizadas com sucesso!' })
+    } catch (e: any) {
+      toast({ title: 'Erro ao atualizar tags', description: e?.message, variant: 'destructive' })
+    }
+  }
+
+  const handleSaveCustomFieldValues = async () => {
+    if (!id || !lead) return
+    setSavingCustomFields(true)
+    try {
+      const updated = await pb.collection('leads').update<LeadRecord>(id, {
+        custom_fields: customFieldValues,
+      })
+      setLead(updated)
+      toast({ title: 'Campos personalizados salvos!' })
+    } catch (e: any) {
+      toast({
+        title: 'Erro ao salvar campos personalizados',
+        description: e?.message,
+        variant: 'destructive',
+      })
+    } finally {
+      setSavingCustomFields(false)
+    }
+  }
+
+  const handleApplyTemplate = (conteudo: string) => {
+    setMessageContent((prev) => (prev ? `${prev}\n${conteudo}` : conteudo))
+    setTemplatePopoverOpen(false)
+    toast({ title: 'Template inserido no campo de mensagem!' })
   }
 
   const handleTransferTeam = async (e: React.FormEvent) => {
@@ -991,6 +1072,222 @@ ${formattedHistory}
                 </p>
               </div>
             )}
+
+            {/* SEÇÃO DE TAGS DO LEAD */}
+            <div className="pt-3 border-t space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground block text-[11px] font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                  <Tag className="h-3.5 w-3.5 text-primary" /> Tags &amp; Marcadores
+                </span>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-1.5 text-[11px] gap-1 text-primary"
+                    >
+                      <Plus className="h-3 w-3" /> Gerenciar
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-56 p-2" align="end">
+                    <div className="text-xs font-semibold mb-2 px-1">Atribuir Tags:</div>
+                    <div className="space-y-1 max-h-48 overflow-y-auto">
+                      {availableTags.length === 0 ? (
+                        <div className="text-xs text-muted-foreground p-2">
+                          Nenhuma tag cadastrada no tenant.
+                        </div>
+                      ) : (
+                        availableTags.map((tag) => {
+                          const isAssigned = Array.isArray(lead.tags) && lead.tags.includes(tag.id)
+                          return (
+                            <button
+                              key={tag.id}
+                              type="button"
+                              onClick={() => handleToggleTag(tag.id)}
+                              className="w-full flex items-center justify-between p-1.5 rounded hover:bg-muted text-xs transition-colors text-left"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span
+                                  className="h-2.5 w-2.5 rounded-full shrink-0"
+                                  style={{ backgroundColor: tag.cor || '#2563eb' }}
+                                />
+                                <span className="truncate">{tag.nome}</span>
+                              </div>
+                              {isAssigned && (
+                                <Check className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                              )}
+                            </button>
+                          )
+                        })
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5 min-h-[26px]">
+                {Array.isArray(lead.tags) && lead.tags.length > 0 ? (
+                  lead.tags.map((tagId) => {
+                    const tagObj = availableTags.find((t) => t.id === tagId)
+                    const label = tagObj ? tagObj.nome : tagId
+                    const color = tagObj?.cor || '#2563eb'
+                    return (
+                      <Badge
+                        key={tagId}
+                        style={{
+                          backgroundColor: `${color}15`,
+                          color: color,
+                          borderColor: `${color}40`,
+                        }}
+                        className="text-[10px] px-2 py-0.5 border flex items-center gap-1 font-medium group"
+                      >
+                        <span
+                          className="h-1.5 w-1.5 rounded-full"
+                          style={{ backgroundColor: color }}
+                        />
+                        {label}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleTag(tagId)}
+                          className="hover:opacity-75 ml-0.5"
+                        >
+                          ×
+                        </button>
+                      </Badge>
+                    )
+                  })
+                ) : (
+                  <span className="text-[11px] text-muted-foreground italic">
+                    Nenhuma tag atribuída a este lead.
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* SEÇÃO DE CAMPOS PERSONALIZADOS DO LEAD */}
+            {customFields.length > 0 && (
+              <div className="pt-3 border-t space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground block text-[11px] font-semibold uppercase tracking-wider">
+                    Campos Personalizados
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleSaveCustomFieldValues}
+                    disabled={savingCustomFields}
+                    className="h-6 px-2 text-[11px] text-primary"
+                  >
+                    {savingCustomFields ? 'Salvando...' : 'Salvar Campos'}
+                  </Button>
+                </div>
+
+                <div className="space-y-2.5">
+                  {customFields.map((cf) => {
+                    const fieldVal = customFieldValues[cf.id] ?? customFieldValues[cf.nome] ?? ''
+                    const opts: string[] = Array.isArray(cf.opcoes)
+                      ? cf.opcoes
+                      : typeof cf.opcoes === 'object' &&
+                          cf.opcoes !== null &&
+                          'options' in cf.opcoes
+                        ? (cf.opcoes as any).options || []
+                        : []
+
+                    return (
+                      <div key={cf.id} className="space-y-1">
+                        <Label className="text-[11px] font-semibold text-muted-foreground flex items-center justify-between">
+                          <span>
+                            {cf.nome} {cf.obrigatorio && <span className="text-red-500">*</span>}
+                          </span>
+                          <span className="text-[10px] capitalize opacity-60 font-mono">
+                            ({cf.tipo})
+                          </span>
+                        </Label>
+
+                        {cf.tipo === 'selecao' ? (
+                          <Select
+                            value={String(fieldVal || '')}
+                            onValueChange={(val) =>
+                              setCustomFieldValues((prev) => ({
+                                ...prev,
+                                [cf.id]: val,
+                                [cf.nome]: val,
+                              }))
+                            }
+                          >
+                            <SelectTrigger className="h-8 text-xs">
+                              <SelectValue placeholder="Selecione..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {opts.map((op, i) => (
+                                <SelectItem key={i} value={op}>
+                                  {op}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : cf.tipo === 'booleano' ? (
+                          <div className="flex items-center gap-2 pt-0.5">
+                            <Switch
+                              checked={Boolean(fieldVal)}
+                              onCheckedChange={(val) =>
+                                setCustomFieldValues((prev) => ({
+                                  ...prev,
+                                  [cf.id]: val,
+                                  [cf.nome]: val,
+                                }))
+                              }
+                            />
+                            <span className="text-xs">{fieldVal ? 'Sim' : 'Não'}</span>
+                          </div>
+                        ) : cf.tipo === 'data' ? (
+                          <Input
+                            type="date"
+                            value={String(fieldVal || '')}
+                            onChange={(e) =>
+                              setCustomFieldValues((prev) => ({
+                                ...prev,
+                                [cf.id]: e.target.value,
+                                [cf.nome]: e.target.value,
+                              }))
+                            }
+                            className="h-8 text-xs font-mono"
+                          />
+                        ) : cf.tipo === 'numero' || cf.tipo === 'moeda' ? (
+                          <Input
+                            type="number"
+                            value={String(fieldVal || '')}
+                            onChange={(e) =>
+                              setCustomFieldValues((prev) => ({
+                                ...prev,
+                                [cf.id]: e.target.value,
+                                [cf.nome]: e.target.value,
+                              }))
+                            }
+                            placeholder={cf.tipo === 'moeda' ? 'R$ 0,00' : '0'}
+                            className="h-8 text-xs font-mono"
+                          />
+                        ) : (
+                          <Input
+                            type="text"
+                            value={String(fieldVal || '')}
+                            onChange={(e) =>
+                              setCustomFieldValues((prev) => ({
+                                ...prev,
+                                [cf.id]: e.target.value,
+                                [cf.nome]: e.target.value,
+                              }))
+                            }
+                            placeholder={`Inserir ${cf.nome.toLowerCase()}...`}
+                            className="h-8 text-xs"
+                          />
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Tráfego & UTMs Card */}
@@ -1227,8 +1524,63 @@ ${formattedHistory}
                       </Select>
                     </div>
 
-                    <div className="text-[11px] text-muted-foreground ml-auto hidden sm:block">
-                      Pressione <strong>Enter</strong> para enviar
+                    <div className="flex items-center gap-2 ml-auto">
+                      <Popover open={templatePopoverOpen} onOpenChange={setTemplatePopoverOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs gap-1.5 text-primary border-primary/30 hover:bg-primary/5"
+                          >
+                            <MessageSquareText className="h-3.5 w-3.5" />
+                            Templates ({activeMessageTemplates.length})
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-80 p-2 shadow-lg" align="end">
+                          <div className="text-xs font-bold pb-2 mb-1 border-b flex items-center justify-between">
+                            <span>Modelos de Mensagem</span>
+                            <span className="text-[10px] text-muted-foreground font-normal">
+                              Clique para aplicar
+                            </span>
+                          </div>
+                          <div className="space-y-1.5 max-h-60 overflow-y-auto">
+                            {activeMessageTemplates.length === 0 ? (
+                              <div className="p-3 text-xs text-center text-muted-foreground">
+                                Nenhum template ativo cadastrado em Configurações.
+                              </div>
+                            ) : (
+                              activeMessageTemplates.map((t) => (
+                                <button
+                                  key={t.id}
+                                  type="button"
+                                  onClick={() => handleApplyTemplate(t.conteudo)}
+                                  className="w-full text-left p-2 rounded-lg border border-border/50 hover:border-primary/50 hover:bg-muted/40 transition-colors space-y-1"
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-semibold text-xs text-foreground truncate">
+                                      {t.nome}
+                                    </span>
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[9px] uppercase px-1 py-0 h-4"
+                                    >
+                                      {t.tipo || 'outro'}
+                                    </Badge>
+                                  </div>
+                                  <p className="text-[11px] text-muted-foreground line-clamp-2 leading-tight">
+                                    {t.conteudo}
+                                  </p>
+                                </button>
+                              ))
+                            )}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+
+                      <div className="text-[11px] text-muted-foreground hidden sm:block">
+                        Pressione <strong>Enter</strong> para enviar
+                      </div>
                     </div>
                   </div>
 

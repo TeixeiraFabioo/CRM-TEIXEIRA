@@ -30,7 +30,20 @@ import {
   ContractRecord,
   NoteRecord,
   TaskRecord,
+  TagRecord,
+  CustomFieldRecord,
 } from '@/types/platform'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Tag, SlidersHorizontal, Check } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 export function CustomerDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -47,17 +60,34 @@ export function CustomerDetailPage() {
   const [loading, setLoading] = useState(true)
   const [isTogglingStatus, setIsTogglingStatus] = useState(false)
 
+  // Tags and Custom Fields State
+  const [availableTags, setAvailableTags] = useState<TagRecord[]>([])
+  const [customFields, setCustomFields] = useState<CustomFieldRecord[]>([])
+  const [customFieldValues, setCustomFieldValues] = useState<Record<string, any>>({})
+  const [savingCustomFields, setSavingCustomFields] = useState(false)
+
   const loadCustomerData = async () => {
     if (!id || !tenant?.id) return
     setLoading(true)
     try {
-      const [cust, allOpps, allProps, allContracts, allNotes, allTasks] = await Promise.all([
+      const [
+        cust,
+        allOpps,
+        allProps,
+        allContracts,
+        allNotes,
+        allTasks,
+        allTags,
+        customerCustomFields,
+      ] = await Promise.all([
         CrmService.getCustomerById(id),
         CrmService.getOpportunities(tenant.id),
         CrmService.getProposals(tenant.id),
         CrmService.getContracts(tenant.id),
         CrmService.getNotes(tenant.id, `cliente_id = "${id}"`),
         CrmService.getTasks(tenant.id),
+        CrmService.getTags(tenant.id),
+        CrmService.getCustomFields(tenant.id, 'customer'),
       ])
 
       setCustomer(cust)
@@ -66,6 +96,14 @@ export function CustomerDetailPage() {
       setContracts(allContracts.filter((c) => c.cliente_id === id))
       setNotes(allNotes)
       setTasks(allTasks.filter((t) => t.cliente_id === id))
+      setAvailableTags(allTags)
+      setCustomFields(customerCustomFields)
+
+      if (cust && cust.custom_fields) {
+        setCustomFieldValues(cust.custom_fields)
+      } else {
+        setCustomFieldValues({})
+      }
     } catch (e) {
       console.error(e)
       toast({ title: 'Erro ao carregar detalhes do cliente', variant: 'destructive' })
@@ -77,6 +115,44 @@ export function CustomerDetailPage() {
   useEffect(() => {
     loadCustomerData()
   }, [id, tenant?.id])
+
+  const handleToggleTag = async (tagId: string) => {
+    if (!customer || !id) return
+    try {
+      const currentTags = Array.isArray(customer.tags) ? [...customer.tags] : []
+      let newTags: string[]
+      if (currentTags.includes(tagId)) {
+        newTags = currentTags.filter((t) => t !== tagId)
+      } else {
+        newTags = [...currentTags, tagId]
+      }
+      const updated = await pb.collection('customers').update<CustomerRecord>(id, { tags: newTags })
+      setCustomer(updated)
+      toast({ title: 'Tags do cliente atualizadas com sucesso!' })
+    } catch (e: any) {
+      toast({ title: 'Erro ao atualizar tags', description: e?.message, variant: 'destructive' })
+    }
+  }
+
+  const handleSaveCustomFieldValues = async () => {
+    if (!id || !customer) return
+    setSavingCustomFields(true)
+    try {
+      const updated = await pb.collection('customers').update<CustomerRecord>(id, {
+        custom_fields: customFieldValues,
+      })
+      setCustomer(updated)
+      toast({ title: 'Campos personalizados do cliente salvos!' })
+    } catch (e: any) {
+      toast({
+        title: 'Erro ao salvar campos personalizados',
+        description: e?.message,
+        variant: 'destructive',
+      })
+    } finally {
+      setSavingCustomFields(false)
+    }
+  }
 
   const handleToggleCustomerStatus = async (checked: boolean) => {
     if (!customer?.id || !tenant?.id) return
@@ -291,6 +367,223 @@ export function CustomerDetailPage() {
                 </span>
               </div>
             </div>
+
+            {/* SEÇÃO DE TAGS DO CLIENTE */}
+            <div className="pt-3 border-t space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground block text-[11px] font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                  <Tag className="h-3.5 w-3.5 text-primary" /> Tags &amp; Segmentação
+                </span>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-1.5 text-[11px] gap-1 text-primary"
+                    >
+                      <Plus className="h-3 w-3" /> Gerenciar
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-56 p-2" align="end">
+                    <div className="text-xs font-semibold mb-2 px-1">Atribuir Tags:</div>
+                    <div className="space-y-1 max-h-48 overflow-y-auto">
+                      {availableTags.length === 0 ? (
+                        <div className="text-xs text-muted-foreground p-2">
+                          Nenhuma tag cadastrada.
+                        </div>
+                      ) : (
+                        availableTags.map((tag) => {
+                          const isAssigned =
+                            Array.isArray(customer.tags) && customer.tags.includes(tag.id)
+                          return (
+                            <button
+                              key={tag.id}
+                              type="button"
+                              onClick={() => handleToggleTag(tag.id)}
+                              className="w-full flex items-center justify-between p-1.5 rounded hover:bg-muted text-xs transition-colors text-left"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span
+                                  className="h-2.5 w-2.5 rounded-full shrink-0"
+                                  style={{ backgroundColor: tag.cor || '#2563eb' }}
+                                />
+                                <span className="truncate">{tag.nome}</span>
+                              </div>
+                              {isAssigned && (
+                                <Check className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                              )}
+                            </button>
+                          )
+                        })
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5 min-h-[26px]">
+                {Array.isArray(customer.tags) && customer.tags.length > 0 ? (
+                  customer.tags.map((tagId) => {
+                    const tagObj = availableTags.find((t) => t.id === tagId)
+                    const label = tagObj ? tagObj.nome : tagId
+                    const color = tagObj?.cor || '#2563eb'
+                    return (
+                      <Badge
+                        key={tagId}
+                        style={{
+                          backgroundColor: `${color}15`,
+                          color: color,
+                          borderColor: `${color}40`,
+                        }}
+                        className="text-[10px] px-2 py-0.5 border flex items-center gap-1 font-medium group"
+                      >
+                        <span
+                          className="h-1.5 w-1.5 rounded-full"
+                          style={{ backgroundColor: color }}
+                        />
+                        {label}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleTag(tagId)}
+                          className="hover:opacity-75 ml-0.5"
+                        >
+                          ×
+                        </button>
+                      </Badge>
+                    )
+                  })
+                ) : (
+                  <span className="text-[11px] text-muted-foreground italic">
+                    Nenhuma tag atribuída a este cliente.
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* SEÇÃO DE CAMPOS PERSONALIZADOS DO CLIENTE */}
+            {customFields.length > 0 && (
+              <div className="pt-3 border-t space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground block text-[11px] font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                    <SlidersHorizontal className="h-3 w-3 text-primary" /> Campos Personalizados
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleSaveCustomFieldValues}
+                    disabled={savingCustomFields}
+                    className="h-6 px-2 text-[11px] text-primary"
+                  >
+                    {savingCustomFields ? 'Salvando...' : 'Salvar Campos'}
+                  </Button>
+                </div>
+
+                <div className="space-y-2.5">
+                  {customFields.map((cf) => {
+                    const fieldVal = customFieldValues[cf.id] ?? customFieldValues[cf.nome] ?? ''
+                    const opts: string[] = Array.isArray(cf.opcoes)
+                      ? cf.opcoes
+                      : typeof cf.opcoes === 'object' &&
+                          cf.opcoes !== null &&
+                          'options' in cf.opcoes
+                        ? (cf.opcoes as any).options || []
+                        : []
+
+                    return (
+                      <div key={cf.id} className="space-y-1">
+                        <Label className="text-[11px] font-semibold text-muted-foreground flex items-center justify-between">
+                          <span>
+                            {cf.nome} {cf.obrigatorio && <span className="text-red-500">*</span>}
+                          </span>
+                          <span className="text-[10px] capitalize opacity-60 font-mono">
+                            ({cf.tipo})
+                          </span>
+                        </Label>
+
+                        {cf.tipo === 'selecao' ? (
+                          <Select
+                            value={String(fieldVal || '')}
+                            onValueChange={(val) =>
+                              setCustomFieldValues((prev) => ({
+                                ...prev,
+                                [cf.id]: val,
+                                [cf.nome]: val,
+                              }))
+                            }
+                          >
+                            <SelectTrigger className="h-8 text-xs">
+                              <SelectValue placeholder="Selecione..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {opts.map((op, i) => (
+                                <SelectItem key={i} value={op}>
+                                  {op}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : cf.tipo === 'booleano' ? (
+                          <div className="flex items-center gap-2 pt-0.5">
+                            <Switch
+                              checked={Boolean(fieldVal)}
+                              onCheckedChange={(val) =>
+                                setCustomFieldValues((prev) => ({
+                                  ...prev,
+                                  [cf.id]: val,
+                                  [cf.nome]: val,
+                                }))
+                              }
+                            />
+                            <span className="text-xs">{fieldVal ? 'Sim' : 'Não'}</span>
+                          </div>
+                        ) : cf.tipo === 'data' ? (
+                          <Input
+                            type="date"
+                            value={String(fieldVal || '')}
+                            onChange={(e) =>
+                              setCustomFieldValues((prev) => ({
+                                ...prev,
+                                [cf.id]: e.target.value,
+                                [cf.nome]: e.target.value,
+                              }))
+                            }
+                            className="h-8 text-xs font-mono"
+                          />
+                        ) : cf.tipo === 'numero' || cf.tipo === 'moeda' ? (
+                          <Input
+                            type="number"
+                            value={String(fieldVal || '')}
+                            onChange={(e) =>
+                              setCustomFieldValues((prev) => ({
+                                ...prev,
+                                [cf.id]: e.target.value,
+                                [cf.nome]: e.target.value,
+                              }))
+                            }
+                            placeholder={cf.tipo === 'moeda' ? 'R$ 0,00' : '0'}
+                            className="h-8 text-xs font-mono"
+                          />
+                        ) : (
+                          <Input
+                            type="text"
+                            value={String(fieldVal || '')}
+                            onChange={(e) =>
+                              setCustomFieldValues((prev) => ({
+                                ...prev,
+                                [cf.id]: e.target.value,
+                                [cf.nome]: e.target.value,
+                              }))
+                            }
+                            placeholder={`Inserir ${cf.nome.toLowerCase()}...`}
+                            className="h-8 text-xs"
+                          />
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

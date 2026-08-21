@@ -533,6 +533,32 @@ export interface TagRecord {
   updated?: string
 }
 
+export interface CustomFieldRecord {
+  id: string
+  tenant_id: string
+  modulo: 'lead' | 'customer' | 'opportunity' | string
+  nome: string
+  tipo: 'texto' | 'numero' | 'moeda' | 'data' | 'selecao' | 'booleano' | string
+  opcoes?: string[] | { options?: string[] } | Record<string, unknown>
+  obrigatorio?: boolean
+  ordem?: number
+  created?: string
+  updated?: string
+}
+
+export interface MessageTemplateRecord {
+  id: string
+  tenant_id: string
+  nome: string
+  canal?: string
+  conteudo: string
+  tipo?: 'abordagem' | 'follow-up' | 'proposta' | 'objeção' | 'pós-venda' | 'outro' | string
+  variaveis?: Record<string, unknown>
+  status?: 'ativo' | 'inativo' | string
+  created?: string
+  updated?: string
+}
+
 export interface TemplateRecord {
   id: string
   tenant_id: string

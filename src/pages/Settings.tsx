@@ -70,10 +70,13 @@ import {
   ServiceRecord,
   TagRecord,
   TemplateRecord,
+  MessageTemplateRecord,
+  CustomFieldRecord,
   SlaConfigRecord,
   UserRecord,
   LeadDistributionRecord,
 } from '@/types/platform'
+import { MessageSquareText, SlidersHorizontal, Edit2, Check } from 'lucide-react'
 
 export function SettingsPage() {
   const { tenant, user, refreshTenant, logout } = useTenant()
@@ -81,6 +84,8 @@ export function SettingsPage() {
 
   const [services, setServices] = useState<ServiceRecord[]>([])
   const [tags, setTags] = useState<TagRecord[]>([])
+  const [messageTemplates, setMessageTemplates] = useState<MessageTemplateRecord[]>([])
+  const [customFields, setCustomFields] = useState<CustomFieldRecord[]>([])
   const [templates, setTemplates] = useState<TemplateRecord[]>([])
   const [slas, setSlas] = useState<SlaConfigRecord[]>([])
   const [users, setUsers] = useState<UserRecord[]>([])
@@ -118,10 +123,34 @@ export function SettingsPage() {
   })
 
   const [tagModalOpen, setTagModalOpen] = useState(false)
+  const [editingTag, setEditingTag] = useState<TagRecord | null>(null)
   const [newTag, setNewTag] = useState({
     nome: '',
     cor: '#2563eb',
     modulo: 'leads',
+  })
+
+  // Message Templates Modals & State
+  const [messageTemplateModalOpen, setMessageTemplateModalOpen] = useState(false)
+  const [editingMessageTemplate, setEditingMessageTemplate] =
+    useState<MessageTemplateRecord | null>(null)
+  const [messageTemplateData, setMessageTemplateData] = useState({
+    nome: '',
+    conteudo: '',
+    tipo: 'abordagem' as 'abordagem' | 'follow-up' | 'proposta' | 'objeção' | 'pós-venda' | 'outro',
+    status: 'ativo',
+  })
+
+  // Custom Fields Modals & State
+  const [customFieldModalOpen, setCustomFieldModalOpen] = useState(false)
+  const [editingCustomField, setEditingCustomField] = useState<CustomFieldRecord | null>(null)
+  const [customFieldData, setCustomFieldData] = useState({
+    nome: '',
+    modulo: 'lead' as 'lead' | 'customer' | 'opportunity',
+    tipo: 'texto' as 'texto' | 'numero' | 'moeda' | 'data' | 'selecao' | 'booleano',
+    opcoesStr: '',
+    obrigatorio: false,
+    ordem: 0,
   })
 
   // User Management state
@@ -181,17 +210,22 @@ export function SettingsPage() {
     if (!tenant?.id) return
     setLoading(true)
     try {
-      const [sList, tList, tmpList, slaList, uList, distConfig, distRecent] = await Promise.all([
-        CrmService.getServices(tenant.id),
-        CrmService.getTags(tenant.id),
-        CrmService.getTemplates(tenant.id),
-        CrmService.getSlaConfigs(tenant.id),
-        CrmService.getUsers(tenant.id),
-        CrmService.getLeadDistributionConfig(tenant.id),
-        CrmService.getRecentLeadDistributions(tenant.id, 20),
-      ])
+      const [sList, tList, msgTmpList, cfList, tmpList, slaList, uList, distConfig, distRecent] =
+        await Promise.all([
+          CrmService.getServices(tenant.id),
+          CrmService.getTags(tenant.id),
+          CrmService.getMessageTemplates(tenant.id),
+          CrmService.getCustomFields(tenant.id),
+          CrmService.getTemplates(tenant.id),
+          CrmService.getSlaConfigs(tenant.id),
+          CrmService.getUsers(tenant.id),
+          CrmService.getLeadDistributionConfig(tenant.id),
+          CrmService.getRecentLeadDistributions(tenant.id, 20),
+        ])
       setServices(sList)
       setTags(tList)
+      setMessageTemplates(msgTmpList)
+      setCustomFields(cfList)
       setTemplates(tmpList)
       setSlas(slaList)
       setUsers(uList)
@@ -256,16 +290,145 @@ export function SettingsPage() {
     }
   }
 
-  const handleCreateTag = async (e: React.FormEvent) => {
+  const handleSaveTag = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!tenant?.id || !newTag.nome) return
+    if (!tenant?.id || !newTag.nome.trim()) return
     try {
-      await CrmService.createTag(tenant.id, newTag)
-      toast({ title: 'Tag cadastrada!' })
+      if (editingTag) {
+        await CrmService.updateTag(editingTag.id, {
+          nome: newTag.nome.trim(),
+          cor: newTag.cor,
+          modulo: newTag.modulo,
+        })
+        toast({ title: 'Tag atualizada com sucesso!' })
+      } else {
+        await CrmService.createTag(tenant.id, {
+          nome: newTag.nome.trim(),
+          cor: newTag.cor,
+          modulo: newTag.modulo,
+        })
+        toast({ title: 'Tag cadastrada com sucesso!' })
+      }
       setTagModalOpen(false)
+      setEditingTag(null)
+      setNewTag({ nome: '', cor: '#2563eb', modulo: 'leads' })
       loadAll()
-    } catch (e) {
-      toast({ title: 'Erro ao cadastrar tag', variant: 'destructive' })
+    } catch (e: any) {
+      toast({ title: 'Erro ao salvar tag', description: e?.message, variant: 'destructive' })
+    }
+  }
+
+  const handleDeleteTag = async (tagId: string) => {
+    try {
+      await CrmService.deleteTag(tagId)
+      toast({ title: 'Tag excluída com sucesso!' })
+      loadAll()
+    } catch (e: any) {
+      toast({ title: 'Erro ao excluir tag', description: e?.message, variant: 'destructive' })
+    }
+  }
+
+  const handleSaveMessageTemplate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!tenant?.id || !messageTemplateData.nome.trim() || !messageTemplateData.conteudo.trim())
+      return
+    try {
+      if (editingMessageTemplate) {
+        await CrmService.updateMessageTemplate(editingMessageTemplate.id, {
+          nome: messageTemplateData.nome.trim(),
+          conteudo: messageTemplateData.conteudo.trim(),
+          tipo: messageTemplateData.tipo,
+          status: messageTemplateData.status,
+        })
+        toast({ title: 'Template de mensagem atualizado!' })
+      } else {
+        await CrmService.createMessageTemplate(tenant.id, {
+          nome: messageTemplateData.nome.trim(),
+          conteudo: messageTemplateData.conteudo.trim(),
+          tipo: messageTemplateData.tipo,
+          status: messageTemplateData.status,
+        })
+        toast({ title: 'Template de mensagem criado!' })
+      }
+      setMessageTemplateModalOpen(false)
+      setEditingMessageTemplate(null)
+      setMessageTemplateData({
+        nome: '',
+        conteudo: '',
+        tipo: 'abordagem',
+        status: 'ativo',
+      })
+      loadAll()
+    } catch (e: any) {
+      toast({ title: 'Erro ao salvar template', description: e?.message, variant: 'destructive' })
+    }
+  }
+
+  const handleDeleteMessageTemplate = async (templateId: string) => {
+    try {
+      await CrmService.deleteMessageTemplate(templateId)
+      toast({ title: 'Template excluído com sucesso!' })
+      loadAll()
+    } catch (e: any) {
+      toast({ title: 'Erro ao excluir template', description: e?.message, variant: 'destructive' })
+    }
+  }
+
+  const handleSaveCustomField = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!tenant?.id || !customFieldData.nome.trim()) return
+    try {
+      let opcoesParsed: string[] = []
+      if (customFieldData.tipo === 'selecao' && customFieldData.opcoesStr.trim()) {
+        opcoesParsed = customFieldData.opcoesStr
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      }
+
+      const payload = {
+        nome: customFieldData.nome.trim(),
+        modulo: customFieldData.modulo,
+        tipo: customFieldData.tipo,
+        opcoes: opcoesParsed,
+        obrigatorio: customFieldData.obrigatorio,
+        ordem: Number(customFieldData.ordem) || 0,
+      }
+
+      if (editingCustomField) {
+        await CrmService.updateCustomField(editingCustomField.id, payload)
+        toast({ title: 'Campo personalizado atualizado!' })
+      } else {
+        await CrmService.createCustomField(tenant.id, payload)
+        toast({ title: 'Campo personalizado criado!' })
+      }
+      setCustomFieldModalOpen(false)
+      setEditingCustomField(null)
+      setCustomFieldData({
+        nome: '',
+        modulo: 'lead',
+        tipo: 'texto',
+        opcoesStr: '',
+        obrigatorio: false,
+        ordem: 0,
+      })
+      loadAll()
+    } catch (e: any) {
+      toast({
+        title: 'Erro ao salvar campo personalizado',
+        description: e?.message,
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const handleDeleteCustomField = async (fieldId: string) => {
+    try {
+      await CrmService.deleteCustomField(fieldId)
+      toast({ title: 'Campo personalizado excluído!' })
+      loadAll()
+    } catch (e: any) {
+      toast({ title: 'Erro ao excluir campo', description: e?.message, variant: 'destructive' })
     }
   }
 
@@ -609,10 +772,22 @@ export function SettingsPage() {
             Equipe &amp; Usuários ({users.length})
           </TabsTrigger>
           <TabsTrigger
+            value="message_templates"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 whitespace-nowrap"
+          >
+            Templates de Mensagem ({messageTemplates.length})
+          </TabsTrigger>
+          <TabsTrigger
+            value="custom_fields"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 whitespace-nowrap"
+          >
+            Campos Personalizados ({customFields.length})
+          </TabsTrigger>
+          <TabsTrigger
             value="tags"
             className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 whitespace-nowrap"
           >
-            Tags &amp; Categorias ({tags.length})
+            Tags ({tags.length})
           </TabsTrigger>
         </TabsList>
 
@@ -1000,27 +1175,319 @@ export function SettingsPage() {
           </div>
         </TabsContent>
 
+        {/* TAB TEMPLATES DE MENSAGEM */}
+        <TabsContent value="message_templates" className="pt-4 space-y-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="font-bold text-sm font-legal-serif flex items-center gap-2">
+                <MessageSquareText className="h-4 w-4 text-primary" />
+                Templates de Mensagem
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                Modelos prontos de mensagens (abordagem, follow-up, propostas, etc.) para acelerar o
+                atendimento no chat.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => {
+                setEditingMessageTemplate(null)
+                setMessageTemplateData({
+                  nome: '',
+                  conteudo: '',
+                  tipo: 'abordagem',
+                  status: 'ativo',
+                })
+                setMessageTemplateModalOpen(true)
+              }}
+              className="h-8 text-xs bg-[#0A1F3F] text-white gap-1.5"
+            >
+              <Plus className="h-3.5 w-3.5" /> Novo Template
+            </Button>
+          </div>
+
+          <div className="bg-card border rounded-xl overflow-hidden shadow-xs">
+            <table className="w-full text-xs text-left">
+              <thead className="bg-muted/50 uppercase text-[11px] font-semibold border-b text-muted-foreground">
+                <tr>
+                  <th className="p-3 pl-4">Título / Nome</th>
+                  <th className="p-3">Categoria</th>
+                  <th className="p-3">Prévia do Conteúdo</th>
+                  <th className="p-3 text-center">Status</th>
+                  <th className="p-3 pr-4 text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {messageTemplates.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="p-8 text-center text-muted-foreground">
+                      Nenhum template de mensagem cadastrado ainda.
+                    </td>
+                  </tr>
+                ) : (
+                  messageTemplates.map((tmp) => (
+                    <tr key={tmp.id} className="hover:bg-muted/30 transition-colors">
+                      <td className="p-3 pl-4 font-semibold text-foreground">{tmp.nome}</td>
+                      <td className="p-3">
+                        <Badge variant="outline" className="capitalize text-[10px]">
+                          {tmp.tipo || 'outro'}
+                        </Badge>
+                      </td>
+                      <td className="p-3 text-muted-foreground max-w-md truncate">
+                        {tmp.conteudo}
+                      </td>
+                      <td className="p-3 text-center">
+                        <Badge
+                          className={
+                            tmp.status === 'ativo'
+                              ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                              : 'bg-muted text-muted-foreground'
+                          }
+                        >
+                          {tmp.status === 'ativo' ? 'Ativo' : 'Inativo'}
+                        </Badge>
+                      </td>
+                      <td className="p-3 pr-4 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setEditingMessageTemplate(tmp)
+                              setMessageTemplateData({
+                                nome: tmp.nome,
+                                conteudo: tmp.conteudo,
+                                tipo: (tmp.tipo as any) || 'abordagem',
+                                status: tmp.status || 'ativo',
+                              })
+                              setMessageTemplateModalOpen(true)
+                            }}
+                            className="h-7 text-xs px-2 gap-1"
+                          >
+                            <Edit2 className="h-3 w-3" /> Editar
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDeleteMessageTemplate(tmp.id)}
+                            className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </TabsContent>
+
+        {/* TAB CAMPOS PERSONALIZADOS */}
+        <TabsContent value="custom_fields" className="pt-4 space-y-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="font-bold text-sm font-legal-serif flex items-center gap-2">
+                <SlidersHorizontal className="h-4 w-4 text-primary" />
+                Campos Personalizados do Tenant
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                Crie atributos customizados para qualificar Leads, Clientes e Oportunidades.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => {
+                setEditingCustomField(null)
+                setCustomFieldData({
+                  nome: '',
+                  modulo: 'lead',
+                  tipo: 'texto',
+                  opcoesStr: '',
+                  obrigatorio: false,
+                  ordem: (customFields.length + 1) * 10,
+                })
+                setCustomFieldModalOpen(true)
+              }}
+              className="h-8 text-xs bg-[#0A1F3F] text-white gap-1.5"
+            >
+              <Plus className="h-3.5 w-3.5" /> Novo Campo
+            </Button>
+          </div>
+
+          <div className="bg-card border rounded-xl overflow-hidden shadow-xs">
+            <table className="w-full text-xs text-left">
+              <thead className="bg-muted/50 uppercase text-[11px] font-semibold border-b text-muted-foreground">
+                <tr>
+                  <th className="p-3 pl-4">Nome do Campo</th>
+                  <th className="p-3">Entidade Alvo (Módulo)</th>
+                  <th className="p-3">Tipo de Dado</th>
+                  <th className="p-3">Opções (se seleção)</th>
+                  <th className="p-3 text-center">Obrigatório</th>
+                  <th className="p-3 pr-4 text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {customFields.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="p-8 text-center text-muted-foreground">
+                      Nenhum campo personalizado cadastrado.
+                    </td>
+                  </tr>
+                ) : (
+                  customFields.map((cf) => {
+                    const opts = Array.isArray(cf.opcoes)
+                      ? cf.opcoes.join(', ')
+                      : typeof cf.opcoes === 'object' &&
+                          cf.opcoes !== null &&
+                          'options' in cf.opcoes
+                        ? (cf.opcoes as any).options?.join(', ')
+                        : '—'
+
+                    return (
+                      <tr key={cf.id} className="hover:bg-muted/30 transition-colors">
+                        <td className="p-3 pl-4 font-semibold text-foreground">{cf.nome}</td>
+                        <td className="p-3">
+                          <Badge variant="outline" className="capitalize text-[10px]">
+                            {cf.modulo === 'lead'
+                              ? 'Lead'
+                              : cf.modulo === 'customer' || cf.modulo === 'cliente'
+                                ? 'Cliente'
+                                : 'Oportunidade'}
+                          </Badge>
+                        </td>
+                        <td className="p-3 font-mono text-[11px] capitalize">{cf.tipo}</td>
+                        <td className="p-3 text-muted-foreground max-w-xs truncate">
+                          {opts || '—'}
+                        </td>
+                        <td className="p-3 text-center">
+                          {cf.obrigatorio ? (
+                            <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/30 text-[10px]">
+                              Sim
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-[11px]">Não</span>
+                          )}
+                        </td>
+                        <td className="p-3 pr-4 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setEditingCustomField(cf)
+                                const curOpts = Array.isArray(cf.opcoes)
+                                  ? cf.opcoes.join(', ')
+                                  : typeof cf.opcoes === 'object' &&
+                                      cf.opcoes !== null &&
+                                      'options' in cf.opcoes
+                                    ? (cf.opcoes as any).options?.join(', ') || ''
+                                    : ''
+                                setCustomFieldData({
+                                  nome: cf.nome,
+                                  modulo: (cf.modulo as any) || 'lead',
+                                  tipo: (cf.tipo as any) || 'texto',
+                                  opcoesStr: curOpts,
+                                  obrigatorio: !!cf.obrigatorio,
+                                  ordem: cf.ordem || 0,
+                                })
+                                setCustomFieldModalOpen(true)
+                              }}
+                              className="h-7 text-xs px-2 gap-1"
+                            >
+                              <Edit2 className="h-3 w-3" /> Editar
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDeleteCustomField(cf.id)}
+                              className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </TabsContent>
+
         {/* TAB TAGS */}
         <TabsContent value="tags" className="pt-4 space-y-4">
           <div className="flex justify-between items-center">
-            <h3 className="font-bold text-sm">Tags &amp; Marcadores</h3>
+            <div>
+              <h3 className="font-bold text-sm font-legal-serif flex items-center gap-2">
+                <Tag className="h-4 w-4 text-primary" />
+                Tags &amp; Segmentação
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                Cadastre e gerencie marcadores coloridos para organizar leads e clientes.
+              </p>
+            </div>
             <Button
               size="sm"
-              onClick={() => setTagModalOpen(true)}
-              className="h-8 text-xs bg-[#0A1F3F] text-white"
+              onClick={() => {
+                setEditingTag(null)
+                setNewTag({ nome: '', cor: '#2563eb', modulo: 'leads' })
+                setTagModalOpen(true)
+              }}
+              className="h-8 text-xs bg-[#0A1F3F] text-white gap-1.5"
             >
-              <Plus className="h-3.5 w-3.5 mr-1" /> Nova Tag
+              <Plus className="h-3.5 w-3.5" /> Nova Tag
             </Button>
           </div>
-          <div className="flex flex-wrap gap-2">
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
             {tags.map((t) => (
-              <Badge
+              <div
                 key={t.id}
-                style={{ backgroundColor: `${t.cor}20`, color: t.cor, borderColor: `${t.cor}40` }}
-                className="text-xs px-3 py-1 border"
+                className="bg-card border rounded-xl p-3.5 shadow-2xs flex items-center justify-between gap-3"
               >
-                {t.nome} ({t.modulo || 'Geral'})
-              </Badge>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span
+                    className="h-3.5 w-3.5 rounded-full shrink-0 border border-black/10 shadow-2xs"
+                    style={{ backgroundColor: t.cor || '#2563eb' }}
+                  />
+                  <div className="min-w-0">
+                    <div className="font-bold text-xs truncate">{t.nome}</div>
+                    <div className="text-[10px] text-muted-foreground capitalize">
+                      Módulo: {t.modulo || 'Geral'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setEditingTag(t)
+                      setNewTag({
+                        nome: t.nome,
+                        cor: t.cor || '#2563eb',
+                        modulo: t.modulo || 'leads',
+                      })
+                      setTagModalOpen(true)
+                    }}
+                    className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                  >
+                    <Edit2 className="h-3 w-3" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDeleteTag(t.id)}
+                    className="h-6 w-6 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
             ))}
           </div>
         </TabsContent>
@@ -1319,15 +1786,15 @@ export function SettingsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* CREATE TAG MODAL */}
+      {/* CREATE / EDIT TAG MODAL */}
       <Dialog open={tagModalOpen} onOpenChange={setTagModalOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-base font-bold font-legal-serif">
-              Cadastrar Tag
+              {editingTag ? 'Editar Tag' : 'Cadastrar Nova Tag'}
             </DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleCreateTag} className="space-y-3 pt-2">
+          <form onSubmit={handleSaveTag} className="space-y-3 pt-2">
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold">Nome da Tag *</Label>
               <Input
@@ -1335,16 +1802,25 @@ export function SettingsPage() {
                 value={newTag.nome}
                 onChange={(e) => setNewTag({ ...newTag, nome: e.target.value })}
                 className="h-9 text-xs"
+                placeholder="Ex: VIP, Decisor, Follow-up 24h"
               />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs font-semibold">Cor Hexadecimal</Label>
-                <Input
-                  value={newTag.cor}
-                  onChange={(e) => setNewTag({ ...newTag, cor: e.target.value })}
-                  className="h-9 text-xs"
-                />
+                <Label className="text-xs font-semibold">Cor (Hexadecimal ou Picker)</Label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={newTag.cor}
+                    onChange={(e) => setNewTag({ ...newTag, cor: e.target.value })}
+                    className="h-9 w-9 p-0.5 rounded border cursor-pointer shrink-0"
+                  />
+                  <Input
+                    value={newTag.cor}
+                    onChange={(e) => setNewTag({ ...newTag, cor: e.target.value })}
+                    className="h-9 text-xs font-mono"
+                  />
+                </div>
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold">Módulo</Label>
@@ -1374,7 +1850,225 @@ export function SettingsPage() {
                 Cancelar
               </Button>
               <Button type="submit" size="sm" className="bg-[#0A1F3F] text-white">
-                Salvar Tag
+                {editingTag ? 'Salvar Alterações' : 'Cadastrar Tag'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* CREATE / EDIT MESSAGE TEMPLATE MODAL */}
+      <Dialog open={messageTemplateModalOpen} onOpenChange={setMessageTemplateModalOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-legal-serif flex items-center gap-2">
+              <MessageSquareText className="h-4 w-4 text-primary" />
+              {editingMessageTemplate ? 'Editar Template de Mensagem' : 'Novo Template de Mensagem'}
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSaveMessageTemplate} className="space-y-3.5 pt-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Título do Template *</Label>
+              <Input
+                required
+                placeholder="Ex: Abordagem Inicial - Tributário"
+                value={messageTemplateData.nome}
+                onChange={(e) =>
+                  setMessageTemplateData({ ...messageTemplateData, nome: e.target.value })
+                }
+                className="h-9 text-xs"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Categoria / Tipo *</Label>
+                <Select
+                  value={messageTemplateData.tipo}
+                  onValueChange={(val: any) =>
+                    setMessageTemplateData({ ...messageTemplateData, tipo: val })
+                  }
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="abordagem">Abordagem</SelectItem>
+                    <SelectItem value="follow-up">Follow-up</SelectItem>
+                    <SelectItem value="proposta">Proposta</SelectItem>
+                    <SelectItem value="objeção">Objeção</SelectItem>
+                    <SelectItem value="pós-venda">Pós-venda</SelectItem>
+                    <SelectItem value="outro">Outro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Status (is_active)</Label>
+                <div className="flex items-center gap-2 h-9 px-1">
+                  <Switch
+                    checked={messageTemplateData.status === 'ativo'}
+                    onCheckedChange={(checked) =>
+                      setMessageTemplateData({
+                        ...messageTemplateData,
+                        status: checked ? 'ativo' : 'inativo',
+                      })
+                    }
+                  />
+                  <span className="text-xs font-semibold">
+                    {messageTemplateData.status === 'ativo' ? 'Ativo' : 'Inativo'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Conteúdo da Mensagem *</Label>
+              <Textarea
+                required
+                rows={5}
+                placeholder="Olá, aqui é do escritório Teixeira & Nascimento Advogados. Identificamos uma oportunidade para sua empresa..."
+                value={messageTemplateData.conteudo}
+                onChange={(e) =>
+                  setMessageTemplateData({ ...messageTemplateData, conteudo: e.target.value })
+                }
+                className="text-xs leading-relaxed"
+              />
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setMessageTemplateModalOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" size="sm" className="bg-[#0A1F3F] text-white">
+                {editingMessageTemplate ? 'Salvar Alterações' : 'Criar Template'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* CREATE / EDIT CUSTOM FIELD MODAL */}
+      <Dialog open={customFieldModalOpen} onOpenChange={setCustomFieldModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-legal-serif flex items-center gap-2">
+              <SlidersHorizontal className="h-4 w-4 text-primary" />
+              {editingCustomField ? 'Editar Campo Personalizado' : 'Novo Campo Personalizado'}
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSaveCustomField} className="space-y-3.5 pt-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Nome do Campo *</Label>
+              <Input
+                required
+                placeholder="Ex: Faturamento Mensal, Ramo de Atuação, Decisor"
+                value={customFieldData.nome}
+                onChange={(e) => setCustomFieldData({ ...customFieldData, nome: e.target.value })}
+                className="h-9 text-xs"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Entidade Alvo (Módulo) *</Label>
+                <Select
+                  value={customFieldData.modulo}
+                  onValueChange={(val: any) =>
+                    setCustomFieldData({ ...customFieldData, modulo: val })
+                  }
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="lead">Lead</SelectItem>
+                    <SelectItem value="customer">Cliente (Customer)</SelectItem>
+                    <SelectItem value="opportunity">Oportunidade</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Tipo do Campo *</Label>
+                <Select
+                  value={customFieldData.tipo}
+                  onValueChange={(val: any) =>
+                    setCustomFieldData({ ...customFieldData, tipo: val })
+                  }
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="texto">Texto</SelectItem>
+                    <SelectItem value="numero">Número</SelectItem>
+                    <SelectItem value="moeda">Moeda (R$)</SelectItem>
+                    <SelectItem value="data">Data</SelectItem>
+                    <SelectItem value="selecao">Seleção (Dropdown)</SelectItem>
+                    <SelectItem value="booleano">Booleano (Sim/Não)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {customFieldData.tipo === 'selecao' && (
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">
+                  Opções de Seleção (separadas por vírgula) *
+                </Label>
+                <Input
+                  required
+                  placeholder="Opção A, Opção B, Opção C"
+                  value={customFieldData.opcoesStr}
+                  onChange={(e) =>
+                    setCustomFieldData({ ...customFieldData, opcoesStr: e.target.value })
+                  }
+                  className="h-9 text-xs"
+                />
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={customFieldData.obrigatorio}
+                  onCheckedChange={(checked) =>
+                    setCustomFieldData({ ...customFieldData, obrigatorio: checked })
+                  }
+                />
+                <Label className="text-xs cursor-pointer font-semibold">Obrigatório?</Label>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">Ordem de Exibição</Label>
+                <Input
+                  type="number"
+                  value={customFieldData.ordem}
+                  onChange={(e) =>
+                    setCustomFieldData({ ...customFieldData, ordem: Number(e.target.value) })
+                  }
+                  className="h-8 text-xs font-mono"
+                />
+              </div>
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setCustomFieldModalOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" size="sm" className="bg-[#0A1F3F] text-white">
+                {editingCustomField ? 'Salvar Alterações' : 'Criar Campo'}
               </Button>
             </DialogFooter>
           </form>
