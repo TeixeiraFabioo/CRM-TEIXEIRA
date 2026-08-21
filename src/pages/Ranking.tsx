@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   Trophy,
   Award,
@@ -10,6 +10,12 @@ import {
   Calendar,
   Medal,
   Percent,
+  Clock,
+  Zap,
+  ArrowUpDown,
+  Filter,
+  RefreshCw,
+  Sparkles,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -30,8 +36,11 @@ interface SellerRank {
   contractsCount: number
   totalValue: number
   leadsCount: number
+  totalOppsCount: number
+  wonOppsCount: number
   conversionRate: number
   avgTicket: number
+  avgClosingDays: number
 }
 
 export function RankingPage() {
@@ -40,7 +49,15 @@ export function RankingPage() {
 
   const [ranks, setRanks] = useState<SellerRank[]>([])
   const [loading, setLoading] = useState(true)
-  const [period, setPeriod] = useState<'current_month' | 'last_month' | 'all_time'>('current_month')
+
+  // Filters and Sorting
+  const [period, setPeriod] = useState<'current_month' | 'last_month' | 'quarter' | 'all_time'>(
+    'all_time',
+  )
+  const [sortBy, setSortBy] = useState<
+    'totalValue' | 'contractsCount' | 'conversionRate' | 'avgClosingDays'
+  >('totalValue')
+  const [teamFilter, setTeamFilter] = useState<string>('todos')
 
   const loadRankingData = async () => {
     if (!tenant?.id) return
@@ -63,10 +80,14 @@ export function RankingPage() {
       } else if (period === 'last_month') {
         startPeriod = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime()
         endPeriod = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59).getTime()
+      } else if (period === 'quarter') {
+        const currentQuarter = Math.floor(now.getMonth() / 3)
+        startPeriod = new Date(now.getFullYear(), currentQuarter * 3, 1).getTime()
+        endPeriod = new Date(now.getFullYear(), (currentQuarter + 1) * 3, 0, 23, 59, 59).getTime()
       }
 
       // Filter signed contracts
-      const signedContracts = contractsList.filter((c) => {
+      const periodSignedContracts = contractsList.filter((c) => {
         const isSigned =
           (c.status || '').toLowerCase() === 'assinado' ||
           (c.sign_status || '').toLowerCase() === 'signed'
@@ -74,74 +95,128 @@ export function RankingPage() {
 
         const cDate = c.data_assinatura
           ? new Date(c.data_assinatura).getTime()
-          : c.created
-            ? new Date(c.created).getTime()
-            : 0
+          : c.signed_at
+            ? new Date(c.signed_at).getTime()
+            : c.created
+              ? new Date(c.created).getTime()
+              : 0
 
         if (startPeriod && cDate < startPeriod) return false
         if (endPeriod !== Infinity && cDate > endPeriod) return false
         return true
       })
 
-      // Filter leads
+      // Map contracts to opportunities
+      const oppMap = new Map<string, OpportunityRecord>()
+      oppsList.forEach((opp) => oppMap.set(opp.id, opp))
+
+      // Filter opportunities within period
+      const periodOpps = oppsList.filter((o) => {
+        const oppDate = o.created ? new Date(o.created).getTime() : 0
+        if (startPeriod && oppDate < startPeriod) return false
+        if (endPeriod !== Infinity && oppDate > endPeriod) return false
+        return true
+      })
+
+      // Filter leads within period
       const periodLeads = leadsList.filter((l) => {
-        const lDate = l.created ? new Date(l.created).getTime() : 0
+        const lDate = l.entry_date
+          ? new Date(l.entry_date).getTime()
+          : l.created
+            ? new Date(l.created).getTime()
+            : 0
         if (startPeriod && lDate < startPeriod) return false
         if (endPeriod !== Infinity && lDate > endPeriod) return false
         return true
       })
 
-      // Map contracts to responsible user
-      const oppMap = new Map<string, OpportunityRecord>()
-      oppsList.forEach((opp) => oppMap.set(opp.id, opp))
-
-      const sellerData = usersList.map((user) => {
-        // Contracts where user is directly assigned or responsible for opp
-        const userContracts = signedContracts.filter((c) => {
+      const sellerData: SellerRank[] = usersList.map((user) => {
+        // 1. Contratos onde o usuário é responsável
+        const userContracts = periodSignedContracts.filter((c) => {
           if (c.oportunidade_id && oppMap.has(c.oportunidade_id)) {
             const op = oppMap.get(c.oportunidade_id)
             if (op?.assigned_to === user.id || op?.responsavel_id === user.id) return true
           }
-          // fallback if contract has responsavel_id or if single user
           return false
         })
 
-        // If no user matched but user is the only one, assign tenant contracts
-        const effectiveContracts =
-          userContracts.length > 0 ? userContracts : usersList.length === 1 ? signedContracts : []
-
-        const contractsCount = effectiveContracts.length
-        const totalValue = effectiveContracts.reduce((acc, c) => acc + (Number(c.valor) || 0), 0)
-
-        // User leads
-        const userLeads = periodLeads.filter(
-          (l) =>
-            l.assigned_to === user.id || l.responsavel_id === user.id || usersList.length === 1,
+        // 2. Oportunidades do usuário no período
+        const userOpps = periodOpps.filter(
+          (o) => o.assigned_to === user.id || o.responsavel_id === user.id,
         )
-        const leadsCount = userLeads.length
+        const wonOpps = userOpps.filter(
+          (o) =>
+            (o.status || '').toLowerCase() === 'won' ||
+            (o.status || '').toLowerCase() === 'ganha' ||
+            (o.status || '').toLowerCase() === 'ganho',
+        )
 
-        // Conversion Rate (Leads -> Contracts)
-        const conversionRate =
-          leadsCount > 0
-            ? Math.min(100, Math.round((contractsCount / leadsCount) * 100))
-            : contractsCount > 0
-              ? 100
-              : 0
+        // 3. Leads do usuário
+        const userLeads = periodLeads.filter(
+          (l) => l.assigned_to === user.id || l.responsavel_id === user.id,
+        )
+
+        // Se houver contratos assinados vinculados a opps ganhas
+        const contractsCount = userContracts.length
+        const totalValue = userContracts.reduce((acc, c) => acc + (Number(c.valor) || 0), 0)
+
+        // Taxa de conversão: Oportunidades Ganhas / Total de Oportunidades (ou Contratos / Leads se não houver opps)
+        let conversionRate = 0
+        if (userOpps.length > 0) {
+          conversionRate = Math.min(100, Math.round((wonOpps.length / userOpps.length) * 100))
+        } else if (userLeads.length > 0) {
+          conversionRate = Math.min(100, Math.round((contractsCount / userLeads.length) * 100))
+        } else if (contractsCount > 0) {
+          conversionRate = 100
+        }
 
         const avgTicket = contractsCount > 0 ? totalValue / contractsCount : 0
+
+        // Velocidade Média de Fechamento (dias entre criação da oportunidade e data de ganho / assinatura)
+        let totalClosingDays = 0
+        let closedCount = 0
+
+        userContracts.forEach((c) => {
+          const opp = c.oportunidade_id ? oppMap.get(c.oportunidade_id) : null
+          const createdTime = opp?.created
+            ? new Date(opp.created).getTime()
+            : c.created
+              ? new Date(c.created).getTime()
+              : 0
+          const signedTime = c.data_assinatura
+            ? new Date(c.data_assinatura).getTime()
+            : c.signed_at
+              ? new Date(c.signed_at).getTime()
+              : opp?.data_ganho
+                ? new Date(opp.data_ganho).getTime()
+                : opp?.closed_at
+                  ? new Date(opp.closed_at).getTime()
+                  : 0
+
+          if (createdTime && signedTime && signedTime >= createdTime) {
+            const diffDays = Math.max(
+              1,
+              Math.round((signedTime - createdTime) / (1000 * 60 * 60 * 24)),
+            )
+            totalClosingDays += diffDays
+            closedCount++
+          }
+        })
+
+        const avgClosingDays = closedCount > 0 ? Math.round(totalClosingDays / closedCount) : 4
 
         return {
           user,
           contractsCount,
           totalValue,
-          leadsCount,
+          leadsCount: userLeads.length,
+          totalOppsCount: userOpps.length,
+          wonOppsCount: wonOpps.length,
           conversionRate,
           avgTicket,
+          avgClosingDays,
         }
       })
-
-      // Sort by total value descending
-      sellerData.sort((a, b) => b.totalValue - a.totalValue || b.contractsCount - a.contractsCount)
 
       setRanks(sellerData)
     } catch (e: any) {
@@ -156,16 +231,55 @@ export function RankingPage() {
     loadRankingData()
   }, [tenant?.id, period])
 
+  // Filter by team and sort ranks
+  const sortedAndFilteredRanks = useMemo(() => {
+    const filtered = ranks.filter((r) => {
+      if (teamFilter === 'todos') return true
+      const userTeam = (r.user.team || 'comercial').toLowerCase()
+      return userTeam === teamFilter.toLowerCase()
+    })
+
+    return [...filtered].sort((a, b) => {
+      if (sortBy === 'totalValue') {
+        return b.totalValue - a.totalValue || b.contractsCount - a.contractsCount
+      }
+      if (sortBy === 'contractsCount') {
+        return b.contractsCount - a.contractsCount || b.totalValue - a.totalValue
+      }
+      if (sortBy === 'conversionRate') {
+        return b.conversionRate - a.conversionRate || b.totalValue - a.totalValue
+      }
+      if (sortBy === 'avgClosingDays') {
+        // menor tempo é melhor se tiver contratos
+        if (a.contractsCount === 0) return 1
+        if (b.contractsCount === 0) return -1
+        return a.avgClosingDays - b.avgClosingDays
+      }
+      return 0
+    })
+  }, [ranks, sortBy, teamFilter])
+
   // Summary Metrics
-  const totalContractsAll = ranks.reduce((acc, r) => acc + r.contractsCount, 0)
-  const totalValueAll = ranks.reduce((acc, r) => acc + r.totalValue, 0)
-  const totalLeadsAll = ranks.reduce((acc, r) => acc + r.leadsCount, 0)
+  const totalContractsAll = sortedAndFilteredRanks.reduce((acc, r) => acc + r.contractsCount, 0)
+  const totalValueAll = sortedAndFilteredRanks.reduce((acc, r) => acc + r.totalValue, 0)
+  const totalOppsAll = sortedAndFilteredRanks.reduce((acc, r) => acc + r.totalOppsCount, 0)
+  const totalWonAll = sortedAndFilteredRanks.reduce((acc, r) => acc + r.wonOppsCount, 0)
   const overallConversion =
-    totalLeadsAll > 0
-      ? Math.min(100, Math.round((totalContractsAll / totalLeadsAll) * 100))
+    totalOppsAll > 0
+      ? Math.min(100, Math.round((totalWonAll / totalOppsAll) * 100))
       : totalContractsAll > 0
         ? 100
         : 0
+
+  const avgTeamClosing =
+    sortedAndFilteredRanks.filter((r) => r.contractsCount > 0).length > 0
+      ? Math.round(
+          sortedAndFilteredRanks
+            .filter((r) => r.contractsCount > 0)
+            .reduce((acc, r) => acc + r.avgClosingDays, 0) /
+            sortedAndFilteredRanks.filter((r) => r.contractsCount > 0).length,
+        )
+      : 0
 
   return (
     <div className="space-y-6">
@@ -177,20 +291,44 @@ export function RankingPage() {
             Ranking &amp; Performance dos Advogados / Vendedores
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Classificação em tempo real por contratos assinados, receita gerada e taxa de conversão
-            no período.
+            Classificação em tempo real por contratos assinados, receita gerada, velocidade de
+            fechamento e taxa de conversão no CRM Teixeira &amp; Nascimento.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={loadRankingData}
+            className="h-9 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Atualizar
+          </Button>
+
+          {/* Period Selector */}
           <Select value={period} onValueChange={(val: any) => setPeriod(val)}>
-            <SelectTrigger className="h-9 w-44 text-xs">
+            <SelectTrigger className="h-9 w-40 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="all_time">Todo o Histórico</SelectItem>
               <SelectItem value="current_month">Mês Atual</SelectItem>
               <SelectItem value="last_month">Mês Anterior</SelectItem>
-              <SelectItem value="all_time">Todo o Período</SelectItem>
+              <SelectItem value="quarter">Trimestre Atual</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {/* Team Filter */}
+          <Select value={teamFilter} onValueChange={setTeamFilter}>
+            <SelectTrigger className="h-9 w-36 text-xs">
+              <SelectValue placeholder="Equipe" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todas as Equipes</SelectItem>
+              <SelectItem value="comercial">Comercial</SelectItem>
+              <SelectItem value="juridico">Jurídico</SelectItem>
+              <SelectItem value="financeiro">Financeiro</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -204,8 +342,8 @@ export function RankingPage() {
           </div>
           <div>
             <div className="text-xs text-muted-foreground">Líder do Período</div>
-            <div className="text-sm font-bold font-legal-serif truncate max-w-[150px]">
-              {ranks[0]?.user?.name || 'Nenhum'}
+            <div className="text-sm font-bold font-legal-serif truncate max-w-[160px]">
+              {sortedAndFilteredRanks[0]?.user?.name || 'Nenhum'}
             </div>
           </div>
         </div>
@@ -236,38 +374,42 @@ export function RankingPage() {
 
         <div className="bg-card border border-border/80 rounded-xl p-4 shadow-xs flex items-center gap-3">
           <div className="h-10 w-10 rounded-xl bg-purple-500/10 text-purple-600 flex items-center justify-center shrink-0">
-            <TrendingUp className="h-5 w-5" />
+            <Clock className="h-5 w-5" />
           </div>
           <div>
-            <div className="text-xs text-muted-foreground">Conversão Geral (Leads → Contrato)</div>
+            <div className="text-xs text-muted-foreground">Velocidade Média Fechamento</div>
             <div className="text-lg font-bold font-legal-serif text-purple-600">
-              {overallConversion}%
+              {avgTeamClosing > 0 ? `${avgTeamClosing} dias` : '—'}
             </div>
           </div>
         </div>
       </div>
 
       {/* Top 3 Podium Cards */}
-      {!loading && ranks.length >= 2 && (
+      {!loading && sortedAndFilteredRanks.length >= 2 && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
           {/* 2nd Place */}
-          {ranks[1] && (
+          {sortedAndFilteredRanks[1] && (
             <div className="bg-card border border-border/80 rounded-xl p-5 shadow-xs text-center space-y-2 relative order-2 md:order-1">
               <div className="h-8 w-8 rounded-full bg-slate-200 text-slate-700 font-bold flex items-center justify-center mx-auto text-xs border">
                 2º
               </div>
-              <h3 className="font-bold text-sm">{ranks[1].user.name}</h3>
+              <h3 className="font-bold text-sm font-legal-serif">
+                {sortedAndFilteredRanks[1].user.name}
+              </h3>
               <div className="text-base font-bold text-primary font-mono">
-                R$ {ranks[1].totalValue.toLocaleString('pt-BR')}
+                R$ {sortedAndFilteredRanks[1].totalValue.toLocaleString('pt-BR')}
               </div>
               <div className="text-xs text-muted-foreground">
-                {ranks[1].contractsCount} contratos • {ranks[1].conversionRate}% conv.
+                {sortedAndFilteredRanks[1].contractsCount} contratos •{' '}
+                {sortedAndFilteredRanks[1].conversionRate}% conv. •{' '}
+                {sortedAndFilteredRanks[1].avgClosingDays}d fech.
               </div>
             </div>
           )}
 
           {/* 1st Place Champion */}
-          {ranks[0] && (
+          {sortedAndFilteredRanks[0] && (
             <div className="bg-card border-2 border-amber-500/60 bg-amber-500/5 rounded-xl p-6 shadow-md text-center space-y-2 relative order-1 md:order-2 scale-105">
               <div className="h-10 w-10 rounded-full bg-amber-500 text-white font-bold flex items-center justify-center mx-auto shadow-sm">
                 <Trophy className="h-5 w-5" />
@@ -276,29 +418,35 @@ export function RankingPage() {
                 1º Lugar Campeão
               </Badge>
               <h3 className="font-bold text-base text-foreground font-legal-serif">
-                {ranks[0].user.name}
+                {sortedAndFilteredRanks[0].user.name}
               </h3>
               <div className="text-xl font-bold text-emerald-600 font-mono">
-                R$ {ranks[0].totalValue.toLocaleString('pt-BR')}
+                R$ {sortedAndFilteredRanks[0].totalValue.toLocaleString('pt-BR')}
               </div>
               <div className="text-xs text-muted-foreground">
-                {ranks[0].contractsCount} contratos assinados • {ranks[0].conversionRate}% conversão
+                {sortedAndFilteredRanks[0].contractsCount} contratos assinados •{' '}
+                {sortedAndFilteredRanks[0].conversionRate}% conversão •{' '}
+                {sortedAndFilteredRanks[0].avgClosingDays}d médio
               </div>
             </div>
           )}
 
           {/* 3rd Place */}
-          {ranks[2] && (
+          {sortedAndFilteredRanks[2] && (
             <div className="bg-card border border-border/80 rounded-xl p-5 shadow-xs text-center space-y-2 relative order-3">
               <div className="h-8 w-8 rounded-full bg-amber-700/20 text-amber-800 font-bold flex items-center justify-center mx-auto text-xs border border-amber-700/30">
                 3º
               </div>
-              <h3 className="font-bold text-sm">{ranks[2].user.name}</h3>
+              <h3 className="font-bold text-sm font-legal-serif">
+                {sortedAndFilteredRanks[2].user.name}
+              </h3>
               <div className="text-base font-bold text-primary font-mono">
-                R$ {ranks[2].totalValue.toLocaleString('pt-BR')}
+                R$ {sortedAndFilteredRanks[2].totalValue.toLocaleString('pt-BR')}
               </div>
               <div className="text-xs text-muted-foreground">
-                {ranks[2].contractsCount} contratos • {ranks[2].conversionRate}% conv.
+                {sortedAndFilteredRanks[2].contractsCount} contratos •{' '}
+                {sortedAndFilteredRanks[2].conversionRate}% conv. •{' '}
+                {sortedAndFilteredRanks[2].avgClosingDays}d fech.
               </div>
             </div>
           )}
@@ -306,22 +454,38 @@ export function RankingPage() {
       )}
 
       {/* Full Leaderboard Table */}
-      <div className="bg-card border border-border/80 rounded-xl shadow-xs overflow-hidden">
-        <div className="p-4 border-b flex justify-between items-center bg-muted/20">
-          <h3 className="font-bold text-sm font-legal-serif flex items-center gap-2">
+      <div className="bg-card border border-border/80 rounded-xl shadow-xs overflow-hidden space-y-3 p-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b">
+          <div className="flex items-center gap-2">
             <Medal className="h-4 w-4 text-primary" />
-            Tabela Completa de Classificação
-          </h3>
-          <span className="text-xs text-muted-foreground">
-            Ordenado por <strong>Valor Total Fechado</strong>
-          </span>
+            <h3 className="font-bold text-sm font-legal-serif">
+              Tabela de Classificação dos Vendedores
+            </h3>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1">
+              <ArrowUpDown className="h-3 w-3" /> Ordenar por:
+            </span>
+            <Select value={sortBy} onValueChange={(val: any) => setSortBy(val)}>
+              <SelectTrigger className="h-8 w-44 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="totalValue">Valor Total Fechado</SelectItem>
+                <SelectItem value="contractsCount">Quantidade de Contratos</SelectItem>
+                <SelectItem value="conversionRate">Taxa de Conversão</SelectItem>
+                <SelectItem value="avgClosingDays">Velocidade de Fechamento</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         {loading ? (
           <div className="flex items-center justify-center min-h-[200px]">
             <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
           </div>
-        ) : ranks.length === 0 ? (
+        ) : sortedAndFilteredRanks.length === 0 ? (
           <div className="p-12 text-center text-xs text-muted-foreground">
             Nenhum dado de vendedores ou contratos no período selecionado.
           </div>
@@ -330,17 +494,18 @@ export function RankingPage() {
             <table className="w-full text-xs text-left">
               <thead className="bg-muted/50 uppercase text-[11px] font-semibold border-b text-muted-foreground">
                 <tr>
-                  <th className="p-3.5 pl-5 text-center w-14">Posição</th>
+                  <th className="p-3.5 pl-4 text-center w-14">Posição</th>
                   <th className="p-3.5">Advogado / Vendedor</th>
                   <th className="p-3.5 text-center">Contratos Fechados</th>
-                  <th className="p-3.5 text-right">Valor Total (R$)</th>
+                  <th className="p-3.5 text-right">Receita Total (R$)</th>
                   <th className="p-3.5 text-right">Ticket Médio</th>
-                  <th className="p-3.5 text-center">Leads Atendidos</th>
-                  <th className="p-3.5 pr-5 text-right">Taxa de Conversão</th>
+                  <th className="p-3.5 text-center">Velocidade Média</th>
+                  <th className="p-3.5 text-center">Oportunidades Ganhas</th>
+                  <th className="p-3.5 pr-4 text-right">Taxa de Conversão</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {ranks.map((r, index) => {
+                {sortedAndFilteredRanks.map((r, index) => {
                   const pos = index + 1
                   const isTop1 = pos === 1
                   const isTop2 = pos === 2
@@ -353,7 +518,7 @@ export function RankingPage() {
                         isTop1 ? 'bg-amber-500/5 font-medium' : ''
                       }`}
                     >
-                      <td className="p-3.5 pl-5 text-center">
+                      <td className="p-3.5 pl-4 text-center">
                         {isTop1 ? (
                           <span className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-amber-500 text-white font-bold text-xs shadow-2xs">
                             1
@@ -404,11 +569,22 @@ export function RankingPage() {
                         R$ {r.avgTicket.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </td>
 
-                      <td className="p-3.5 text-center font-mono text-muted-foreground">
-                        {r.leadsCount}
+                      <td className="p-3.5 text-center font-mono">
+                        {r.contractsCount > 0 ? (
+                          <Badge variant="outline" className="text-[10px] font-mono">
+                            <Clock className="h-2.5 w-2.5 mr-1 text-muted-foreground" />
+                            {r.avgClosingDays} dias
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </td>
 
-                      <td className="p-3.5 pr-5 text-right">
+                      <td className="p-3.5 text-center font-mono text-muted-foreground">
+                        {r.wonOppsCount} / {r.totalOppsCount}
+                      </td>
+
+                      <td className="p-3.5 pr-4 text-right">
                         <Badge
                           className={
                             r.conversionRate >= 20

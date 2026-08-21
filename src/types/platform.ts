@@ -501,6 +501,9 @@ export interface GoalRecord {
   data_inicio?: string
   data_fim?: string
   status?: string
+  expand?: {
+    usuario_id?: UserRecord
+  }
   created?: string
   updated?: string
 }
