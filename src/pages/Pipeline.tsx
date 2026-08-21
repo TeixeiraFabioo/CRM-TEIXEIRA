@@ -14,6 +14,12 @@ import {
   DollarSign,
   Briefcase,
   CheckCircle2,
+  FileSignature,
+  Send,
+  Loader2,
+  ExternalLink,
+  Copy,
+  Check,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -42,6 +48,7 @@ import {
   PipelineRecord,
   UserRecord,
   LeadRecord,
+  ContractRecord,
 } from '@/types/platform'
 
 export function PipelinePage() {
@@ -54,9 +61,11 @@ export function PipelinePage() {
   const [currentPipeline, setCurrentPipeline] = useState<PipelineRecord | null>(null)
   const [stages, setStages] = useState<PipelineStageRecord[]>([])
   const [opportunities, setOpportunities] = useState<OpportunityRecord[]>([])
+  const [contracts, setContracts] = useState<ContractRecord[]>([])
   const [users, setUsers] = useState<UserRecord[]>([])
   const [leads, setLeads] = useState<LeadRecord[]>([])
   const [loading, setLoading] = useState(true)
+  const [sendingContractId, setSendingContractId] = useState<string | null>(null)
 
   const [viewMode, setViewMode] = useState<'kanban' | 'list'>('kanban')
   const [searchTerm, setSearchTerm] = useState('')
@@ -81,17 +90,19 @@ export function PipelinePage() {
     if (!tenant?.id) return
     setLoading(true)
     try {
-      const [pipeList, oppList, userList, leadList] = await Promise.all([
+      const [pipeList, oppList, userList, leadList, contractList] = await Promise.all([
         CrmService.getPipelines(tenant.id),
         CrmService.getOpportunities(tenant.id),
         CrmService.getUsers(tenant.id),
         CrmService.getLeads(tenant.id),
+        CrmService.getContracts(tenant.id),
       ])
 
       setPipelines(pipeList)
       setOpportunities(oppList)
       setUsers(userList)
       setLeads(leadList)
+      setContracts(contractList)
 
       const activePipe = pipeList.find((p) => p.is_default) || pipeList[0]
       if (activePipe) {
@@ -148,6 +159,19 @@ export function PipelinePage() {
     }
   }
 
+  // Verifica se o estágio corresponde a Contrato ou Proposta Aceita
+  const isContractStage = (stageName?: string, stageProb?: number) => {
+    if (!stageName) return false
+    const n = stageName.toLowerCase()
+    return (
+      n.includes('contrato') ||
+      n.includes('negociação') ||
+      n.includes('proposta aceita') ||
+      n.includes('fechamento') ||
+      (stageProb !== undefined && stageProb >= 85 && stageProb < 100)
+    )
+  }
+
   // Handle Drag and Drop
   const handleDragStart = (e: React.DragEvent, id: string) => {
     setDraggedOppId(id)
@@ -163,6 +187,9 @@ export function PipelinePage() {
     const oppId = draggedOppId || e.dataTransfer.getData('text/plain')
     if (!oppId) return
 
+    const targetStage = stages.find((s) => s.id === newStageId)
+    const targetOpp = opportunities.find((o) => o.id === oppId)
+
     // Optimistic UI update
     setOpportunities((prev) =>
       prev.map((o) => (o.id === oppId ? { ...o, stage_id: newStageId, etapa_id: newStageId } : o)),
@@ -173,12 +200,92 @@ export function PipelinePage() {
         stage_id: newStageId,
         etapa_id: newStageId,
       })
+
+      // Se moveu para etapa de Contrato / Proposta Aceita, dispara criação de contrato vinculado
+      if (tenant?.id && targetStage && isContractStage(targetStage.name, targetStage.probability)) {
+        // Verificar se já existe contrato para essa oportunidade
+        const existing = contracts.find((c) => c.oportunidade_id === oppId)
+        if (!existing) {
+          const createdContract = await CrmService.createContract(tenant.id, {
+            oportunidade_id: oppId,
+            cliente_id: targetOpp?.customer_id || targetOpp?.cliente_id,
+            titulo: `Contrato de Honorários - ${targetOpp?.title || 'Novo Negócio'}`,
+            valor: targetOpp?.value || 20000,
+            status: 'aguardando',
+            sign_status: 'pending',
+            plataforma: 'zapsign',
+            sign_provider: 'zapsign',
+          })
+          setContracts((prev) => [createdContract, ...prev])
+          toast({
+            title: 'Contrato gerado automaticamente!',
+            description: 'Pronto para disparo e assinatura eletrônica via ZapSign.',
+          })
+        }
+      }
+
       toast({ title: 'Etapa da oportunidade atualizada!' })
     } catch (err) {
       toast({ title: 'Erro ao mover oportunidade', variant: 'destructive' })
       loadPipelineData()
     } finally {
       setDraggedOppId(null)
+    }
+  }
+
+  // Disparo manual/direto de envio para ZapSign
+  const handleSendContract = async (
+    e: React.MouseEvent,
+    opp: OpportunityRecord,
+    contract?: ContractRecord,
+  ) => {
+    e.stopPropagation()
+    if (!tenant?.id) return
+
+    let targetContract = contract
+    setSendingContractId(opp.id)
+
+    try {
+      // Se ainda não existir contrato, criar antes
+      if (!targetContract) {
+        targetContract = await CrmService.createContract(tenant.id, {
+          oportunidade_id: opp.id,
+          cliente_id: opp.customer_id || opp.cliente_id,
+          titulo: `Contrato de Honorários - ${opp.title}`,
+          valor: opp.value || 20000,
+          status: 'aguardando',
+          sign_status: 'pending',
+          plataforma: 'zapsign',
+          sign_provider: 'zapsign',
+        })
+      }
+
+      // Atualizar sign_status para 'sent' — isso dispara o hook do backend que integra com ZapSign
+      const updated = await CrmService.sendContractForSignature(targetContract.id)
+
+      // Atualizar lista local
+      setContracts((prev) => {
+        const filtered = prev.filter((c) => c.id !== updated.id)
+        return [updated, ...filtered]
+      })
+
+      toast({
+        title: 'Enviado para assinatura!',
+        description: 'Documento gerado e enviado para assinatura eletrônica via ZapSign.',
+      })
+
+      // Recarrega em 2 segundos para sincronizar o sign_link criado pelo backend hook
+      setTimeout(() => {
+        loadPipelineData()
+      }, 2000)
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao enviar para assinatura',
+        description: err?.message || 'Falha na comunicação com o backend.',
+        variant: 'destructive',
+      })
+    } finally {
+      setSendingContractId(null)
     }
   }
 
@@ -372,6 +479,101 @@ export function PipelinePage() {
                             <span>{opp.probabilidade || stage.probability || 50}%</span>
                           </div>
                         </div>
+
+                        {/* SEÇÃO DE CONTRATO / ZAPSIGN TRIGGER NO CARD */}
+                        {(() => {
+                          const oppContract = contracts.find((c) => c.oportunidade_id === opp.id)
+                          const isInContractStage = isContractStage(stage.name, stage.probability)
+
+                          if (!isInContractStage && !oppContract) return null
+
+                          const isSent =
+                            oppContract?.sign_status === 'sent' || oppContract?.status === 'enviado'
+                          const isSigned =
+                            oppContract?.sign_status === 'signed' ||
+                            oppContract?.status === 'assinado'
+                          const signLink =
+                            oppContract?.sign_link ||
+                            oppContract?.sign_url ||
+                            oppContract?.signing_link
+
+                          return (
+                            <div
+                              className="mt-2.5 pt-2 border-t border-dashed border-border/80 flex flex-col gap-1.5"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-semibold flex items-center gap-1 text-primary">
+                                  <FileSignature className="h-3 w-3" />
+                                  {isSigned
+                                    ? 'Contrato Assinado'
+                                    : isSent
+                                      ? 'Aguardando Assinatura'
+                                      : 'Contrato ZapSign'}
+                                </span>
+                                {isSigned ? (
+                                  <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[9px] h-4 px-1.5">
+                                    Assinado
+                                  </Badge>
+                                ) : isSent ? (
+                                  <Badge className="bg-blue-500/10 text-blue-600 border-blue-500/30 text-[9px] h-4 px-1.5">
+                                    Enviado
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline" className="text-[9px] h-4 px-1.5">
+                                    Pendente
+                                  </Badge>
+                                )}
+                              </div>
+
+                              {!isSigned && !isSent && (
+                                <Button
+                                  size="sm"
+                                  onClick={(e) => handleSendContract(e, opp, oppContract)}
+                                  disabled={sendingContractId === opp.id}
+                                  className="h-6 text-[10px] w-full bg-[#0A1F3F] hover:bg-[#0A1F3F]/90 text-white gap-1"
+                                >
+                                  {sendingContractId === opp.id ? (
+                                    <>
+                                      <Loader2 className="h-2.5 w-2.5 animate-spin" /> Disparando
+                                      ZapSign...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Send className="h-2.5 w-2.5" /> Enviar para Assinatura
+                                    </>
+                                  )}
+                                </Button>
+                              )}
+
+                              {signLink && (
+                                <div className="flex items-center gap-1">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(signLink)
+                                      toast({ title: 'Link de assinatura copiado!' })
+                                    }}
+                                    className="h-5 text-[9px] flex-1 px-1.5 gap-1"
+                                  >
+                                    <Copy className="h-2.5 w-2.5" /> Copiar Link
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    asChild
+                                    className="h-5 text-[9px] px-1.5"
+                                  >
+                                    <a href={signLink} target="_blank" rel="noopener noreferrer">
+                                      <ExternalLink className="h-2.5 w-2.5" />
+                                    </a>
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })()}
                       </div>
                     ))
                   )}
@@ -390,40 +592,74 @@ export function PipelinePage() {
                 <th className="p-3">Serviço Jurídico</th>
                 <th className="p-3">Valor</th>
                 <th className="p-3">Etapa Atual</th>
-                <th className="p-3">Probabilidade</th>
+                <th className="p-3">Contrato / Assinatura</th>
                 <th className="p-3">Responsável</th>
                 <th className="p-3 pr-4 text-right">Ação</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/60">
-              {filteredOpps.map((opp) => (
-                <tr
-                  key={opp.id}
-                  className="hover:bg-muted/40 cursor-pointer"
-                  onClick={() => navigate(`/oportunidades/${opp.id}`)}
-                >
-                  <td className="p-3 pl-4 font-semibold text-foreground">{opp.title}</td>
-                  <td className="p-3 text-muted-foreground">{opp.servico || 'Geral'}</td>
-                  <td className="p-3 font-bold">
-                    R$ {Number(opp.value || 0).toLocaleString('pt-BR')}
-                  </td>
-                  <td className="p-3">
-                    <Badge variant="outline">{opp.expand?.stage_id?.name || 'Qualificação'}</Badge>
-                  </td>
-                  <td className="p-3">{opp.probabilidade || 50}%</td>
-                  <td className="p-3">{opp.expand?.assigned_to?.name || 'Geral'}</td>
-                  <td className="p-3 pr-4 text-right">
-                    <Button variant="ghost" size="sm" className="h-7 text-xs">
-                      Abrir →
-                    </Button>
-                  </td>
-                </tr>
-              ))}
+              {filteredOpps.map((opp) => {
+                const oppContract = contracts.find((c) => c.oportunidade_id === opp.id)
+                const isSent =
+                  oppContract?.sign_status === 'sent' || oppContract?.status === 'enviado'
+                const isSigned =
+                  oppContract?.sign_status === 'signed' || oppContract?.status === 'assinado'
+
+                return (
+                  <tr
+                    key={opp.id}
+                    className="hover:bg-muted/40 cursor-pointer"
+                    onClick={() => navigate(`/oportunidades/${opp.id}`)}
+                  >
+                    <td className="p-3 pl-4 font-semibold text-foreground">{opp.title}</td>
+                    <td className="p-3 text-muted-foreground">{opp.servico || 'Geral'}</td>
+                    <td className="p-3 font-bold">
+                      R$ {Number(opp.value || 0).toLocaleString('pt-BR')}
+                    </td>
+                    <td className="p-3">
+                      <Badge variant="outline">
+                        {opp.expand?.stage_id?.name || 'Qualificação'}
+                      </Badge>
+                    </td>
+                    <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                      {oppContract ? (
+                        <div className="flex items-center gap-1.5">
+                          {isSigned ? (
+                            <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px]">
+                              Assinado
+                            </Badge>
+                          ) : isSent ? (
+                            <Badge className="bg-blue-500/10 text-blue-600 border-blue-500/30 text-[10px]">
+                              Enviado
+                            </Badge>
+                          ) : (
+                            <Button
+                              size="sm"
+                              onClick={(e) => handleSendContract(e, opp, oppContract)}
+                              disabled={sendingContractId === opp.id}
+                              className="h-6 text-[10px] bg-[#0A1F3F] text-white gap-1"
+                            >
+                              <Send className="h-2.5 w-2.5" /> Enviar p/ Assinar
+                            </Button>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground text-[11px]">—</span>
+                      )}
+                    </td>
+                    <td className="p-3">{opp.expand?.assigned_to?.name || 'Geral'}</td>
+                    <td className="p-3 pr-4 text-right">
+                      <Button variant="ghost" size="sm" className="h-7 text-xs">
+                        Abrir →
+                      </Button>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
       )}
-
       {/* CREATE MODAL */}
       <Dialog open={createModalOpen} onOpenChange={setCreateModalOpen}>
         <DialogContent className="max-w-md">

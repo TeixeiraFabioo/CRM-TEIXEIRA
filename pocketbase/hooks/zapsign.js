@@ -1151,7 +1151,7 @@ routerAdd(
       if (!token) {
         return e.json(400, {
           success: false,
-          message: 'Token do ZapSign não informado nem configurado nas variáveis de ambiente.',
+          message: 'Token do ZapSign não informado nem configurado.',
         })
       }
 
@@ -1191,6 +1191,275 @@ routerAdd(
         success: false,
         status: 'error',
         message: 'Erro ao comunicar com a API do ZapSign: ' + (err.message || String(err)),
+      })
+    }
+  },
+  $apis.requireAuth(),
+)
+
+// --- 6. Endpoint de Conexão ZapSign: POST /api/signatures/zapsign/connect ---
+routerAdd(
+  'POST',
+  '/api/signatures/zapsign/connect',
+  (e) => {
+    try {
+      const reqBody = e.requestInfo().body || {}
+      const token = (reqBody.token || reqBody.api_token || '').trim()
+      const tenantId = reqBody.tenant_id || (e.auth && e.auth.get('tenant_id')) || ''
+      const sandbox = !!reqBody.sandbox
+
+      if (!tenantId) {
+        return e.json(400, { success: false, error: 'tenant_id é obrigatório.' })
+      }
+      if (!token) {
+        return e.json(400, { success: false, error: 'Token do ZapSign é obrigatório.' })
+      }
+
+      // Validar o token chamando a API do ZapSign
+      const baseUrl = sandbox
+        ? 'https://sandbox.api.zapsign.com.br/api/v1/docs/'
+        : 'https://api.zapsign.com.br/api/v1/docs/'
+
+      let testRes
+      try {
+        testRes = $http.send({
+          url: baseUrl + '?page=1',
+          method: 'GET',
+          headers: {
+            Authorization: 'Bearer ' + token,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15,
+        })
+      } catch (httpErr) {
+        return e.json(502, {
+          success: false,
+          error:
+            'Não foi possível conectar à API do ZapSign: ' + (httpErr.message || String(httpErr)),
+        })
+      }
+
+      if (testRes.statusCode < 200 || testRes.statusCode >= 300) {
+        return e.json(400, {
+          success: false,
+          error:
+            (testRes.json &&
+              (testRes.json.detail || testRes.json.message || JSON.stringify(testRes.json))) ||
+            'Token inválido ou recusado pela API do ZapSign.',
+          statusCode: testRes.statusCode,
+        })
+      }
+
+      // Upsert na coleção integration_configs
+      let configRec = null
+      try {
+        const existing = $app.findRecordsByFilter(
+          'integration_configs',
+          'tenant_id = "' + tenantId + '" && provider = "zapsign"',
+          '-created',
+          1,
+          0,
+        )
+        if (existing && existing.length > 0) {
+          configRec = existing[0]
+        }
+      } catch (_) {}
+
+      const col = $app.findCollectionByNameOrId('integration_configs')
+      if (!configRec) {
+        configRec = new Record(col)
+        configRec.set('tenant_id', tenantId)
+        configRec.set('provider', 'zapsign')
+      }
+
+      configRec.set('status', 'active')
+      configRec.set('is_active', true)
+      configRec.set('api_token', token)
+      configRec.set('config_json', {
+        provider: 'zapsign',
+        sandbox: sandbox,
+        connected_at: new Date().toISOString(),
+        last_sync: new Date().toISOString(),
+      })
+      configRec.set('config', {
+        provider: 'zapsign',
+        sandbox: sandbox,
+        connected_at: new Date().toISOString(),
+        last_sync: new Date().toISOString(),
+      })
+
+      $app.save(configRec)
+
+      // Registrar auditoria
+      try {
+        const auditCol = $app.findCollectionByNameOrId('audit_logs')
+        const auditRec = new Record(auditCol)
+        auditRec.set('tenant_id', tenantId)
+        auditRec.set('user_id', e.auth ? e.auth.id : '')
+        auditRec.set('action', 'zapsign_connected')
+        auditRec.set('resource_type', 'integration_configs')
+        auditRec.set('resource_id', configRec.id)
+        $app.save(auditRec)
+      } catch (_) {}
+
+      // Retornar confirmação SEM expor o token na resposta
+      return e.json(200, {
+        success: true,
+        message: 'ZapSign conectado com sucesso!',
+        config: {
+          id: configRec.id,
+          provider: 'zapsign',
+          status: 'active',
+          is_active: true,
+          updated: configRec.getString('updated') || new Date().toISOString(),
+          created: configRec.getString('created') || new Date().toISOString(),
+        },
+      })
+    } catch (err) {
+      return e.json(500, {
+        success: false,
+        error: 'Erro ao conectar ZapSign: ' + (err.message || String(err)),
+      })
+    }
+  },
+  $apis.requireAuth(),
+)
+
+// --- 7. Endpoint de Desconexão ZapSign: POST /api/signatures/zapsign/disconnect ---
+routerAdd(
+  'POST',
+  '/api/signatures/zapsign/disconnect',
+  (e) => {
+    try {
+      const reqBody = e.requestInfo().body || {}
+      const tenantId = reqBody.tenant_id || (e.auth && e.auth.get('tenant_id')) || ''
+
+      if (!tenantId) {
+        return e.json(400, { success: false, error: 'tenant_id é obrigatório.' })
+      }
+
+      let count = 0
+      try {
+        const existing = $app.findRecordsByFilter(
+          'integration_configs',
+          'tenant_id = "' + tenantId + '" && provider = "zapsign"',
+          '-created',
+          10,
+          0,
+        )
+        if (existing && existing.length > 0) {
+          for (let i = 0; i < existing.length; i++) {
+            $app.delete(existing[i])
+            count++
+          }
+        }
+      } catch (delErr) {
+        console.warn('[ZapSign Hook] Erro ao deletar config:', delErr)
+      }
+
+      // Registrar auditoria
+      try {
+        const auditCol = $app.findCollectionByNameOrId('audit_logs')
+        const auditRec = new Record(auditCol)
+        auditRec.set('tenant_id', tenantId)
+        auditRec.set('user_id', e.auth ? e.auth.id : '')
+        auditRec.set('action', 'zapsign_disconnected')
+        auditRec.set('resource_type', 'integration_configs')
+        $app.save(auditRec)
+      } catch (_) {}
+
+      return e.json(200, {
+        success: true,
+        message: 'ZapSign desconectado com sucesso.',
+        removed_count: count,
+      })
+    } catch (err) {
+      return e.json(500, {
+        success: false,
+        error: 'Erro ao desconectar ZapSign: ' + (err.message || String(err)),
+      })
+    }
+  },
+  $apis.requireAuth(),
+)
+
+// --- 8. Endpoint de Consulta de Status ZapSign: GET /api/signatures/zapsign/config ---
+routerAdd(
+  'GET',
+  '/api/signatures/zapsign/config',
+  (e) => {
+    try {
+      const tenantId = e.requestInfo().query.tenant_id || (e.auth && e.auth.get('tenant_id')) || ''
+
+      if (!tenantId) {
+        return e.json(400, { success: false, error: 'tenant_id é obrigatório.' })
+      }
+
+      let isConnected = false
+      let configData = null
+
+      try {
+        const configs = $app.findRecordsByFilter(
+          'integration_configs',
+          'tenant_id = "' + tenantId + '" && provider = "zapsign"',
+          '-created',
+          1,
+          0,
+        )
+        if (configs && configs.length > 0) {
+          const cfgRec = configs[0]
+          const token = cfgRec.getString('api_token')
+          const cfgJson = cfgRec.get('config_json') || cfgRec.get('config') || {}
+          if (token || cfgJson.api_token) {
+            isConnected = true
+            configData = {
+              id: cfgRec.id,
+              provider: 'zapsign',
+              status: cfgRec.getString('status') || 'active',
+              is_active: cfgRec.get('is_active') !== false,
+              created: cfgRec.getString('created'),
+              updated: cfgRec.getString('updated'),
+              sandbox: !!cfgJson.sandbox,
+              last_sync: cfgJson.last_sync || cfgRec.getString('updated'),
+            }
+          }
+        }
+      } catch (qErr) {
+        console.warn('[ZapSign Hook] Erro ao buscar config:', qErr)
+      }
+
+      // Fallback para secrets do sistema se não houver em integration_configs
+      if (!isConnected) {
+        try {
+          const secretRec = $app.findFirstRecordByData('system_secrets', 'key', 'ZAPSIGN_API_TOKEN')
+          if (
+            secretRec &&
+            (!secretRec.getString('tenant_id') || secretRec.getString('tenant_id') === tenantId) &&
+            secretRec.getString('value')
+          ) {
+            isConnected = true
+            configData = {
+              id: 'system_secret',
+              provider: 'zapsign',
+              status: 'active',
+              is_active: true,
+              created: secretRec.getString('created'),
+              updated: secretRec.getString('updated'),
+              last_sync: secretRec.getString('updated'),
+            }
+          }
+        } catch (_) {}
+      }
+
+      return e.json(200, {
+        success: true,
+        connected: isConnected,
+        config: configData,
+      })
+    } catch (err) {
+      return e.json(500, {
+        success: false,
+        error: 'Erro ao obter status do ZapSign: ' + (err.message || String(err)),
       })
     }
   },

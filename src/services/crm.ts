@@ -566,12 +566,40 @@ export const CrmService = {
     }
   },
 
+  async getContractById(id: string): Promise<ContractRecord | null> {
+    try {
+      return await pb.collection('contracts').getOne<ContractRecord>(id, {
+        expand: 'proposta_id,cliente_id,oportunidade_id',
+      })
+    } catch (e) {
+      console.warn('Failed to get contract by id', e)
+      return null
+    }
+  },
+
+  async getContractByOpportunityId(oppId: string): Promise<ContractRecord | null> {
+    try {
+      const list = await pb.collection('contracts').getList<ContractRecord>(1, 1, {
+        filter: `oportunidade_id = "${oppId}"`,
+        sort: '-created',
+        expand: 'proposta_id,cliente_id,oportunidade_id',
+      })
+      return list.items.length > 0 ? list.items[0] : null
+    } catch (e) {
+      console.warn('Failed to get contract by opportunity id', e)
+      return null
+    }
+  },
+
   async createContract(tenantId: string, data: Partial<ContractRecord>): Promise<ContractRecord> {
     const rec = await pb.collection('contracts').create<ContractRecord>({
       tenant_id: tenantId,
-      status: 'aguardando',
-      plataforma: 'zapsign',
+      status: data.status || 'aguardando',
+      sign_status: data.sign_status || 'pending',
+      plataforma: data.plataforma || 'zapsign',
+      sign_provider: data.sign_provider || 'zapsign',
       historico: [{ data: new Date().toISOString(), evento: 'Contrato gerado no CRM' }],
+      sign_events: [{ event: 'contract_created', date: new Date().toISOString() }],
       ...data,
     })
     await this.logAudit(tenantId, 'create', 'contract', rec.id, null, rec)
@@ -580,6 +608,80 @@ export const CrmService = {
 
   async updateContract(id: string, data: Partial<ContractRecord>): Promise<ContractRecord> {
     return await pb.collection('contracts').update<ContractRecord>(id, data)
+  },
+
+  async sendContractForSignature(contractId: string): Promise<ContractRecord> {
+    const updated = await pb.collection('contracts').update<ContractRecord>(
+      contractId,
+      {
+        sign_status: 'sent',
+        status: 'enviado',
+        sent_at: new Date().toISOString(),
+        data_envio: new Date().toISOString(),
+      },
+      {
+        expand: 'proposta_id,cliente_id,oportunidade_id',
+      },
+    )
+    return updated
+  },
+
+  // --- ZAPSIGN INTEGRATION HELPERS ---
+  async getZapSignConfig(tenantId: string): Promise<{ connected: boolean; config: any }> {
+    try {
+      const res = await pb.send(
+        '/api/signatures/zapsign/config?tenant_id=' + encodeURIComponent(tenantId),
+        {
+          method: 'GET',
+        },
+      )
+      return res || { connected: false, config: null }
+    } catch (e) {
+      console.warn('Failed to get ZapSign config', e)
+      // Fallback: check integration_configs table directly
+      try {
+        const list = await pb.collection('integration_configs').getList(1, 1, {
+          filter: `tenant_id = "${tenantId}" && provider = "zapsign"`,
+        })
+        if (list.items.length > 0 && list.items[0].is_active !== false) {
+          return { connected: true, config: list.items[0] }
+        }
+      } catch {
+        /* intentionally ignored */
+      }
+      return { connected: false, config: null }
+    }
+  },
+
+  async connectZapSign(
+    tenantId: string,
+    token: string,
+    sandbox = false,
+  ): Promise<{ success: boolean; message?: string; error?: string }> {
+    return await pb.send('/api/signatures/zapsign/connect', {
+      method: 'POST',
+      body: { tenant_id: tenantId, token, sandbox },
+    })
+  },
+
+  async disconnectZapSign(
+    tenantId: string,
+  ): Promise<{ success: boolean; message?: string; error?: string }> {
+    return await pb.send('/api/signatures/zapsign/disconnect', {
+      method: 'POST',
+      body: { tenant_id: tenantId },
+    })
+  },
+
+  async testZapSignConnection(
+    tenantId: string,
+    token?: string,
+    sandbox = false,
+  ): Promise<{ success: boolean; status: string; message: string }> {
+    return await pb.send('/api/signatures/test-connection', {
+      method: 'POST',
+      body: { tenant_id: tenantId, token, sandbox },
+    })
   },
 
   // --- CAMPAIGNS (CAMPANHAS) ---

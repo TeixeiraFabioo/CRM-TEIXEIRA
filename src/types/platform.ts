@@ -368,6 +368,21 @@ export interface ProposalRecord {
   updated?: string
 }
 
+export interface ContractSignEvent {
+  event?: string
+  event_type?: string
+  provider?: string
+  doc_id?: string
+  sign_link?: string
+  status?: string
+  sign_status?: string
+  created_at?: string
+  received_at?: string
+  date?: string
+  payload?: any
+  [key: string]: unknown
+}
+
 export interface ContractRecord {
   id: string
   tenant_id: string
@@ -376,22 +391,54 @@ export interface ContractRecord {
   oportunidade_id?: string
   titulo: string
   valor?: number
-  status: 'aguardando' | 'enviado' | 'visualizado' | 'assinado' | 'recusado' | 'expirado' | string
-  plataforma: 'zapsign' | 'clicksign' | 'manual' | string
+  status?: 'aguardando' | 'enviado' | 'visualizado' | 'assinado' | 'recusado' | 'expirado' | string
+  plataforma?: 'zapsign' | 'clicksign' | 'manual' | string
   documento_url?: string
   sign_url?: string
   external_id?: string
   external_provider?: 'zapsign' | 'clicksign' | string
+  zapsign_doc_id?: string
+  external_status?: string
+  sent_at?: string
+  signed_at?: string
+  signing_link?: string
+  sign_provider?: string
+  sign_document_id?: string
+  sign_link?: string
+  sign_status?: 'pending' | 'sent' | 'viewed' | 'signed' | 'declined' | 'expired'
+  sign_events?: ContractSignEvent[]
   data_envio?: string
   data_visualizacao?: string
   data_assinatura?: string
   data_recusa?: string
-  historico?: Array<{ data: string; evento: string; usuario?: string }>
+  historico?: Array<{
+    data?: string
+    date?: string
+    evento?: string
+    action?: string
+    usuario?: string
+    doc_id?: string
+    status?: string
+  }>
   expand?: {
     proposta_id?: ProposalRecord
     cliente_id?: CustomerRecord
     oportunidade_id?: OpportunityRecord
   }
+  created?: string
+  updated?: string
+}
+
+export interface IntegrationConfigRecord {
+  id: string
+  tenant_id: string
+  provider: 'zapsign' | 'clicksign' | 'whatsapp' | 'meta_ads' | 'google_ads' | 'calendly'
+  status: 'active' | 'inactive' | 'error'
+  api_token?: string
+  webhook_secret?: string
+  is_active?: boolean
+  config?: Record<string, unknown>
+  config_json?: Record<string, unknown>
   created?: string
   updated?: string
 }

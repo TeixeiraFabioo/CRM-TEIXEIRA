@@ -45,7 +45,9 @@ export function OpportunityDetailPage() {
   const navigate = useNavigate()
 
   const [opp, setOpp] = useState<OpportunityRecord | null>(null)
+  const [contract, setContract] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [sendingContract, setSendingContract] = useState(false)
 
   const [wonModalOpen, setWonModalOpen] = useState(false)
   const [wonData, setWonData] = useState({
@@ -65,7 +67,9 @@ export function OpportunityDetailPage() {
     setLoading(true)
     try {
       const data = await CrmService.getOpportunityById(id)
+      const oppContract = await CrmService.getContractByOpportunityId(id)
       setOpp(data)
+      setContract(oppContract)
       if (data) {
         setWonData({
           value: data.value || 20000,
@@ -81,6 +85,41 @@ export function OpportunityDetailPage() {
   useEffect(() => {
     loadOpp()
   }, [id])
+
+  const handleSendForSignature = async () => {
+    if (!id || !tenant?.id || !opp) return
+    setSendingContract(true)
+    try {
+      let targetContract = contract
+      if (!targetContract) {
+        targetContract = await CrmService.createContract(tenant.id, {
+          oportunidade_id: opp.id,
+          cliente_id: opp.customer_id || opp.cliente_id,
+          titulo: `Contrato de Honorários - ${opp.title}`,
+          valor: opp.value || 20000,
+          status: 'aguardando',
+          sign_status: 'pending',
+          plataforma: 'zapsign',
+          sign_provider: 'zapsign',
+        })
+      }
+      const updated = await CrmService.sendContractForSignature(targetContract.id)
+      setContract(updated)
+      toast({
+        title: 'Enviado para assinatura!',
+        description: 'Documento gerado e enviado para assinatura eletrônica via ZapSign.',
+      })
+      setTimeout(() => loadOpp(), 2000)
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao disparar contrato',
+        description: err?.message || 'Falha ao enviar documento.',
+        variant: 'destructive',
+      })
+    } finally {
+      setSendingContract(false)
+    }
+  }
 
   const handleWon = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -174,6 +213,68 @@ export function OpportunityDetailPage() {
               <p className="mt-1 bg-muted/40 p-2 rounded whitespace-pre-line">{opp.observacoes}</p>
             </div>
           )}
+
+          {/* BOX DO CONTRATO ZAPSIGN */}
+          <div className="pt-3 border-t space-y-2">
+            <div className="flex items-center justify-between">
+              <h4 className="font-bold text-[11px] uppercase text-muted-foreground">
+                Contrato Digital
+              </h4>
+              {contract?.sign_status === 'signed' || contract?.status === 'assinado' ? (
+                <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px]">
+                  Assinado
+                </Badge>
+              ) : contract?.sign_status === 'sent' || contract?.status === 'enviado' ? (
+                <Badge className="bg-blue-500/10 text-blue-600 border-blue-500/30 text-[10px]">
+                  Enviado
+                </Badge>
+              ) : contract ? (
+                <Badge variant="outline" className="text-[10px]">
+                  Pendente
+                </Badge>
+              ) : null}
+            </div>
+
+            {contract ? (
+              <div className="space-y-2 bg-muted/40 p-2.5 rounded-lg border">
+                <div className="font-semibold text-foreground text-xs">{contract.titulo}</div>
+                {contract.sign_link && (
+                  <div className="pt-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        navigator.clipboard.writeText(contract.sign_link)
+                        toast({ title: 'Link de assinatura copiado!' })
+                      }}
+                      className="h-7 text-xs w-full gap-1"
+                    >
+                      Copiar Link de Assinatura
+                    </Button>
+                  </div>
+                )}
+                {contract.sign_status !== 'signed' && contract.sign_status !== 'sent' && (
+                  <Button
+                    size="sm"
+                    onClick={handleSendForSignature}
+                    disabled={sendingContract}
+                    className="h-7 text-xs w-full bg-[#0A1F3F] text-white gap-1"
+                  >
+                    <Send className="h-3 w-3" /> Enviar para Assinatura (ZapSign)
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <Button
+                size="sm"
+                onClick={handleSendForSignature}
+                disabled={sendingContract}
+                className="h-7 text-xs w-full bg-[#0A1F3F] text-white gap-1"
+              >
+                <Plus className="h-3 w-3" /> Criar e Enviar Contrato ZapSign
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="md:col-span-2 bg-card border rounded-xl p-5">
