@@ -72,10 +72,7 @@ interface SseBlock {
   data: string
 }
 
-async function* readSseBlocks(
-  response: Response,
-  signal?: AbortSignal,
-): AsyncGenerator<SseBlock> {
+async function* readSseBlocks(response: Response, signal?: AbortSignal): AsyncGenerator<SseBlock> {
   if (!response.body) return
   const reader = response.body.getReader()
   // Wire abort directly into the reader. reader.cancel(reason) makes
@@ -268,6 +265,44 @@ export interface StreamAgentChatResult {
   message_id: string
   citations?: AgentCitation[]
   toolCalls: Array<{ id: string; name: string; ok: boolean }>
+}
+
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+export interface GenerateChatOptions {
+  messages: ChatMessage[]
+  temperature?: number
+}
+
+export async function generateChatResponse(options: GenerateChatOptions): Promise<string> {
+  const res = await fetch('/api/ai/chat', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messages: options.messages,
+      temperature: options.temperature ?? 0.7,
+    }),
+  })
+
+  if (!res.ok) {
+    let errMsg = `Request failed with status ${res.status}`
+    try {
+      const data = await res.json()
+      if (data.message) errMsg = data.message
+      else if (data.error) errMsg = data.error
+    } catch {
+      /* intentionally ignored */
+    }
+    throw new Error(errMsg)
+  }
+
+  const json = await res.json()
+  return json.content || json.message || json.response || ''
 }
 
 // Drive an agent stream end-to-end. Resolves only after `done` (turn fully persisted);

@@ -1,12 +1,752 @@
-// PocketBase Hook: ZapSign Electronic Signature Adapter & Webhook Router
-// Provides:
-// - Adapter methods: createDocument, getDocumentStatus, handleWebhook
-// - API endpoint: POST /api/signatures/zapsign/create (authenticated)
-// - API endpoint: GET /api/signatures/zapsign/status/{docId} (authenticated)
-// - API endpoint: POST /api/signatures/test-connection (authenticated)
-// - Webhook endpoint: POST /api/webhooks/zapsign (public / signed)
+/**
+ * PocketBase Hook: ZapSign Electronic Signature Integration
+ *
+ * NOTA DE CONFIGURAÇÃO:
+ * O token do ZapSign deve ser inserido pelo admin via Settings > Integrações (futuro).
+ * Por enquanto, o backend consome o token da coleção `integration_configs` onde provider='zapsign'
+ * (campo api_token ou config_json.api_token / config.api_token).
+ *
+ * Funcionalidades implementadas:
+ * 1. Hook onRecordAfterUpdateSuccess na coleção 'contracts':
+ *    - Quando sign_status for atualizado para 'sent' (ou se 'status' mudar para 'sent'/'enviado'),
+ *      se ainda não houver sign_document_id criado, dispara createZapSignDocument automaticamente.
+ *
+ * 2. Endpoint webhook: POST /api/zapsign/webhook (e compatibilidade com /api/webhooks/zapsign):
+ *    - Recebe evento de assinatura do ZapSign, valida assinatura/token.
+ *    - Atualiza contract.sign_status e contract.sign_events.
+ *    - Se status = "signed" (ou evento doc_signed / completed), atualiza também a oportunidade vinculada
+ *      para a etapa "Ganho/Contratado" (status 'won', probabilidade 100%, estágio correspondente).
+ *
+ * 3. Endpoints auxiliares para integração direta do CRM:
+ *    - POST /api/signatures/zapsign/create (criação manual/direta via API com auth)
+ *    - GET /api/signatures/zapsign/status/{docId} (consulta de status com auth)
+ *    - POST /api/signatures/test-connection (teste de conexão do token com auth)
+ */
 
-// 1. Endpoint para criar documento no ZapSign via CRM
+// --- 1. Hook de ciclo de vida em contracts: disparar ZapSign quando sign_status mudar para "sent" ---
+onRecordAfterUpdateSuccess((e) => {
+  try {
+    const record = e.record
+    if (!record) return
+
+    const newSignStatus = record.getString('sign_status')
+    const oldSignStatus = record.original() ? record.original().getString('sign_status') : ''
+
+    const newStatus = record.getString('status')
+    const oldStatus = record.original() ? record.original().getString('status') : ''
+
+    const isSentTrigger =
+      (newSignStatus === 'sent' && oldSignStatus !== 'sent') ||
+      (newStatus === 'sent' && oldStatus !== 'sent') ||
+      (newStatus === 'enviado' && oldStatus !== 'enviado' && !newSignStatus)
+
+    const alreadyHasDoc =
+      record.getString('sign_document_id') ||
+      record.getString('zapsign_doc_id') ||
+      record.getString('external_id')
+
+    // Só dispara se mudou para sent e ainda não gerou documento no ZapSign
+    if (isSentTrigger && !alreadyHasDoc) {
+      const tenantId = record.getString('tenant_id')
+      if (!tenantId) {
+        console.warn('[ZapSign Hook] Contrato sem tenant_id:', record.id)
+        return
+      }
+
+      // 1. Buscar api_token na coleção integration_configs
+      let apiToken = ''
+      let isSandbox = false
+      let customBaseUrl = ''
+
+      try {
+        const configs = $app.findRecordsByFilter(
+          'integration_configs',
+          'tenant_id = "' + tenantId + '" && provider = "zapsign"',
+          '-created',
+          1,
+          0,
+        )
+        if (configs && configs.length > 0) {
+          const cfgRec = configs[0]
+          apiToken = cfgRec.getString('api_token')
+          const cfgJson = cfgRec.get('config_json') || cfgRec.get('config') || {}
+          if (!apiToken && cfgJson.api_token) apiToken = cfgJson.api_token
+          if (cfgJson.sandbox !== undefined) isSandbox = !!cfgJson.sandbox
+          if (cfgJson.api_url_base) customBaseUrl = cfgJson.api_url_base
+        }
+      } catch (errCfg) {
+        console.warn(
+          '[ZapSign Hook] Erro ao buscar integration_configs para tenant:',
+          tenantId,
+          errCfg,
+        )
+      }
+
+      // Fallbacks para system_secrets ou env
+      if (!apiToken) {
+        try {
+          const secretRec = $app.findFirstRecordByData('system_secrets', 'key', 'ZAPSIGN_API_TOKEN')
+          if (
+            secretRec &&
+            (!secretRec.getString('tenant_id') || secretRec.getString('tenant_id') === tenantId)
+          ) {
+            apiToken = secretRec.getString('value')
+          }
+        } catch (_) {}
+      }
+
+      if (!apiToken) {
+        apiToken = $os.getenv('ZAPSIGN_API_TOKEN') || ''
+      }
+
+      if (!apiToken) {
+        console.warn('[ZapSign Hook] Nenhum api_token ZapSign configurado para o tenant:', tenantId)
+        return
+      }
+
+      // 2. Buscar dados do cliente ou lead vinculado ao contrato
+      let signerName = 'Signatário Principal'
+      let signerEmail = ''
+      let signerPhone = ''
+
+      const clienteId = record.getString('cliente_id')
+      const oportunidadeId = record.getString('oportunidade_id')
+      const propostaId = record.getString('proposta_id')
+      let leadId = ''
+
+      if (clienteId) {
+        try {
+          const cust = $app.findRecordById('customers', clienteId)
+          if (cust) {
+            signerName = cust.getString('name') || signerName
+            signerEmail = cust.getString('email') || signerEmail
+            signerPhone = cust.getString('phone') || cust.getString('whatsapp') || signerPhone
+          }
+        } catch (_) {}
+      }
+
+      if (oportunidadeId && (!signerEmail || signerName === 'Signatário Principal')) {
+        try {
+          const opp = $app.findRecordById('opportunities', oportunidadeId)
+          if (opp) {
+            leadId = opp.getString('lead_id')
+          }
+        } catch (_) {}
+      }
+
+      if (propostaId && (!signerEmail || signerName === 'Signatário Principal')) {
+        try {
+          const prop = $app.findRecordById('proposals', propostaId)
+          if (prop && !leadId) {
+            leadId = prop.getString('lead_id')
+          }
+        } catch (_) {}
+      }
+
+      if (leadId && (!signerEmail || signerName === 'Signatário Principal')) {
+        try {
+          const lead = $app.findRecordById('leads', leadId)
+          if (lead) {
+            signerName = lead.getString('name') || signerName
+            signerEmail = lead.getString('email') || signerEmail
+            signerPhone = lead.getString('phone') || lead.getString('whatsapp') || signerPhone
+          }
+        } catch (_) {}
+      }
+
+      // 3. Montar payload do ZapSign
+      const docTitle = record.getString('titulo') || 'Contrato Comercial - ' + signerName
+      const signerObj = { name: signerName }
+      if (signerEmail) {
+        signerObj.email = signerEmail
+        signerObj.send_automatic_email = true
+      }
+      if (signerPhone) {
+        let cleanPhone = signerPhone.replace(/\D/g, '')
+        if (cleanPhone.length >= 10 && !cleanPhone.startsWith('55')) {
+          cleanPhone = '55' + cleanPhone
+        }
+        if (cleanPhone) signerObj.phone_country = '55'
+        if (cleanPhone)
+          signerObj.phone_number = cleanPhone.startsWith('55')
+            ? cleanPhone.substring(2)
+            : cleanPhone
+        signerObj.send_automatic_whatsapp = true
+      }
+
+      let targetUrl = customBaseUrl
+      if (!targetUrl) {
+        targetUrl = isSandbox
+          ? 'https://sandbox.api.zapsign.com.br/api/v1/docs/'
+          : 'https://api.zapsign.com.br/api/v1/docs/'
+      }
+      if (!targetUrl.endsWith('/')) targetUrl += '/'
+
+      const zapsignPayload = {
+        name: docTitle,
+        signers: [signerObj],
+        lang: 'pt-br',
+        disable_signer_emails: false,
+      }
+
+      const docUrl = record.getString('documento_url')
+      if (docUrl && (docUrl.startsWith('http://') || docUrl.startsWith('https://'))) {
+        zapsignPayload.url_pdf = docUrl
+      } else {
+        const val = record.get('valor')
+        zapsignPayload.markdown =
+          '# ' +
+          docTitle +
+          '\n\n' +
+          '**Contratante:** ' +
+          signerName +
+          '\n' +
+          (signerEmail ? '**E-mail:** ' + signerEmail + '\n' : '') +
+          (signerPhone ? '**Telefone/WhatsApp:** ' + signerPhone + '\n' : '') +
+          (val
+            ? '**Valor:** R$ ' +
+              Number(val).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) +
+              '\n'
+            : '') +
+          "\nDocumento emitido via Teixeira'sHub CRM."
+      }
+
+      // 4. Disparar chamada POST para API ZapSign via $http.send
+      try {
+        const apiRes = $http.send({
+          url: targetUrl,
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer ' + apiToken.trim(),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(zapsignPayload),
+          timeout: 25,
+        })
+
+        if (apiRes.statusCode >= 200 && apiRes.statusCode < 300) {
+          const resJson = apiRes.json || {}
+          const docId = resJson.token || resJson.id || resJson.doc_id || resJson.open_id || ''
+          let signLink = resJson.sign_url || ''
+          if (!signLink && resJson.signers && resJson.signers[0] && resJson.signers[0].sign_url) {
+            signLink = resJson.signers[0].sign_url
+          }
+
+          const nowIso = new Date().toISOString().replace('T', ' ').substring(0, 19)
+
+          // Atualizar o contrato com os dados retornados
+          record.set('sign_provider', 'zapsign')
+          record.set('sign_document_id', docId)
+          record.set('sign_link', signLink)
+          record.set('sign_status', 'sent')
+          record.set('zapsign_doc_id', docId)
+          record.set('signing_link', signLink)
+          record.set('sign_url', signLink)
+          record.set('external_id', docId)
+          record.set('external_provider', 'zapsign')
+          record.set('external_status', 'sent')
+          record.set('sent_at', nowIso)
+          record.set('data_envio', nowIso)
+
+          const currentEvents = record.get('sign_events') || []
+          const eventsArr = Array.isArray(currentEvents) ? currentEvents : []
+          eventsArr.push({
+            event: 'doc_created',
+            provider: 'zapsign',
+            doc_id: docId,
+            sign_link: signLink,
+            created_at: nowIso,
+          })
+          record.set('sign_events', eventsArr)
+
+          const currentHist = record.get('historico') || []
+          const histArr = Array.isArray(currentHist) ? currentHist : []
+          histArr.push({
+            action: 'zapsign_doc_created',
+            doc_id: docId,
+            date: nowIso,
+          })
+          record.set('historico', histArr)
+
+          $app.save(record)
+          console.log(
+            '[ZapSign Hook] Documento criado com sucesso no ZapSign para contrato:',
+            record.id,
+            'docId:',
+            docId,
+          )
+        } else {
+          console.error(
+            '[ZapSign Hook] Erro retornado pelo ZapSign:',
+            apiRes.statusCode,
+            JSON.stringify(apiRes.json),
+          )
+        }
+      } catch (postErr) {
+        console.error('[ZapSign Hook] Falha ao enviar requisição para ZapSign:', postErr)
+      }
+    }
+  } catch (err) {
+    console.error('[ZapSign Hook] Erro no onRecordAfterUpdateSuccess:', err)
+  }
+}, 'contracts')
+
+// --- 2. Endpoint Webhook: POST /api/zapsign/webhook ---
+routerAdd('POST', '/api/zapsign/webhook', (e) => {
+  try {
+    const body = e.requestInfo().body || {}
+    const headers = e.requestInfo().headers || {}
+
+    // Validação opcional de assinatura / token / secret
+    const webhookSecretEnv = $os.getenv('ZAPSIGN_WEBHOOK_SECRET') || ''
+    const receivedSecret =
+      e.requestInfo().query.secret ||
+      e.requestInfo().query.token ||
+      headers['x-zapsign-secret'] ||
+      headers['x-webhook-secret'] ||
+      ''
+
+    if (webhookSecretEnv && receivedSecret && webhookSecretEnv !== receivedSecret) {
+      console.warn('[ZapSign Webhook] Secret não confere.')
+      return e.json(401, { error: 'Unauthorized webhook request' })
+    }
+
+    // Extrair dados do webhook
+    const eventType = body.event_type || body.event || body.type || ''
+    const docToken =
+      body.token ||
+      body.doc_token ||
+      body.doc_id ||
+      body.id ||
+      (body.document && body.document.token) ||
+      ''
+    const rawStatus =
+      body.status ||
+      (body.document && body.document.status) ||
+      (eventType === 'doc_signed' ? 'signed' : '')
+    const signedFileUrl = body.signed_file || (body.document && body.document.signed_file) || ''
+
+    console.log('[ZapSign Webhook] Recebido:', { eventType, docToken, rawStatus })
+
+    if (!docToken && !eventType) {
+      return e.json(200, {
+        received: true,
+        processed: false,
+        message: 'Payload vazio ou sem identificador de documento',
+      })
+    }
+
+    let contractUpdated = false
+    let opportunityMoved = false
+    const nowIso = new Date().toISOString().replace('T', ' ').substring(0, 19)
+
+    // Mapeamento de status para sign_status
+    let normalizedSignStatus = 'pending'
+    const statusLower = (rawStatus || '').toLowerCase()
+    const eventLower = (eventType || '').toLowerCase()
+
+    if (
+      statusLower === 'signed' ||
+      statusLower === 'completed' ||
+      statusLower === 'assinado' ||
+      eventLower === 'doc_signed' ||
+      eventLower === 'signer_signed'
+    ) {
+      normalizedSignStatus = 'signed'
+    } else if (
+      statusLower === 'viewed' ||
+      statusLower === 'visualizado' ||
+      eventLower === 'doc_viewed'
+    ) {
+      normalizedSignStatus = 'viewed'
+    } else if (
+      statusLower === 'declined' ||
+      statusLower === 'refused' ||
+      statusLower === 'recusado' ||
+      statusLower === 'rejected' ||
+      eventLower === 'doc_rejected'
+    ) {
+      normalizedSignStatus = 'declined'
+    } else if (statusLower === 'expired' || statusLower === 'expirado') {
+      normalizedSignStatus = 'expired'
+    } else if (statusLower === 'sent' || statusLower === 'enviado') {
+      normalizedSignStatus = 'sent'
+    }
+
+    if (docToken) {
+      let contractRec = null
+
+      // Busca por sign_document_id, zapsign_doc_id ou external_id
+      try {
+        contractRec = $app.findFirstRecordByData('contracts', 'sign_document_id', docToken)
+      } catch (_) {}
+
+      if (!contractRec) {
+        try {
+          contractRec = $app.findFirstRecordByData('contracts', 'zapsign_doc_id', docToken)
+        } catch (_) {}
+      }
+
+      if (!contractRec) {
+        try {
+          contractRec = $app.findFirstRecordByData('contracts', 'external_id', docToken)
+        } catch (_) {}
+      }
+
+      if (contractRec) {
+        const tenantId = contractRec.getString('tenant_id')
+        const oppId = contractRec.getString('oportunidade_id')
+
+        // 1. Atualizar sign_status e sign_events
+        contractRec.set('sign_status', normalizedSignStatus)
+        contractRec.set('external_status', rawStatus || normalizedSignStatus)
+
+        const currentEvents = contractRec.get('sign_events') || []
+        const eventsArr = Array.isArray(currentEvents) ? currentEvents : []
+        eventsArr.push({
+          event_type: eventType,
+          status: rawStatus,
+          sign_status: normalizedSignStatus,
+          payload: body,
+          received_at: nowIso,
+        })
+        contractRec.set('sign_events', eventsArr)
+
+        const currentHist = contractRec.get('historico') || []
+        const histArr = Array.isArray(currentHist) ? currentHist : []
+        histArr.push({
+          action: 'webhook_' + (eventType || normalizedSignStatus),
+          status: normalizedSignStatus,
+          date: nowIso,
+        })
+        contractRec.set('historico', histArr)
+
+        if (signedFileUrl) {
+          contractRec.set('documento_url', signedFileUrl)
+        }
+
+        if (normalizedSignStatus === 'signed') {
+          contractRec.set('status', 'assinado')
+          contractRec.set('data_assinatura', nowIso)
+          contractRec.set('signed_at', nowIso)
+        } else if (normalizedSignStatus === 'declined') {
+          contractRec.set('status', 'recusado')
+          contractRec.set('data_recusa', nowIso)
+        } else if (normalizedSignStatus === 'viewed') {
+          contractRec.set('data_visualizacao', nowIso)
+        }
+
+        $app.save(contractRec)
+        contractUpdated = true
+
+        // 2. Se status = "signed", atualizar a oportunidade vinculada para etapa "Ganho/Contratado"
+        if (normalizedSignStatus === 'signed' && oppId) {
+          try {
+            const oppRec = $app.findRecordById('opportunities', oppId)
+            if (oppRec) {
+              oppRec.set('status', 'won')
+              oppRec.set('data_ganho', nowIso)
+              oppRec.set('probabilidade', 100)
+
+              // Localizar o estágio do pipeline para "Ganho" / "Contratado" / "Fechado"
+              const pipelineId = oppRec.getString('pipeline_id')
+              if (pipelineId) {
+                try {
+                  const stages = $app.findRecordsByFilter(
+                    'pipeline_stages',
+                    'pipeline_id = "' + pipelineId + '"',
+                    '-probability',
+                    10,
+                    0,
+                  )
+                  if (stages && stages.length > 0) {
+                    let targetStage = stages.find((st) => {
+                      const nameLower = (st.getString('name') || '').toLowerCase()
+                      return (
+                        st.get('probability') === 100 ||
+                        nameLower.includes('contratado') ||
+                        nameLower.includes('ganho') ||
+                        nameLower.includes('assinado') ||
+                        nameLower.includes('fechado')
+                      )
+                    })
+                    if (!targetStage) targetStage = stages[0] // o de maior probabilidade
+                    oppRec.set('stage_id', targetStage.id)
+                  }
+                } catch (stgErr) {
+                  console.warn('[ZapSign Webhook] Erro ao buscar pipeline_stages:', stgErr)
+                }
+              }
+
+              $app.save(oppRec)
+              opportunityMoved = true
+            }
+          } catch (oppErr) {
+            console.warn('[ZapSign Webhook] Erro ao atualizar oportunidade vinculada:', oppErr)
+          }
+        }
+
+        // 3. Auditoria
+        if (tenantId) {
+          try {
+            const auditCol = $app.findCollectionByNameOrId('audit_logs')
+            const auditRec = new Record(auditCol)
+            auditRec.set('tenant_id', tenantId)
+            auditRec.set('action', 'zapsign_webhook_' + normalizedSignStatus)
+            auditRec.set('resource_type', 'contracts')
+            auditRec.set('resource_id', contractRec.id)
+            auditRec.set('new_value', {
+              event_type: eventType,
+              sign_status: normalizedSignStatus,
+              doc_token: docToken,
+            })
+            $app.save(auditRec)
+          } catch (_) {}
+        }
+      } else {
+        console.log('[ZapSign Webhook] Contrato não encontrado para docToken:', docToken)
+      }
+    }
+
+    return e.json(200, {
+      success: true,
+      received: true,
+      contract_updated: contractUpdated,
+      opportunity_moved: opportunityMoved,
+      sign_status: normalizedSignStatus,
+      doc_id: docToken,
+    })
+  } catch (err) {
+    console.error('[ZapSign Webhook] Erro:', err)
+    return e.json(500, {
+      success: false,
+      error: 'Erro no processamento do webhook ZapSign: ' + (err.message || String(err)),
+    })
+  }
+})
+
+// Alias de compatibilidade para webhook anterior: POST /api/webhooks/zapsign
+routerAdd('POST', '/api/webhooks/zapsign', (e) => {
+  try {
+    const body = e.requestInfo().body || {}
+    const headers = e.requestInfo().headers || {}
+
+    const webhookSecretEnv = $os.getenv('ZAPSIGN_WEBHOOK_SECRET') || ''
+    const receivedSecret =
+      e.requestInfo().query.secret ||
+      e.requestInfo().query.token ||
+      headers['x-zapsign-secret'] ||
+      headers['x-webhook-secret'] ||
+      ''
+
+    if (webhookSecretEnv && receivedSecret && webhookSecretEnv !== receivedSecret) {
+      console.warn('[ZapSign Webhook] Secret não confere.')
+      return e.json(401, { error: 'Unauthorized webhook request' })
+    }
+
+    const eventType = body.event_type || body.event || body.type || ''
+    const docToken =
+      body.token ||
+      body.doc_token ||
+      body.doc_id ||
+      body.id ||
+      (body.document && body.document.token) ||
+      ''
+    const rawStatus =
+      body.status ||
+      (body.document && body.document.status) ||
+      (eventType === 'doc_signed' ? 'signed' : '')
+    const signedFileUrl = body.signed_file || (body.document && body.document.signed_file) || ''
+
+    if (!docToken && !eventType) {
+      return e.json(200, {
+        received: true,
+        processed: false,
+        message: 'Payload vazio ou sem identificador de documento',
+      })
+    }
+
+    let contractUpdated = false
+    let opportunityMoved = false
+    const nowIso = new Date().toISOString().replace('T', ' ').substring(0, 19)
+
+    let normalizedSignStatus = 'pending'
+    const statusLower = (rawStatus || '').toLowerCase()
+    const eventLower = (eventType || '').toLowerCase()
+
+    if (
+      statusLower === 'signed' ||
+      statusLower === 'completed' ||
+      statusLower === 'assinado' ||
+      eventLower === 'doc_signed' ||
+      eventLower === 'signer_signed'
+    ) {
+      normalizedSignStatus = 'signed'
+    } else if (
+      statusLower === 'viewed' ||
+      statusLower === 'visualizado' ||
+      eventLower === 'doc_viewed'
+    ) {
+      normalizedSignStatus = 'viewed'
+    } else if (
+      statusLower === 'declined' ||
+      statusLower === 'refused' ||
+      statusLower === 'recusado' ||
+      statusLower === 'rejected' ||
+      eventLower === 'doc_rejected'
+    ) {
+      normalizedSignStatus = 'declined'
+    } else if (statusLower === 'expired' || statusLower === 'expirado') {
+      normalizedSignStatus = 'expired'
+    } else if (statusLower === 'sent' || statusLower === 'enviado') {
+      normalizedSignStatus = 'sent'
+    }
+
+    if (docToken) {
+      let contractRec = null
+
+      try {
+        contractRec = $app.findFirstRecordByData('contracts', 'sign_document_id', docToken)
+      } catch (_) {}
+
+      if (!contractRec) {
+        try {
+          contractRec = $app.findFirstRecordByData('contracts', 'zapsign_doc_id', docToken)
+        } catch (_) {}
+      }
+
+      if (!contractRec) {
+        try {
+          contractRec = $app.findFirstRecordByData('contracts', 'external_id', docToken)
+        } catch (_) {}
+      }
+
+      if (contractRec) {
+        const tenantId = contractRec.getString('tenant_id')
+        const oppId = contractRec.getString('oportunidade_id')
+
+        contractRec.set('sign_status', normalizedSignStatus)
+        contractRec.set('external_status', rawStatus || normalizedSignStatus)
+
+        const currentEvents = contractRec.get('sign_events') || []
+        const eventsArr = Array.isArray(currentEvents) ? currentEvents : []
+        eventsArr.push({
+          event_type: eventType,
+          status: rawStatus,
+          sign_status: normalizedSignStatus,
+          payload: body,
+          received_at: nowIso,
+        })
+        contractRec.set('sign_events', eventsArr)
+
+        const currentHist = contractRec.get('historico') || []
+        const histArr = Array.isArray(currentHist) ? currentHist : []
+        histArr.push({
+          action: 'webhook_' + (eventType || normalizedSignStatus),
+          status: normalizedSignStatus,
+          date: nowIso,
+        })
+        contractRec.set('historico', histArr)
+
+        if (signedFileUrl) {
+          contractRec.set('documento_url', signedFileUrl)
+        }
+
+        if (normalizedSignStatus === 'signed') {
+          contractRec.set('status', 'assinado')
+          contractRec.set('data_assinatura', nowIso)
+          contractRec.set('signed_at', nowIso)
+        } else if (normalizedSignStatus === 'declined') {
+          contractRec.set('status', 'recusado')
+          contractRec.set('data_recusa', nowIso)
+        } else if (normalizedSignStatus === 'viewed') {
+          contractRec.set('data_visualizacao', nowIso)
+        }
+
+        $app.save(contractRec)
+        contractUpdated = true
+
+        if (normalizedSignStatus === 'signed' && oppId) {
+          try {
+            const oppRec = $app.findRecordById('opportunities', oppId)
+            if (oppRec) {
+              oppRec.set('status', 'won')
+              oppRec.set('data_ganho', nowIso)
+              oppRec.set('probabilidade', 100)
+
+              const pipelineId = oppRec.getString('pipeline_id')
+              if (pipelineId) {
+                try {
+                  const stages = $app.findRecordsByFilter(
+                    'pipeline_stages',
+                    'pipeline_id = "' + pipelineId + '"',
+                    '-probability',
+                    10,
+                    0,
+                  )
+                  if (stages && stages.length > 0) {
+                    let targetStage = stages.find((st) => {
+                      const nameLower = (st.getString('name') || '').toLowerCase()
+                      return (
+                        st.get('probability') === 100 ||
+                        nameLower.includes('contratado') ||
+                        nameLower.includes('ganho') ||
+                        nameLower.includes('assinado') ||
+                        nameLower.includes('fechado')
+                      )
+                    })
+                    if (!targetStage) targetStage = stages[0]
+                    oppRec.set('stage_id', targetStage.id)
+                  }
+                } catch (stgErr) {
+                  console.warn('[ZapSign Webhook] Erro ao buscar pipeline_stages:', stgErr)
+                }
+              }
+
+              $app.save(oppRec)
+              opportunityMoved = true
+            }
+          } catch (oppErr) {
+            console.warn('[ZapSign Webhook] Erro ao atualizar oportunidade vinculada:', oppErr)
+          }
+        }
+
+        if (tenantId) {
+          try {
+            const auditCol = $app.findCollectionByNameOrId('audit_logs')
+            const auditRec = new Record(auditCol)
+            auditRec.set('tenant_id', tenantId)
+            auditRec.set('action', 'zapsign_webhook_' + normalizedSignStatus)
+            auditRec.set('resource_type', 'contracts')
+            auditRec.set('resource_id', contractRec.id)
+            auditRec.set('new_value', {
+              event_type: eventType,
+              sign_status: normalizedSignStatus,
+              doc_token: docToken,
+            })
+            $app.save(auditRec)
+          } catch (_) {}
+        }
+      }
+    }
+
+    return e.json(200, {
+      success: true,
+      received: true,
+      contract_updated: contractUpdated,
+      opportunity_moved: opportunityMoved,
+      sign_status: normalizedSignStatus,
+      doc_id: docToken,
+    })
+  } catch (err) {
+    return e.json(500, {
+      success: false,
+      error: 'Erro no processamento do webhook ZapSign: ' + (err.message || String(err)),
+    })
+  }
+})
+
+// --- 3. Endpoint Auxiliar: POST /api/signatures/zapsign/create (Criação direta via API autenticada) ---
 routerAdd(
   'POST',
   '/api/signatures/zapsign/create',
@@ -20,17 +760,24 @@ routerAdd(
       const tenantId = body.tenant_id || (e.auth && e.auth.get('tenant_id')) || ''
       const contractId = body.contract_id || contractData.id || ''
 
-      // Buscar token do ZapSign (prioridade: body.token > integration_configs > system_secrets > env)
       let apiToken = body.token || ''
       let isSandbox = false
       let customBaseUrl = ''
 
       if (!apiToken && tenantId) {
         try {
-          const configRec = $app.findFirstRecordByData('integration_configs', 'provider', 'zapsign')
-          if (configRec && configRec.get('tenant_id') === tenantId) {
-            const cfg = configRec.get('config') || {}
-            if (cfg.api_token) apiToken = cfg.api_token
+          const configs = $app.findRecordsByFilter(
+            'integration_configs',
+            'tenant_id = "' + tenantId + '" && provider = "zapsign"',
+            '-created',
+            1,
+            0,
+          )
+          if (configs && configs.length > 0) {
+            const cfgRec = configs[0]
+            apiToken = cfgRec.getString('api_token')
+            const cfg = cfgRec.get('config_json') || cfgRec.get('config') || {}
+            if (!apiToken && cfg.api_token) apiToken = cfg.api_token
             if (cfg.sandbox !== undefined) isSandbox = !!cfg.sandbox
             if (cfg.api_url_base) customBaseUrl = cfg.api_url_base
           }
@@ -42,9 +789,9 @@ routerAdd(
           const secretRec = $app.findFirstRecordByData('system_secrets', 'key', 'ZAPSIGN_API_TOKEN')
           if (
             secretRec &&
-            (!secretRec.get('tenant_id') || secretRec.get('tenant_id') === tenantId)
+            (!secretRec.getString('tenant_id') || secretRec.getString('tenant_id') === tenantId)
           ) {
-            apiToken = secretRec.get('value') || ''
+            apiToken = secretRec.getString('value')
           }
         } catch (_) {}
       }
@@ -56,7 +803,7 @@ routerAdd(
       if (!apiToken) {
         return e.json(400, {
           success: false,
-          error: 'Token do ZapSign não configurado (ZAPSIGN_API_TOKEN).',
+          error: 'Token do ZapSign não configurado na integração.',
         })
       }
 
@@ -68,7 +815,6 @@ routerAdd(
       }
       if (!baseUrl.endsWith('/')) baseUrl += '/'
 
-      // Montar signatários
       const signerName =
         customerData.name ||
         customerData.nome ||
@@ -78,7 +824,6 @@ routerAdd(
         'Signatário Principal'
 
       const signerEmail = customerData.email || leadData.email || body.signer_email || ''
-
       const signerPhone =
         customerData.phone ||
         customerData.whatsapp ||
@@ -93,12 +838,12 @@ routerAdd(
         body.name ||
         'Contrato Comercial - ' + signerName
 
-      const signerObj = {
-        name: signerName,
+      const signerObj = { name: signerName }
+      if (signerEmail) {
+        signerObj.email = signerEmail
+        signerObj.send_automatic_email = true
       }
-      if (signerEmail) signerObj.email = signerEmail
       if (signerPhone) {
-        // Formatar telefone internacional se necessário
         let cleanPhone = signerPhone.replace(/\D/g, '')
         if (cleanPhone.length >= 10 && !cleanPhone.startsWith('55')) {
           cleanPhone = '55' + cleanPhone
@@ -110,11 +855,7 @@ routerAdd(
             : cleanPhone
         signerObj.send_automatic_whatsapp = true
       }
-      if (signerEmail) {
-        signerObj.send_automatic_email = true
-      }
 
-      // Payload do ZapSign
       const zapsignPayload = {
         name: docName,
         signers: [signerObj],
@@ -122,7 +863,6 @@ routerAdd(
         disable_signer_emails: false,
       }
 
-      // Se tiver template_id ou markdown/url
       if (body.template_id || contractData.template_id) {
         zapsignPayload.template_id = body.template_id || contractData.template_id
       } else if (body.url_pdf || contractData.documento_url) {
@@ -144,10 +884,9 @@ routerAdd(
               Number(contractData.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) +
               '\n'
             : '') +
-          "\nContrato gerado e emitido via Teixeira'sHub CRM."
+          "\nContrato emitido via Teixeira'sHub CRM."
       }
 
-      // Enviar requisição HTTP para o ZapSign
       let apiRes
       try {
         apiRes = $http.send({
@@ -163,8 +902,7 @@ routerAdd(
       } catch (httpErr) {
         return e.json(502, {
           success: false,
-          error:
-            'Falha na conexão HTTP com a API do ZapSign: ' + (httpErr.message || String(httpErr)),
+          error: 'Falha na conexão com a API do ZapSign: ' + (httpErr.message || String(httpErr)),
         })
       }
 
@@ -187,17 +925,21 @@ routerAdd(
         signUrl = resData.signers[0].sign_url
       }
 
-      const status = resData.status || 'pending'
+      const status = resData.status || 'sent'
       const nowIso = new Date().toISOString().replace('T', ' ').substring(0, 19)
 
-      // Se temos o ID do contrato no PB, atualizamos o registro
       if (contractId) {
         try {
           const contractRec = $app.findRecordById('contracts', contractId)
           if (contractRec) {
+            contractRec.set('sign_provider', 'zapsign')
+            contractRec.set('sign_document_id', docId)
+            contractRec.set('sign_link', signUrl)
+            contractRec.set('sign_status', 'sent')
             contractRec.set('zapsign_doc_id', docId)
             contractRec.set('external_id', docId)
             contractRec.set('sign_url', signUrl)
+            contractRec.set('signing_link', signUrl)
             contractRec.set('external_provider', 'zapsign')
             contractRec.set('external_status', status)
             contractRec.set('plataforma', 'zapsign')
@@ -225,6 +967,8 @@ routerAdd(
 
       return e.json(200, {
         success: true,
+        document_id: docId,
+        sign_link: signUrl,
         doc_id: docId,
         sign_url: signUrl,
         status: status,
@@ -233,14 +977,14 @@ routerAdd(
     } catch (err) {
       return e.json(500, {
         success: false,
-        error: 'Erro interno ao criar documento no ZapSign: ' + (err.message || String(err)),
+        error: 'Erro ao criar documento no ZapSign: ' + (err.message || String(err)),
       })
     }
   },
   $apis.requireAuth(),
 )
 
-// 2. Endpoint para consultar status do documento no ZapSign
+// --- 4. Endpoint Auxiliar: GET /api/signatures/zapsign/status/{docId} ---
 routerAdd(
   'GET',
   '/api/signatures/zapsign/status/{docId}',
@@ -258,10 +1002,18 @@ routerAdd(
       const tenantId = (e.auth && e.auth.get('tenant_id')) || ''
       if (tenantId) {
         try {
-          const configRec = $app.findFirstRecordByData('integration_configs', 'provider', 'zapsign')
-          if (configRec && configRec.get('tenant_id') === tenantId) {
-            const cfg = configRec.get('config') || {}
-            if (cfg.api_token) apiToken = cfg.api_token
+          const configs = $app.findRecordsByFilter(
+            'integration_configs',
+            'tenant_id = "' + tenantId + '" && provider = "zapsign"',
+            '-created',
+            1,
+            0,
+          )
+          if (configs && configs.length > 0) {
+            const cfgRec = configs[0]
+            apiToken = cfgRec.getString('api_token')
+            const cfg = cfgRec.get('config_json') || cfgRec.get('config') || {}
+            if (!apiToken && cfg.api_token) apiToken = cfg.api_token
             if (cfg.sandbox !== undefined) isSandbox = !!cfg.sandbox
             if (cfg.api_url_base) customBaseUrl = cfg.api_url_base
           }
@@ -276,9 +1028,9 @@ routerAdd(
             )
             if (
               secretRec &&
-              (!secretRec.get('tenant_id') || secretRec.get('tenant_id') === tenantId)
+              (!secretRec.getString('tenant_id') || secretRec.getString('tenant_id') === tenantId)
             ) {
-              apiToken = secretRec.get('value') || ''
+              apiToken = secretRec.getString('value')
             }
           } catch (_) {}
         }
@@ -331,6 +1083,7 @@ routerAdd(
 
       return e.json(200, {
         success: true,
+        document_id: docId,
         doc_id: docId,
         status: status,
         signed_file: signedFileUrl,
@@ -346,7 +1099,7 @@ routerAdd(
   $apis.requireAuth(),
 )
 
-// 3. Endpoint de Teste de Conexão com ZapSign
+// --- 5. Endpoint Auxiliar: POST /api/signatures/test-connection ---
 routerAdd(
   'POST',
   '/api/signatures/test-connection',
@@ -359,10 +1112,18 @@ routerAdd(
 
       if (!token && tenantId) {
         try {
-          const configRec = $app.findFirstRecordByData('integration_configs', 'provider', 'zapsign')
-          if (configRec && configRec.get('tenant_id') === tenantId) {
-            const cfg = configRec.get('config') || {}
-            if (cfg.api_token) token = cfg.api_token
+          const configs = $app.findRecordsByFilter(
+            'integration_configs',
+            'tenant_id = "' + tenantId + '" && provider = "zapsign"',
+            '-created',
+            1,
+            0,
+          )
+          if (configs && configs.length > 0) {
+            const cfgRec = configs[0]
+            token = cfgRec.getString('api_token')
+            const cfg = cfgRec.get('config_json') || cfgRec.get('config') || {}
+            if (!token && cfg.api_token) token = cfg.api_token
           }
         } catch (_) {}
 
@@ -375,9 +1136,9 @@ routerAdd(
             )
             if (
               secretRec &&
-              (!secretRec.get('tenant_id') || secretRec.get('tenant_id') === tenantId)
+              (!secretRec.getString('tenant_id') || secretRec.getString('tenant_id') === tenantId)
             ) {
-              token = secretRec.get('value') || ''
+              token = secretRec.getString('value')
             }
           } catch (_) {}
         }
@@ -435,206 +1196,3 @@ routerAdd(
   },
   $apis.requireAuth(),
 )
-
-// 4. Webhook endpoint para receber notificações do ZapSign
-// Rota pública para webhooks externos: POST /api/webhooks/zapsign
-routerAdd('POST', '/api/webhooks/zapsign', (e) => {
-  try {
-    const body = e.requestInfo().body || {}
-    const headers = e.requestInfo().headers || {}
-
-    // Validação básica de token/assinatura se fornecida via query param ou header
-    const webhookSecretEnv = $os.getenv('ZAPSIGN_WEBHOOK_SECRET') || ''
-    const receivedSecret =
-      e.requestInfo().query.secret ||
-      e.requestInfo().query.token ||
-      headers['x-zapsign-secret'] ||
-      headers['x-webhook-secret'] ||
-      ''
-
-    if (webhookSecretEnv && receivedSecret && webhookSecretEnv !== receivedSecret) {
-      console.warn('[ZapSign Webhook] Assinatura/Secret inválido recebido.')
-      return e.json(401, { error: 'Unauthorized webhook request' })
-    }
-
-    // Identificar campos do evento ZapSign
-    // ZapSign envia: { event_type: "doc_signed", token: "...", status: "signed", name: "...", ... }
-    // ou payload direto com doc_id / token / external_id
-    const eventType = body.event_type || body.event || body.type || ''
-    const docToken =
-      body.token ||
-      body.doc_token ||
-      body.doc_id ||
-      body.id ||
-      (body.document && body.document.token) ||
-      ''
-    const docStatus =
-      body.status ||
-      (body.document && body.document.status) ||
-      (eventType === 'doc_signed' ? 'signed' : '')
-    const signedFileUrl = body.signed_file || (body.document && body.document.signed_file) || ''
-
-    console.log(
-      '[ZapSign Webhook] Recebido evento:',
-      eventType,
-      'DocToken:',
-      docToken,
-      'Status:',
-      docStatus,
-    )
-
-    if (!docToken && !eventType) {
-      return e.json(200, {
-        received: true,
-        processed: false,
-        message: 'Payload vazio ou não reconhecido como evento ZapSign',
-      })
-    }
-
-    let contractUpdated = false
-    let opportunityMoved = false
-    const nowIso = new Date().toISOString().replace('T', ' ').substring(0, 19)
-
-    // Procurar contrato no PocketBase associado ao documento
-    if (docToken) {
-      try {
-        // Tentar buscar por zapsign_doc_id ou external_id
-        let contractRec = null
-        try {
-          contractRec = $app.findFirstRecordByData('contracts', 'zapsign_doc_id', docToken)
-        } catch (_) {}
-
-        if (!contractRec) {
-          try {
-            contractRec = $app.findFirstRecordByData('contracts', 'external_id', docToken)
-          } catch (_) {}
-        }
-
-        if (contractRec) {
-          const tenantId = contractRec.get('tenant_id')
-          const oppId = contractRec.get('oportunidade_id')
-          const currentHist = contractRec.get('historico') || []
-          const histArray = Array.isArray(currentHist) ? currentHist : []
-
-          histArray.push({
-            action: 'webhook_received',
-            event_type: eventType,
-            status: docStatus,
-            payload: body,
-            date: nowIso,
-          })
-          contractRec.set('historico', histArray)
-          contractRec.set('external_status', docStatus || 'updated')
-
-          if (signedFileUrl) {
-            contractRec.set('documento_url', signedFileUrl)
-          }
-
-          // Se status for assinado ("signed", "completed", "doc_signed")
-          if (
-            docStatus === 'signed' ||
-            docStatus === 'completed' ||
-            eventType === 'doc_signed' ||
-            eventType === 'signer_signed'
-          ) {
-            contractRec.set('status', 'assinado')
-            contractRec.set('data_assinatura', nowIso)
-            contractRec.set('signed_at', nowIso)
-
-            $app.save(contractRec)
-            contractUpdated = true
-
-            // Mover oportunidade associada para "won" (ou estágio Fechado/Ganho)
-            if (oppId) {
-              try {
-                const oppRec = $app.findRecordById('opportunities', oppId)
-                if (oppRec) {
-                  oppRec.set('status', 'won')
-                  oppRec.set('data_ganho', nowIso)
-                  oppRec.set('probabilidade', 100)
-
-                  // Tentar encontrar o estágio "Fechado" / "Ganho" / "Assinado" do pipeline
-                  const pipelineId = oppRec.get('pipeline_id')
-                  if (pipelineId) {
-                    try {
-                      const stages = $app.findRecordsByFilter(
-                        'pipeline_stages',
-                        'pipeline_id = "' + pipelineId + '"',
-                        '-probability',
-                        5,
-                        0,
-                      )
-                      if (stages && stages.length > 0) {
-                        // Encontrar estágio com 100% de probabilidade ou nome Ganho/Assinado/Fechado
-                        let wonStage = stages.find(
-                          (st) =>
-                            st.get('probability') === 100 ||
-                            st.get('name').toLowerCase().includes('ganho') ||
-                            st.get('name').toLowerCase().includes('assinado') ||
-                            st.get('name').toLowerCase().includes('fechado'),
-                        )
-                        if (!wonStage) wonStage = stages[0] // o de maior probabilidade
-                        oppRec.set('stage_id', wonStage.id)
-                      }
-                    } catch (_) {}
-                  }
-
-                  $app.save(oppRec)
-                  opportunityMoved = true
-                }
-              } catch (oppErr) {
-                console.warn('[ZapSign Webhook] Erro ao atualizar oportunidade vinculada:', oppErr)
-              }
-            }
-
-            // Registrar evento de auditoria se aplicável
-            try {
-              if (tenantId) {
-                const auditCol = $app.findCollectionByNameOrId('audit_logs')
-                const auditRec = new Record(auditCol)
-                auditRec.set('tenant_id', tenantId)
-                auditRec.set('action', 'contract_signed_zapsign')
-                auditRec.set('resource_type', 'contracts')
-                auditRec.set('resource_id', contractRec.id)
-                auditRec.set('new_value', {
-                  doc_token: docToken,
-                  status: docStatus,
-                  event: eventType,
-                })
-                $app.save(auditRec)
-              }
-            } catch (_) {}
-          } else if (docStatus === 'rejected' || eventType === 'doc_rejected') {
-            contractRec.set('status', 'recusado')
-            contractRec.set('data_recusa', nowIso)
-            $app.save(contractRec)
-            contractUpdated = true
-          } else {
-            $app.save(contractRec)
-            contractUpdated = true
-          }
-        } else {
-          console.log('[ZapSign Webhook] Nenhum contrato localizado com docToken:', docToken)
-        }
-      } catch (ctrErr) {
-        console.warn('[ZapSign Webhook] Erro no processamento do contrato:', ctrErr)
-      }
-    }
-
-    return e.json(200, {
-      success: true,
-      received: true,
-      contract_updated: contractUpdated,
-      opportunity_moved: opportunityMoved,
-      event: eventType,
-      doc_id: docToken,
-      status: docStatus,
-    })
-  } catch (err) {
-    console.error('[ZapSign Webhook] Erro fatal no handler:', err)
-    return e.json(500, {
-      success: false,
-      error: 'Erro no processamento do webhook: ' + (err.message || String(err)),
-    })
-  }
-})
