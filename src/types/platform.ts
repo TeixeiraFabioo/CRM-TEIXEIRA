@@ -88,6 +88,9 @@ export interface LeadRecord {
   name: string
   phone?: string
   whatsapp?: string
+  last_inbound_message_at?: string
+  last_outbound_message_at?: string
+  whatsapp_conversation_id?: string
   email?: string
   company?: string
   position?: string
@@ -307,10 +310,26 @@ export interface LeadMessageRecord {
   id: string
   tenant_id: string
   lead_id: string
-  author_id: string
-  team: 'comercial' | 'juridico' | 'financeiro'
-  type: 'nota' | 'sistema'
+  author_id?: string
+  team?: 'comercial' | 'juridico' | 'financeiro'
+  type: 'nota' | 'sistema' | 'mensagem' | 'whatsapp'
+  channel?: 'internal' | 'whatsapp' | 'email' | 'sms'
+  direction?: 'inbound' | 'outbound'
+  status_delivery?: 'pending' | 'sent' | 'delivered' | 'read' | 'failed'
+  external_id?: string
+  media_type?:
+    | 'text'
+    | 'image'
+    | 'audio'
+    | 'document'
+    | 'video'
+    | 'sticker'
+    | 'location'
+    | 'template'
+  media_url?: string
+  media_caption?: string
   content: string
+  metadata?: Record<string, unknown>
   expand?: {
     author_id?: UserRecord
     lead_id?: LeadRecord

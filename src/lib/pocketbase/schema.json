@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-21T16:36:42.322Z",
+  "generatedAt": "2026-08-21T16:42:18.536Z",
   "collections": [
     {
       "name": "users",
@@ -807,6 +807,24 @@
           "required": false,
           "system": false,
           "collectionRef": "users"
+        },
+        {
+          "name": "last_inbound_message_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "last_outbound_message_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "whatsapp_conversation_id",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": ["CREATE INDEX idx_leads_tenant ON leads (tenant_id, created DESC)"]
@@ -3311,14 +3329,14 @@
         {
           "name": "author_id",
           "type": "relation",
-          "required": true,
+          "required": false,
           "system": false,
           "collectionRef": "users"
         },
         {
           "name": "team",
           "type": "select",
-          "required": true,
+          "required": false,
           "system": false,
           "selectValues": ["comercial", "juridico", "financeiro"]
         },
@@ -3327,12 +3345,12 @@
           "type": "select",
           "required": false,
           "system": false,
-          "selectValues": ["nota", "sistema"]
+          "selectValues": ["nota", "sistema", "mensagem", "whatsapp"]
         },
         {
           "name": "content",
           "type": "text",
-          "required": true,
+          "required": false,
           "system": false
         },
         {
@@ -3348,11 +3366,73 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "channel",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["internal", "whatsapp", "email", "sms"]
+        },
+        {
+          "name": "direction",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["inbound", "outbound"]
+        },
+        {
+          "name": "status_delivery",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["pending", "sent", "delivered", "read", "failed"]
+        },
+        {
+          "name": "external_id",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "media_type",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": [
+            "text",
+            "image",
+            "audio",
+            "document",
+            "video",
+            "sticker",
+            "location",
+            "template"
+          ]
+        },
+        {
+          "name": "media_url",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "media_caption",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "metadata",
+          "type": "json",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
         "CREATE INDEX idx_lead_messages_lead ON lead_messages (lead_id, created)",
-        "CREATE INDEX idx_lead_messages_tenant ON lead_messages (tenant_id)"
+        "CREATE INDEX idx_lead_messages_tenant ON lead_messages (tenant_id)",
+        "CREATE INDEX `idx_lead_messages_external_id` ON `lead_messages` (external_id)"
       ]
     },
     {
