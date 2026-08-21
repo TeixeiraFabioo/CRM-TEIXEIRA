@@ -38,6 +38,7 @@ export interface UserRecord {
   status?: 'active' | 'inactive' | 'invited'
   active?: boolean
   avatar?: string
+  cargo?: string
   settings?: Record<string, unknown>
   last_login?: string
   created?: string
@@ -126,6 +127,7 @@ export interface LeadRecord {
   potential_value?: number
   valor_potencial?: number
   tags?: string[]
+  custom_fields?: Record<string, any>
   observacoes?: string
   landing_page?: string
   url_origem?: string
@@ -163,6 +165,7 @@ export interface CustomerRecord {
   valor_total_contratado?: number
   servicos_contratados?: string[]
   tags?: string[]
+  custom_fields?: Record<string, any>
   observacoes?: string
   responsavel_id?: string
   data_conversao?: string
@@ -489,15 +492,15 @@ export interface GoalRecord {
   titulo: string
   tipo: 'contratos' | 'valor' | 'leads' | 'conversao' | 'receita' | string
   valor_alvo: number
-  valor_atual: number
+  valor_atual?: number
   usuario_id?: string
   equipe?: string
+  periodo?: string
   periodo_inicio?: string
   periodo_fim?: string
-  status?: 'em_andamento' | 'atingida' | 'cancelada' | string
-  expand?: {
-    usuario_id?: UserRecord
-  }
+  data_inicio?: string
+  data_fim?: string
+  status?: string
   created?: string
   updated?: string
 }

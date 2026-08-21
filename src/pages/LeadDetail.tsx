@@ -79,7 +79,8 @@ import {
   MessageTemplateRecord,
 } from '@/types/platform'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { MessageSquareText } from 'lucide-react'
+import { MessageSquareText, Check } from 'lucide-react'
+import { Switch } from '@/components/ui/switch'
 
 type TeamType = 'comercial' | 'juridico' | 'financeiro'
 

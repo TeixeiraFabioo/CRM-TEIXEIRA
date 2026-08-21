@@ -779,24 +779,47 @@ export const CrmService = {
     tenantId: string,
     data: Partial<CommissionRecord>,
   ): Promise<CommissionRecord> {
-    return await pb.collection('commissions').create<CommissionRecord>({
+    const rec = await pb.collection('commissions').create<CommissionRecord>({
       tenant_id: tenantId,
       status: data.status || 'pendente',
       data_geracao: data.data_geracao || new Date().toISOString(),
       ...data,
     })
+    await this.logAudit(tenantId, 'create', 'commission', rec.id, null, rec)
+    return rec
   },
 
   async updateCommission(id: string, data: Partial<CommissionRecord>): Promise<CommissionRecord> {
-    return await pb.collection('commissions').update<CommissionRecord>(id, data)
+    const old = await pb
+      .collection('commissions')
+      .getOne<CommissionRecord>(id)
+      .catch(() => null)
+    const rec = await pb.collection('commissions').update<CommissionRecord>(id, data, {
+      expand: 'usuario_id,contrato_id,oportunidade_id',
+    })
+    if (old) {
+      await this.logAudit(rec.tenant_id, 'update', 'commission', id, old, rec)
+    }
+    return rec
+  },
+
+  async markCommissionAsPaid(id: string): Promise<CommissionRecord> {
+    return await this.updateCommission(id, {
+      status: 'pago',
+      data_pagamento: new Date().toISOString(),
+    })
   },
 
   async deleteCommission(id: string): Promise<boolean> {
-    return await pb.collection('commissions').delete(id)
-  },
-
-  async updateCommission(id: string, data: Partial<CommissionRecord>): Promise<CommissionRecord> {
-    return await pb.collection('commissions').update<CommissionRecord>(id, data)
+    const rec = await pb
+      .collection('commissions')
+      .getOne<CommissionRecord>(id)
+      .catch(() => null)
+    const res = await pb.collection('commissions').delete(id)
+    if (rec) {
+      await this.logAudit(rec.tenant_id, 'delete', 'commission', id, rec, null)
+    }
+    return res
   },
 
   // --- SERVICES (SERVIÇOS JURÍDICOS) ---
