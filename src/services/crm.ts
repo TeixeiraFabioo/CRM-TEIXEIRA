@@ -23,6 +23,7 @@ import {
   PipelineRecord,
   PipelineStageRecord,
   UserRecord,
+  LeadDistributionRecord,
 } from '@/types/platform'
 
 export const CrmService = {
@@ -513,6 +514,23 @@ export const CrmService = {
     }
   },
 
+  async getLeadsWithMessagesMap(tenantId: string): Promise<Set<string>> {
+    try {
+      const messages = await pb.collection('lead_messages').getFullList<{ lead_id: string }>({
+        filter: `tenant_id = "${tenantId}"`,
+        fields: 'lead_id',
+      })
+      const set = new Set<string>()
+      for (const m of messages) {
+        if (m.lead_id) set.add(m.lead_id)
+      }
+      return set
+    } catch (e) {
+      console.warn('Failed to load lead messages map', e)
+      return new Set<string>()
+    }
+  },
+
   async createLeadMessage(data: {
     tenant_id: string
     lead_id: string
@@ -865,6 +883,93 @@ export const CrmService = {
     return await pb.collection('automations').update<AutomationRecord>(id, data)
   },
 
+  // --- LEAD DISTRIBUTION ---
+  async getLeadDistributionConfig(tenantId: string): Promise<LeadDistributionRecord | null> {
+    try {
+      const list = await pb.collection('lead_distribution').getList<LeadDistributionRecord>(1, 1, {
+        filter: `tenant_id = "${tenantId}" && (lead_id = "" || lead_id = null)`,
+        sort: '-created',
+      })
+      if (list.items.length > 0) return list.items[0]
+
+      // Fallback para qualquer registro de config
+      const listAny = await pb
+        .collection('lead_distribution')
+        .getList<LeadDistributionRecord>(1, 1, {
+          filter: `tenant_id = "${tenantId}"`,
+          sort: '-created',
+        })
+      return listAny.items.length > 0 ? listAny.items[0] : null
+    } catch (e) {
+      console.warn('Failed to get lead distribution config', e)
+      return null
+    }
+  },
+
+  async upsertLeadDistributionConfig(
+    tenantId: string,
+    data: { metodo: 'round_robin' | 'manual' | string; ativo: boolean },
+  ): Promise<LeadDistributionRecord> {
+    const existing = await this.getLeadDistributionConfig(tenantId)
+    const payload = {
+      tenant_id: tenantId,
+      metodo: data.metodo,
+      distribution_method: data.metodo,
+      ativo: data.ativo,
+      is_active: data.ativo,
+    }
+    let record: LeadDistributionRecord
+    if (existing) {
+      record = await pb
+        .collection('lead_distribution')
+        .update<LeadDistributionRecord>(existing.id, payload)
+    } else {
+      record = await pb.collection('lead_distribution').create<LeadDistributionRecord>(payload)
+    }
+    await this.logAudit(
+      tenantId,
+      'update_lead_distribution_config',
+      'settings',
+      record.id,
+      existing,
+      record,
+    )
+    return record
+  },
+
+  async getRecentLeadDistributions(
+    tenantId: string,
+    limit = 20,
+  ): Promise<LeadDistributionRecord[]> {
+    try {
+      const list = await pb
+        .collection('lead_distribution')
+        .getList<LeadDistributionRecord>(1, limit, {
+          filter: `tenant_id = "${tenantId}" && lead_id != "" && user_id != ""`,
+          sort: '-created',
+          expand: 'lead_id,user_id',
+        })
+      if (list.items.length > 0) return list.items
+
+      // Se não houver em lead_distribution com lead_id, tentar em lead_distribution_logs
+      try {
+        const logs = await pb.collection('lead_distribution_logs').getList<any>(1, limit, {
+          filter: `tenant_id = "${tenantId}"`,
+          sort: '-created',
+          expand: 'lead_id,user_id',
+        })
+        return logs.items
+      } catch {
+        /* intentionally ignored */
+      }
+
+      return list.items
+    } catch (e) {
+      console.warn('Failed to get recent lead distributions', e)
+      return []
+    }
+  },
+
   // --- SLAs & REGRAS ---
   async getSlaConfigs(tenantId: string): Promise<SlaConfigRecord[]> {
     try {
@@ -878,19 +983,58 @@ export const CrmService = {
     }
   },
 
+  async getActiveSlaConfig(tenantId: string): Promise<SlaConfigRecord | null> {
+    try {
+      const list = await pb.collection('sla_configs').getList<SlaConfigRecord>(1, 1, {
+        filter: `tenant_id = "${tenantId}" && (ativo = true || is_active = true)`,
+        sort: '-created',
+      })
+      return list.items.length > 0 ? list.items[0] : null
+    } catch (e) {
+      console.warn('Failed to load active SLA', e)
+      return null
+    }
+  },
+
   async createSlaConfig(
     tenantId: string,
     data: Partial<SlaConfigRecord>,
   ): Promise<SlaConfigRecord> {
-    return await pb.collection('sla_configs').create<SlaConfigRecord>({
+    const minutes = data.first_response_minutes ?? data.tempo_resposta_minutos ?? 15
+    const isActive = data.is_active ?? data.ativo ?? true
+    const rec = await pb.collection('sla_configs').create<SlaConfigRecord>({
       tenant_id: tenantId,
-      ativo: true,
+      ativo: isActive,
+      is_active: isActive,
+      tempo_resposta_minutos: minutes,
+      first_response_minutes: minutes,
       ...data,
     })
+    await this.logAudit(tenantId, 'create', 'sla_config', rec.id, null, rec)
+    return rec
   },
 
   async updateSlaConfig(id: string, data: Partial<SlaConfigRecord>): Promise<SlaConfigRecord> {
-    return await pb.collection('sla_configs').update<SlaConfigRecord>(id, data)
+    const old = await pb
+      .collection('sla_configs')
+      .getOne<SlaConfigRecord>(id)
+      .catch(() => null)
+    const minutes = data.first_response_minutes ?? data.tempo_resposta_minutos
+    const isActive = data.is_active ?? data.ativo
+    const payload: any = { ...data }
+    if (minutes !== undefined) {
+      payload.tempo_resposta_minutos = minutes
+      payload.first_response_minutes = minutes
+    }
+    if (isActive !== undefined) {
+      payload.ativo = isActive
+      payload.is_active = isActive
+    }
+    const rec = await pb.collection('sla_configs').update<SlaConfigRecord>(id, payload)
+    if (old) {
+      await this.logAudit(rec.tenant_id, 'update', 'sla_config', id, old, rec)
+    }
+    return rec
   },
 
   // --- CONVERSION EVENTS ---
@@ -907,17 +1051,53 @@ export const CrmService = {
   },
 
   // --- AUDIT LOGS ---
-  async getAuditLogs(tenantId: string, limit = 50): Promise<AuditLogRecord[]> {
+  async getAuditLogs(
+    tenantId: string,
+    options: {
+      limit?: number
+      page?: number
+      action?: string
+      period?: 'today' | '7d' | '30d' | 'all'
+    } = {},
+  ): Promise<{ items: AuditLogRecord[]; totalItems: number; totalPages: number }> {
     try {
-      const list = await pb.collection('audit_logs').getList<AuditLogRecord>(1, limit, {
-        filter: `tenant_id = "${tenantId}"`,
+      const limit = options.limit || 100
+      const page = options.page || 1
+
+      const filterParts = [`tenant_id = "${tenantId}"`]
+
+      if (options.action && options.action !== 'all') {
+        filterParts.push(`action ~ "${options.action}"`)
+      }
+
+      if (options.period && options.period !== 'all') {
+        const now = new Date()
+        let fromDate: Date | null = null
+        if (options.period === 'today') {
+          fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+        } else if (options.period === '7d') {
+          fromDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+        } else if (options.period === '30d') {
+          fromDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+        }
+        if (fromDate) {
+          filterParts.push(`created >= "${fromDate.toISOString().replace('T', ' ')}"`)
+        }
+      }
+
+      const list = await pb.collection('audit_logs').getList<AuditLogRecord>(page, limit, {
+        filter: filterParts.join(' && '),
         sort: '-created',
         expand: 'user_id',
       })
-      return list.items
+      return {
+        items: list.items,
+        totalItems: list.totalItems,
+        totalPages: list.totalPages,
+      }
     } catch (e) {
       console.warn('Failed to load audit logs', e)
-      return []
+      return { items: [], totalItems: 0, totalPages: 0 }
     }
   },
 

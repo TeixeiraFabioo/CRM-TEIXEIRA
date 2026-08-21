@@ -35,6 +35,7 @@ import AutomacoesPage from '@/pages/Automacoes'
 import IntegrationsPage from '@/pages/Integrations'
 import SettingsPage from '@/pages/Settings'
 import KnowledgeBasePage from '@/pages/KnowledgeBase'
+import AuditLogPage from '@/pages/AuditLog'
 import NotFound from '@/pages/NotFound'
 
 export default function App() {
@@ -94,6 +95,7 @@ export default function App() {
             {/* System */}
             <Route path="integrations" element={<IntegrationsPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="auditoria" element={<AuditLogPage />} />
             <Route path="base-conhecimento" element={<KnowledgeBasePage />} />
 
             {/* Fallback */}

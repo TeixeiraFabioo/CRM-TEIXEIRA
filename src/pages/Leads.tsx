@@ -49,7 +49,13 @@ import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
 import { useTenant } from '@/contexts/TenantContext'
 import { CrmService } from '@/services/crm'
-import { LeadRecord, UserRecord, ServiceRecord, EmpresaRecord } from '@/types/platform'
+import {
+  LeadRecord,
+  UserRecord,
+  ServiceRecord,
+  EmpresaRecord,
+  SlaConfigRecord,
+} from '@/types/platform'
 
 export function LeadsPage() {
   const { tenant } = useTenant()
@@ -61,6 +67,8 @@ export function LeadsPage() {
   const [users, setUsers] = useState<UserRecord[]>([])
   const [services, setServices] = useState<ServiceRecord[]>([])
   const [empresas, setEmpresas] = useState<EmpresaRecord[]>([])
+  const [slaConfig, setSlaConfig] = useState<SlaConfigRecord | null>(null)
+  const [leadsWithMessages, setLeadsWithMessages] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
 
   // Filters
@@ -107,16 +115,21 @@ export function LeadsPage() {
     if (!tenant?.id) return
     setLoading(true)
     try {
-      const [leadsData, usersData, servicesData, empresasData] = await Promise.all([
-        CrmService.getLeads(tenant.id),
-        CrmService.getUsers(tenant.id),
-        CrmService.getServices(tenant.id),
-        CrmService.getEmpresas(tenant.id),
-      ])
+      const [leadsData, usersData, servicesData, empresasData, slaData, messagesMap] =
+        await Promise.all([
+          CrmService.getLeads(tenant.id),
+          CrmService.getUsers(tenant.id),
+          CrmService.getServices(tenant.id),
+          CrmService.getEmpresas(tenant.id),
+          CrmService.getActiveSlaConfig(tenant.id),
+          CrmService.getLeadsWithMessagesMap(tenant.id),
+        ])
       setLeads(leadsData)
       setUsers(usersData)
       setServices(servicesData)
       setEmpresas(empresasData)
+      setSlaConfig(slaData)
+      setLeadsWithMessages(messagesMap)
     } catch (e) {
       console.error(e)
       toast({ title: 'Erro ao carregar dados', variant: 'destructive' })
@@ -258,6 +271,22 @@ export function LeadsPage() {
 
     return matchesSearch && matchesTemp && matchesStatus && matchesSource && matchesResp
   })
+
+  const isSlaViolated = (lead: LeadRecord) => {
+    if (!slaConfig) return false
+    const isActive = slaConfig.is_active !== false && slaConfig.ativo !== false
+    if (!isActive) return false
+
+    const slaMinutes = slaConfig.first_response_minutes ?? slaConfig.tempo_resposta_minutos ?? 15
+    if (!lead.created) return false
+
+    const leadCreatedTime = new Date(lead.created).getTime()
+    const now = Date.now()
+    const elapsedMinutes = (now - leadCreatedTime) / (1000 * 60)
+
+    const hasMessage = leadsWithMessages.has(lead.id)
+    return elapsedMinutes > slaMinutes && !hasMessage
+  }
 
   const getTemperatureBadge = (temp?: string) => {
     switch (temp) {
@@ -429,11 +458,16 @@ export function LeadsPage() {
                   >
                     {/* Name & Contact */}
                     <td className="p-3.5 pl-4">
-                      <div className="font-semibold text-foreground group-hover:text-primary transition-colors flex items-center gap-1.5">
-                        {lead.name}
+                      <div className="font-semibold text-foreground group-hover:text-primary transition-colors flex items-center gap-1.5 flex-wrap">
+                        <span>{lead.name}</span>
                         {lead.score && lead.score > 70 && (
                           <span className="text-[10px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-600 font-bold">
                             Score {lead.score}
+                          </span>
+                        )}
+                        {isSlaViolated(lead) && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 animate-pulse">
+                            <AlertCircle className="h-2.5 w-2.5" /> SLA Violado
                           </span>
                         )}
                       </div>

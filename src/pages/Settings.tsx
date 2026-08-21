@@ -72,6 +72,7 @@ import {
   TemplateRecord,
   SlaConfigRecord,
   UserRecord,
+  LeadDistributionRecord,
 } from '@/types/platform'
 
 export function SettingsPage() {
@@ -84,6 +85,20 @@ export function SettingsPage() {
   const [slas, setSlas] = useState<SlaConfigRecord[]>([])
   const [users, setUsers] = useState<UserRecord[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Lead Distribution State
+  const [distributionEnabled, setDistributionEnabled] = useState(true)
+  const [distributionMethod, setDistributionMethod] = useState<'round_robin' | 'manual'>(
+    'round_robin',
+  )
+  const [recentDistributions, setRecentDistributions] = useState<LeadDistributionRecord[]>([])
+  const [savingDistribution, setSavingDistribution] = useState(false)
+
+  // SLA State
+  const [slaFirstResponseMinutes, setSlaFirstResponseMinutes] = useState<number>(15)
+  const [slaIsActive, setSlaIsActive] = useState<boolean>(true)
+  const [activeSlaId, setActiveSlaId] = useState<string | null>(null)
+  const [savingSla, setSavingSla] = useState<boolean>(false)
 
   // Office settings
   const [officeName, setOfficeName] = useState('Teixeira & Nascimento – Advogados')
@@ -166,18 +181,36 @@ export function SettingsPage() {
     if (!tenant?.id) return
     setLoading(true)
     try {
-      const [sList, tList, tmpList, slaList, uList] = await Promise.all([
+      const [sList, tList, tmpList, slaList, uList, distConfig, distRecent] = await Promise.all([
         CrmService.getServices(tenant.id),
         CrmService.getTags(tenant.id),
         CrmService.getTemplates(tenant.id),
         CrmService.getSlaConfigs(tenant.id),
         CrmService.getUsers(tenant.id),
+        CrmService.getLeadDistributionConfig(tenant.id),
+        CrmService.getRecentLeadDistributions(tenant.id, 20),
       ])
       setServices(sList)
       setTags(tList)
       setTemplates(tmpList)
       setSlas(slaList)
       setUsers(uList)
+      setRecentDistributions(distRecent)
+
+      if (distConfig) {
+        setDistributionEnabled(distConfig.ativo !== false && distConfig.is_active !== false)
+        const m = (distConfig.metodo || distConfig.distribution_method || 'round_robin') as any
+        setDistributionMethod(m === 'manual' ? 'manual' : 'round_robin')
+      }
+
+      if (slaList.length > 0) {
+        const primarySla = slaList[0]
+        setActiveSlaId(primarySla.id)
+        setSlaFirstResponseMinutes(
+          primarySla.first_response_minutes ?? primarySla.tempo_resposta_minutos ?? 15,
+        )
+        setSlaIsActive(primarySla.is_active !== false && primarySla.ativo !== false)
+      }
     } finally {
       setLoading(false)
     }
@@ -459,52 +492,127 @@ export function SettingsPage() {
     setTimeout(() => setCopiedPassword(false), 3000)
   }
 
+  const handleSaveDistribution = async () => {
+    if (!tenant?.id) return
+    setSavingDistribution(true)
+    try {
+      await CrmService.upsertLeadDistributionConfig(tenant.id, {
+        ativo: distributionEnabled,
+        metodo: distributionMethod,
+      })
+      toast({
+        title: 'Distribuição de leads atualizada',
+        description: `Distribuição ${distributionEnabled ? 'ativada' : 'desativada'} via método ${distributionMethod === 'round_robin' ? 'Round-Robin' : 'Manual'}.`,
+      })
+      const recents = await CrmService.getRecentLeadDistributions(tenant.id, 20)
+      setRecentDistributions(recents)
+    } catch (e: any) {
+      toast({
+        title: 'Erro ao salvar configuração de distribuição',
+        description: e?.message,
+        variant: 'destructive',
+      })
+    } finally {
+      setSavingDistribution(false)
+    }
+  }
+
+  const handleSaveSlaConfig = async () => {
+    if (!tenant?.id) return
+    setSavingSla(true)
+    try {
+      if (activeSlaId) {
+        await CrmService.updateSlaConfig(activeSlaId, {
+          first_response_minutes: Number(slaFirstResponseMinutes),
+          tempo_resposta_minutos: Number(slaFirstResponseMinutes),
+          is_active: slaIsActive,
+          ativo: slaIsActive,
+        })
+      } else {
+        const created = await CrmService.createSlaConfig(tenant.id, {
+          equipe: 'Comercial Geral',
+          origem: 'Meta Ads',
+          prioridade: 'alta',
+          tempo_resposta_minutos: Number(slaFirstResponseMinutes),
+          first_response_minutes: Number(slaFirstResponseMinutes),
+          horario_inicio: '08:00',
+          horario_fim: '19:00',
+          dias_semana: ['seg', 'ter', 'qua', 'qui', 'sex'],
+          ativo: slaIsActive,
+          is_active: slaIsActive,
+        })
+        setActiveSlaId(created.id)
+      }
+      toast({
+        title: 'SLA de Primeiro Atendimento configurado',
+        description: `Tempo limite definido para ${slaFirstResponseMinutes} minutos.`,
+      })
+      const slaList = await CrmService.getSlaConfigs(tenant.id)
+      setSlas(slaList)
+    } catch (e: any) {
+      toast({
+        title: 'Erro ao salvar SLA',
+        description: e?.message,
+        variant: 'destructive',
+      })
+    } finally {
+      setSavingSla(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold font-legal-serif">Configurações do Escritório</h1>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Gestão multi-tenant, equipes jurídicas, catálogo de serviços, SLAs e integrações.
+          Gestão multi-tenant, equipes jurídicas, catálogo de serviços, distribuição de leads, SLAs
+          e auditoria.
         </p>
       </div>
 
       <Tabs defaultValue="empresa" className="w-full">
-        <TabsList className="w-full justify-start border-b rounded-none p-0 h-10 bg-transparent gap-4">
+        <TabsList className="w-full justify-start border-b rounded-none p-0 h-10 bg-transparent gap-4 overflow-x-auto">
           <TabsTrigger
             value="empresa"
-            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 whitespace-nowrap"
           >
             Escritório &amp; Pixel
           </TabsTrigger>
           <TabsTrigger
+            value="distribuicao"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 whitespace-nowrap"
+          >
+            Distribuição de Leads
+          </TabsTrigger>
+          <TabsTrigger
+            value="sla"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 whitespace-nowrap"
+          >
+            SLA de Atendimento
+          </TabsTrigger>
+          <TabsTrigger
             value="conhecimento"
-            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 flex items-center gap-1.5"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 flex items-center gap-1.5 whitespace-nowrap"
           >
             <BookOpen className="h-3.5 w-3.5" /> Base de Conhecimento
           </TabsTrigger>
           <TabsTrigger
             value="servicos"
-            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 whitespace-nowrap"
           >
             Serviços Jurídicos ({services.length})
           </TabsTrigger>
           <TabsTrigger
             value="usuarios"
-            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 whitespace-nowrap"
           >
             Equipe &amp; Usuários ({users.length})
           </TabsTrigger>
           <TabsTrigger
             value="tags"
-            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 whitespace-nowrap"
           >
             Tags &amp; Categorias ({tags.length})
-          </TabsTrigger>
-          <TabsTrigger
-            value="sla"
-            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2"
-          >
-            Regras de SLA ({slas.length})
           </TabsTrigger>
         </TabsList>
 
@@ -917,31 +1025,231 @@ export function SettingsPage() {
           </div>
         </TabsContent>
 
-        {/* TAB SLA */}
-        <TabsContent value="sla" className="pt-4 space-y-4">
-          <div className="bg-card border rounded-xl p-5 space-y-3">
-            <h3 className="font-bold text-sm">Configuração de Tempo Máximo de Resposta (SLA)</h3>
-            {slas.map((s) => (
-              <div
-                key={s.id}
-                className="p-3 bg-muted/40 rounded-lg flex justify-between items-center text-xs"
-              >
+        {/* TAB DISTRIBUIÇÃO DE LEADS */}
+        <TabsContent value="distribuicao" className="pt-4 space-y-6">
+          <div className="bg-card border rounded-xl p-5 shadow-xs space-y-5 max-w-3xl">
+            <div>
+              <h3 className="font-bold text-sm flex items-center gap-2">
+                <Users className="h-4 w-4 text-primary" />
+                Distribuição Automática de Leads (Round-Robin)
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                Distribua novos leads criados automaticamente em fila circular (round-robin) entre
+                os vendedores e atendentes ativos do escritório.
+              </p>
+            </div>
+
+            <div className="space-y-4 border rounded-lg p-4 bg-muted/20">
+              <div className="flex items-center justify-between">
                 <div>
-                  <div className="font-bold">
-                    {s.equipe || 'Comercial'} • Origem: {s.origem || 'Meta Ads'}
-                  </div>
-                  <div className="text-muted-foreground">
-                    Horário de Atendimento: {s.horario_inicio} às {s.horario_fim}
-                  </div>
+                  <Label className="text-xs font-semibold">Ativar Distribuição Automática</Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Quando ativo, novos leads sem responsável definido serão atribuídos
+                    automaticamente.
+                  </p>
                 </div>
-                <div className="text-right">
-                  <div className="font-bold text-primary">{s.tempo_resposta_minutos} minutos</div>
-                  <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px]">
-                    Ativo
-                  </Badge>
-                </div>
+                <Switch
+                  checked={distributionEnabled}
+                  onCheckedChange={setDistributionEnabled}
+                  aria-label="Ativar distribuição automática"
+                />
               </div>
-            ))}
+
+              <div className="space-y-1.5 pt-2">
+                <Label className="text-xs font-semibold">Método de Distribuição</Label>
+                <Select
+                  value={distributionMethod}
+                  onValueChange={(val: 'round_robin' | 'manual') => setDistributionMethod(val)}
+                  disabled={!distributionEnabled}
+                >
+                  <SelectTrigger className="h-9 text-xs max-w-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="round_robin">
+                      Round-Robin (Distribuição Equitativa Circular)
+                    </SelectItem>
+                    <SelectItem value="manual">Manual (Atribuição pelo Gestor)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  O algoritmo Round-Robin divide os leads em sequência igualitária entre todos os
+                  usuários ativos com papel de Vendedor/Atendente ou Consultor.
+                </p>
+              </div>
+
+              <Button
+                size="sm"
+                onClick={handleSaveDistribution}
+                disabled={savingDistribution}
+                className="bg-[#0A1F3F] text-white text-xs gap-1.5 mt-2"
+              >
+                <Save className="h-3.5 w-3.5" />
+                {savingDistribution ? 'Salvando...' : 'Salvar Preferências de Distribuição'}
+              </Button>
+            </div>
+          </div>
+
+          {/* Histórico das últimas distribuições */}
+          <div className="bg-card border rounded-xl p-5 shadow-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-sm">Últimas Distribuições Registradas</h3>
+                <p className="text-xs text-muted-foreground">
+                  Registro em tempo real da alocação de leads aos vendedores.
+                </p>
+              </div>
+              <Badge variant="outline" className="text-xs">
+                {recentDistributions.length} distribuições recentes
+              </Badge>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-muted/50 uppercase text-[11px] font-semibold border-b text-muted-foreground">
+                  <tr>
+                    <th className="p-3 pl-4">Lead</th>
+                    <th className="p-3">Vendedor / Responsável Atribuído</th>
+                    <th className="p-3">Método</th>
+                    <th className="p-3 pr-4 text-right">Data / Hora</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {recentDistributions.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="p-6 text-center text-muted-foreground">
+                        Nenhuma distribuição automática registrada ainda.
+                      </td>
+                    </tr>
+                  ) : (
+                    recentDistributions.map((dist) => (
+                      <tr key={dist.id} className="hover:bg-muted/30 transition-colors">
+                        <td className="p-3 pl-4 font-semibold text-foreground">
+                          {dist.expand?.lead_id?.name || dist.lead_id || 'Lead Jurídico'}
+                        </td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-2 font-medium">
+                            <UserCheck className="h-3.5 w-3.5 text-emerald-500" />
+                            <span>{dist.expand?.user_id?.name || dist.user_id || 'Vendedor'}</span>
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <Badge variant="outline" className="text-[10px] uppercase font-mono">
+                            {dist.distribution_method || dist.metodo || 'round_robin'}
+                          </Badge>
+                        </td>
+                        <td className="p-3 pr-4 text-right text-muted-foreground font-mono text-[11px]">
+                          {dist.created
+                            ? new Date(dist.created).toLocaleString('pt-BR', {
+                                dateStyle: 'short',
+                                timeStyle: 'short',
+                              })
+                            : '—'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* TAB SLA */}
+        <TabsContent value="sla" className="pt-4 space-y-6">
+          <div className="bg-card border rounded-xl p-5 shadow-xs space-y-5 max-w-3xl">
+            <div>
+              <h3 className="font-bold text-sm flex items-center gap-2">
+                <Clock className="h-4 w-4 text-amber-500" />
+                SLA de Primeiro Atendimento (Tempo de Resposta)
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                Defina o tempo máximo tolerado para o primeiro contato/mensagem com novos leads.
+                Leads sem interação que ultrapassarem esse limite serão sinalizados como atrasados
+                em toda a plataforma.
+              </p>
+            </div>
+
+            <div className="space-y-4 border rounded-lg p-4 bg-muted/20">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="text-xs font-semibold">Monitoramento de SLA Ativo</Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Exibe alerta visual nos cards e linhas de leads com SLA violado.
+                  </p>
+                </div>
+                <Switch
+                  checked={slaIsActive}
+                  onCheckedChange={setSlaIsActive}
+                  aria-label="Ativar monitoramento de SLA"
+                />
+              </div>
+
+              <div className="space-y-1.5 pt-2">
+                <Label className="text-xs font-semibold">
+                  Tempo Máximo de Primeira Resposta (em minutos) *
+                </Label>
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={1440}
+                    value={slaFirstResponseMinutes}
+                    onChange={(e) => setSlaFirstResponseMinutes(Number(e.target.value))}
+                    className="h-9 text-xs w-36 font-mono"
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    minutos ({Math.round((slaFirstResponseMinutes / 60) * 10) / 10}h)
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Padrão do mercado jurídico de alta conversão: <strong>15 a 30 minutos</strong>{' '}
+                  para leads de campanhas digitais (Meta/Google).
+                </p>
+              </div>
+
+              <Button
+                size="sm"
+                onClick={handleSaveSlaConfig}
+                disabled={savingSla}
+                className="bg-[#0A1F3F] text-white text-xs gap-1.5 mt-2"
+              >
+                <Save className="h-3.5 w-3.5" />
+                {savingSla ? 'Salvando...' : 'Salvar Regra de SLA'}
+              </Button>
+            </div>
+          </div>
+
+          <div className="bg-card border rounded-xl p-5 shadow-xs space-y-3">
+            <h3 className="font-bold text-sm">Políticas de SLA Cadastradas</h3>
+            {slas.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Nenhuma política de SLA configurada.</p>
+            ) : (
+              slas.map((s) => (
+                <div
+                  key={s.id}
+                  className="p-3 bg-muted/40 rounded-lg flex justify-between items-center text-xs"
+                >
+                  <div>
+                    <div className="font-bold">
+                      {s.equipe || 'Comercial Geral'} • Origem: {s.origem || 'Todas as Origens'}
+                    </div>
+                    <div className="text-muted-foreground text-[11px]">
+                      Horário de Atendimento: {s.horario_inicio || '08:00'} às{' '}
+                      {s.horario_fim || '19:00'}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-bold text-primary">
+                      {s.first_response_minutes ?? s.tempo_resposta_minutos ?? 15} minutos
+                    </div>
+                    <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px]">
+                      {s.is_active !== false && s.ativo !== false ? 'Ativo' : 'Inativo'}
+                    </Badge>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </TabsContent>
       </Tabs>

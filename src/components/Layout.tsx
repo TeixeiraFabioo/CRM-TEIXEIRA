@@ -122,6 +122,7 @@ export default function Layout() {
       title: 'SISTEMA & INTEGRAÇÕES',
       items: [
         { name: 'Central de Integrações', path: '/integrations', icon: Layers },
+        { name: 'Trilha de Auditoria', path: '/auditoria', icon: ShieldCheck },
         { name: 'Configurações do Escritório', path: '/settings', icon: Settings },
       ],
     },

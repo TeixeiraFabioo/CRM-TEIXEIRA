@@ -582,11 +582,32 @@ export interface SlaConfigRecord {
   equipe?: string
   origem?: string
   prioridade?: string
-  tempo_resposta_minutos: number
+  tempo_resposta_minutos?: number
+  first_response_minutes?: number
   horario_inicio?: string
   horario_fim?: string
   dias_semana?: string[]
-  ativo: boolean
+  ativo?: boolean
+  is_active?: boolean
+  created?: string
+  updated?: string
+}
+
+export interface LeadDistributionRecord {
+  id: string
+  tenant_id: string
+  metodo?: string
+  distribution_method?: string
+  equipe_id?: string
+  regras?: Record<string, unknown>
+  ativo?: boolean
+  is_active?: boolean
+  lead_id?: string
+  user_id?: string
+  expand?: {
+    lead_id?: LeadRecord
+    user_id?: UserRecord
+  }
   created?: string
   updated?: string
 }
