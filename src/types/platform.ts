@@ -379,6 +379,9 @@ export interface ContractRecord {
   status: 'aguardando' | 'enviado' | 'visualizado' | 'assinado' | 'recusado' | 'expirado' | string
   plataforma: 'zapsign' | 'clicksign' | 'manual' | string
   documento_url?: string
+  sign_url?: string
+  external_id?: string
+  external_provider?: 'zapsign' | 'clicksign' | string
   data_envio?: string
   data_visualizacao?: string
   data_assinatura?: string
