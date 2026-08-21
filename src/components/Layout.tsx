@@ -31,6 +31,7 @@ import {
   Moon,
   LogOut,
   UserCheck,
+  BookOpen,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -112,6 +113,7 @@ export default function Layout() {
         { name: 'Campanhas de Tráfego', path: '/campanhas', icon: Megaphone },
         { name: 'Inteligência de Anúncios', path: '/marketing', icon: BarChart3 },
         { name: 'Inteligência Comercial IA', path: '/inteligencia', icon: Brain },
+        { name: 'Base de Conhecimento', path: '/base-conhecimento', icon: BookOpen, badge: 'IA' },
         { name: 'Relatórios Executivos', path: '/relatorios', icon: FileSpreadsheet },
         { name: 'Automações & Regras', path: '/automacoes', icon: Zap },
       ],
@@ -120,7 +122,7 @@ export default function Layout() {
       title: 'SISTEMA & INTEGRAÇÕES',
       items: [
         { name: 'Central de Integrações', path: '/integrations', icon: Layers },
-        { name: 'Configurações do Tenant', path: '/settings', icon: Settings },
+        { name: 'Configurações do Escritório', path: '/settings', icon: Settings },
       ],
     },
   ]

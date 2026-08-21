@@ -588,3 +588,15 @@ export interface IntegrationRecord {
   created?: string
   updated?: string
 }
+
+export interface KnowledgeBaseRecord {
+  id: string
+  tenant_id: string
+  content: string
+  updated_by?: string
+  expand?: {
+    updated_by?: UserRecord
+  }
+  created?: string
+  updated?: string
+}

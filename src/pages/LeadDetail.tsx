@@ -48,8 +48,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+  SheetFooter,
+} from '@/components/ui/sheet'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { useToast } from '@/hooks/use-toast'
+import { generateChatResponse } from '@/lib/skipAi'
 import { useTenant } from '@/contexts/TenantContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import { CrmService } from '@/services/crm'
@@ -151,6 +160,25 @@ export function LeadDetailPage() {
   const [transferModalOpen, setTransferModalOpen] = useState(false)
   const [targetTeam, setTargetTeam] = useState<TeamType>('juridico')
   const [transferring, setTransferring] = useState(false)
+
+  // AI Assistant Sheet state
+  const [aiSheetOpen, setAiSheetOpen] = useState(false)
+  const [aiPrompt, setAiPrompt] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState<string | null>(null)
+  const [aiChatHistory, setAiChatHistory] = useState<
+    Array<{ id: string; role: 'user' | 'assistant'; content: string; timestamp: string }>
+  >([
+    {
+      id: 'welcome',
+      role: 'assistant',
+      content:
+        'Olá! Sou o Assistente IA do Teixeira & Nascimento Advogados. Estou alimentado com a Base de Conhecimento técnico do escritório e o histórico recente deste lead. Como posso ajudar? Você pode me perguntar sobre teses aplicáveis, valores de honorários recomendados, ou pedir para redigir uma resposta/argumento.',
+      timestamp: new Date().toISOString(),
+    },
+  ])
+  const [savingNoteId, setSavingNoteId] = useState<string | null>(null)
+  const aiChatBottomRef = useRef<HTMLDivElement>(null)
 
   // Modals
   const [noteModalOpen, setNoteModalOpen] = useState(false)
@@ -334,6 +362,150 @@ export function LeadDetailPage() {
       })
     } finally {
       setSendingMessage(false)
+    }
+  }
+
+  const handleSendAiPrompt = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!aiPrompt.trim() || aiLoading || !tenant?.id || !lead) return
+
+    const userQuestion = aiPrompt.trim()
+    const newMsgId = `user_${Date.now()}`
+    const userMsg = {
+      id: newMsgId,
+      role: 'user' as const,
+      content: userQuestion,
+      timestamp: new Date().toISOString(),
+    }
+
+    setAiChatHistory((prev) => [...prev, userMsg])
+    setAiPrompt('')
+    setAiLoading(true)
+    setAiError(null)
+
+    setTimeout(() => {
+      aiChatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }, 50)
+
+    try {
+      // 1. Fetch recent lead messages thread (up to last 20)
+      const recentMsgs = messages.slice(-20)
+      const formattedHistory =
+        recentMsgs.length > 0
+          ? recentMsgs
+              .map((m) => {
+                const teamName = getTeamBadge(m.team).label
+                const author =
+                  m.expand?.author_id?.name || (m.type === 'sistema' ? 'Sistema' : 'Membro')
+                return `[${teamName} - ${author}]: ${m.content}`
+              })
+              .join('\n')
+          : 'Nenhuma mensagem ou nota anterior registrada neste lead.'
+
+      // 2. Fetch knowledge base content for the tenant
+      let kbContent = ''
+      try {
+        const kb = await CrmService.getKnowledgeBase(tenant.id)
+        kbContent = kb?.content || ''
+      } catch (e) {
+        console.warn('Could not load knowledge base', e)
+      }
+
+      // 3. Construct system prompt with lead profile, KB, conversation history
+      const systemInstruction = `Você é o Assistente de Inteligência Jurídica e Comercial do escritório "Teixeira & Nascimento - Advogados Associados".
+Seu objetivo é orientar o time interno (Comercial, Jurídico e Financeiro) com respostas precisas, fundamentadas e alinhadas às diretrizes do escritório.
+
+=== PERFIL DO LEAD ATUAL ===
+- Nome: ${lead.name}
+- Empresa / Razão: ${lead.company || 'Pessoa Física'}
+- Telefone/WhatsApp: ${lead.whatsapp || lead.phone || 'Não informado'}
+- E-mail: ${lead.email || 'Não informado'}
+- Serviço / Interesse: ${lead.service || 'Assessoria Jurídica'}
+- Origem / Canal: ${lead.origem || lead.source || 'Meta Ads'} (Campanha: ${lead.campaign || 'Geral'})
+- Equipe Responsável Atual: ${getTeamBadge(lead.team_owner || lead.team || 'comercial').label}
+- Temperatura / Status: ${lead.temperature || 'Quente'} / ${lead.status || 'Em Atendimento'}
+- Valor Potencial Estimado: R$ ${Number(lead.potential_value || lead.valor_potencial || 0).toLocaleString('pt-BR')}
+- Observações Iniciais: ${lead.observacoes || 'Nenhuma'}
+
+=== BASE DE CONHECIMENTO & POLÍTICAS DO ESCRITÓRIO ===
+${kbContent || 'Diretrizes padrão: Foco em recuperação tributária, direito bancário empresarial e passivos trabalhistas. Pro Labore médio de R$ 10.000 a R$ 25.000 com êxito de 15% a 25%.'}
+
+=== HISTÓRICO RECENTE DA THREAD DO LEAD (Últimas 20 mensagens) ===
+${formattedHistory}
+
+=== INSTRUÇÕES DE RESPOSTA ===
+- Responda em português brasileiro de forma profissional, direta e executiva.
+- Fundamente com base nas teses, jurisprudências e alçadas de honorários da Base de Conhecimento do escritório.
+- Se for sugerido um próximo passo ou mensagem para o cliente, forneça um modelo pronto para envio.
+- Sempre respeite a governança e alçadas de desconto definidas na base de conhecimento.`
+
+      // 4. Call generateChatResponse from src/lib/skipAi.ts
+      const responseText = await generateChatResponse({
+        messages: [
+          { role: 'system', content: systemInstruction },
+          { role: 'user', content: userQuestion },
+        ],
+        temperature: 0.7,
+      })
+
+      const assistantMsg = {
+        id: `ai_${Date.now()}`,
+        role: 'assistant' as const,
+        content: responseText,
+        timestamp: new Date().toISOString(),
+      }
+
+      setAiChatHistory((prev) => [...prev, assistantMsg])
+      setTimeout(() => {
+        aiChatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+      }, 50)
+    } catch (err: any) {
+      console.error('Erro no Assistente IA:', err)
+      setAiError(err?.message || 'Falha ao processar solicitação com a IA. Tente novamente.')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  const handleSaveAiAsNote = async (aiMessageContent: string, messageId: string) => {
+    if (!id || !tenant?.id) return
+    const authorId = user?.id || pb.authStore.record?.id
+    if (!authorId) {
+      toast({
+        title: 'Usuário não identificado',
+        description: 'Faça login para registrar notas.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setSavingNoteId(messageId)
+    try {
+      // Create message of type 'nota' in lead_messages with AI content
+      await pb.collection('lead_messages').create({
+        lead_id: id,
+        tenant_id: tenant.id,
+        author_id: authorId,
+        team: selectedTeam,
+        type: 'nota',
+        content: `🤖 [Assistente IA / Parecer]\n${aiMessageContent}`,
+      })
+
+      toast({
+        title: 'Resposta da IA salva como nota!',
+        description: 'Registrada com sucesso na thread de mensagens do lead.',
+      })
+
+      loadMessages(id)
+    } catch (err: any) {
+      console.error(err)
+      toast({
+        title: 'Erro ao salvar como nota',
+        description: err?.message || 'Falha ao persistir na thread',
+        variant: 'destructive',
+      })
+    } finally {
+      setSavingNoteId(null)
     }
   }
 
@@ -655,6 +827,13 @@ export function LeadDetailPage() {
 
         {/* Quick Action Buttons */}
         <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            size="sm"
+            onClick={() => setAiSheetOpen(true)}
+            className="h-9 gap-1.5 text-xs font-semibold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white shadow-sm"
+          >
+            <Sparkles className="h-4 w-4 text-amber-300 animate-pulse" /> Assistente IA
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -1652,6 +1831,224 @@ export function LeadDetailPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* AI ASSISTANT SHEET (SLIDE OVER) */}
+      <Sheet open={aiSheetOpen} onOpenChange={setAiSheetOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-xl p-0 flex flex-col bg-background">
+          {/* Sheet Header */}
+          <div className="p-5 border-b bg-gradient-to-r from-[#0A1F3F] to-[#152e59] text-white space-y-1">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center border border-amber-500/30">
+                  <Bot className="h-5 w-5" />
+                </div>
+                <div>
+                  <SheetTitle className="text-base font-bold font-legal-serif text-white">
+                    Assistente IA Jurídico
+                  </SheetTitle>
+                  <SheetDescription className="text-[11px] text-slate-300">
+                    Contextualizado com a Base de Conhecimento e o Lead
+                  </SheetDescription>
+                </div>
+              </div>
+              <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/30 text-[10px]">
+                {lead.name}
+              </Badge>
+            </div>
+          </div>
+
+          {/* Quick Context Strip */}
+          <div className="px-5 py-2.5 bg-muted/40 border-b text-[11px] flex items-center justify-between gap-2 text-muted-foreground flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="h-3 w-3 text-purple-500" />
+              <span>
+                Serviço: <strong className="text-foreground">{lead.service || 'Geral'}</strong>
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span>
+                Equipe:{' '}
+                <strong className="text-foreground">
+                  {getTeamBadge(lead.team_owner || lead.team || 'comercial').label}
+                </strong>
+              </span>
+            </div>
+            <Link
+              to="/base-conhecimento"
+              className="text-primary hover:underline font-medium flex items-center gap-1"
+            >
+              Ver Base de Conhecimento →
+            </Link>
+          </div>
+
+          {/* Messages Container */}
+          <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 custom-scrollbar">
+            {aiChatHistory.map((item) => {
+              const isAi = item.role === 'assistant'
+              const isWelcome = item.id === 'welcome'
+
+              return (
+                <div
+                  key={item.id}
+                  className={`flex items-start gap-3 ${isAi ? 'flex-row' : 'flex-row-reverse'}`}
+                >
+                  <div
+                    className={`h-7 w-7 rounded-full flex items-center justify-center shrink-0 text-xs font-bold ${
+                      isAi
+                        ? 'bg-gradient-to-br from-purple-600 to-indigo-600 text-white shadow-xs'
+                        : 'bg-primary text-primary-foreground'
+                    }`}
+                  >
+                    {isAi ? <Bot className="h-4 w-4" /> : <User className="h-4 w-4" />}
+                  </div>
+
+                  <div
+                    className={`max-w-[85%] rounded-2xl p-4 text-xs space-y-2.5 shadow-2xs ${
+                      isAi
+                        ? 'bg-card border border-border text-foreground rounded-tl-xs'
+                        : 'bg-primary/10 border border-primary/20 text-foreground rounded-tr-xs font-medium'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-[11px] text-muted-foreground">
+                        {isAi ? 'Assistente IA' : 'Você'}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {new Date(item.timestamp).toLocaleTimeString('pt-BR', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    </div>
+
+                    <div className="whitespace-pre-line leading-relaxed text-foreground/90">
+                      {item.content}
+                    </div>
+
+                    {/* Button to save response as note in lead_messages */}
+                    {isAi && !isWelcome && (
+                      <div className="pt-2 border-t border-border/60 flex items-center justify-between gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={savingNoteId === item.id}
+                          onClick={() => handleSaveAiAsNote(item.content, item.id)}
+                          className="h-7 px-2.5 text-[11px] gap-1.5 hover:bg-primary/10 text-primary border-primary/30"
+                        >
+                          <FileText className="h-3 w-3" />
+                          {savingNoteId === item.id ? 'Salvando...' : 'Salvar como nota na thread'}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+
+            {/* Loading Indicator */}
+            {aiLoading && (
+              <div className="flex items-start gap-3">
+                <div className="h-7 w-7 rounded-full bg-gradient-to-br from-purple-600 to-indigo-600 text-white flex items-center justify-center shrink-0">
+                  <Bot className="h-4 w-4 animate-spin" />
+                </div>
+                <div className="bg-card border border-border rounded-2xl rounded-tl-xs p-3.5 text-xs text-muted-foreground flex items-center gap-2 shadow-2xs">
+                  <div className="flex gap-1">
+                    <span className="h-2 w-2 rounded-full bg-purple-500 animate-bounce" />
+                    <span className="h-2 w-2 rounded-full bg-purple-500 animate-bounce [animation-delay:0.2s]" />
+                    <span className="h-2 w-2 rounded-full bg-purple-500 animate-bounce [animation-delay:0.4s]" />
+                  </div>
+                  <span>Consultando Base de Conhecimento e histórico do lead...</span>
+                </div>
+              </div>
+            )}
+
+            {/* Error Message */}
+            {aiError && (
+              <div className="p-3 bg-destructive/10 border border-destructive/20 text-destructive rounded-xl text-xs space-y-1">
+                <strong>Falha na resposta:</strong>
+                <p>{aiError}</p>
+              </div>
+            )}
+
+            <div ref={aiChatBottomRef} />
+          </div>
+
+          {/* Prompt Suggestion Chips */}
+          <div className="px-4 py-2 border-t bg-muted/20 flex items-center gap-1.5 overflow-x-auto text-[11px] custom-scrollbar">
+            <span className="text-muted-foreground whitespace-nowrap text-[10px] font-bold uppercase">
+              Sugestões:
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                setAiPrompt(
+                  'Quais as teses jurídicas e documentos necessários para qualificar este lead?',
+                )
+              }
+              className="px-2 py-1 rounded-md bg-background border hover:border-primary text-muted-foreground hover:text-foreground whitespace-nowrap transition-colors"
+            >
+              Teses e Documentos
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setAiPrompt(
+                  'Qual faixa de honorários e alçada de desconto recomendada pela base de conhecimento?',
+                )
+              }
+              className="px-2 py-1 rounded-md bg-background border hover:border-primary text-muted-foreground hover:text-foreground whitespace-nowrap transition-colors"
+            >
+              Honorários e Descontos
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setAiPrompt(
+                  'Redija uma mensagem executiva de follow-up para WhatsApp com base na conversa anterior.',
+                )
+              }
+              className="px-2 py-1 rounded-md bg-background border hover:border-primary text-muted-foreground hover:text-foreground whitespace-nowrap transition-colors"
+            >
+              Script de Follow-up
+            </button>
+          </div>
+
+          {/* Sheet Footer Input */}
+          <form onSubmit={handleSendAiPrompt} className="p-4 border-t bg-card space-y-2">
+            <div className="flex items-end gap-2">
+              <Textarea
+                rows={2}
+                value={aiPrompt}
+                disabled={aiLoading}
+                onChange={(e) => setAiPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    if (aiPrompt.trim() && !aiLoading) {
+                      handleSendAiPrompt(e)
+                    }
+                  }
+                }}
+                placeholder="Pergunte sobre teses, alçadas de honorários, ou peça uma minuta..."
+                className="text-xs resize-none min-h-[60px]"
+              />
+              <Button
+                type="submit"
+                disabled={aiLoading || !aiPrompt.trim()}
+                className="h-10 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white shrink-0 text-xs font-semibold gap-1.5"
+              >
+                <Send className="h-3.5 w-3.5" />
+                {aiLoading ? 'Pensando...' : 'Enviar'}
+              </Button>
+            </div>
+            <div className="text-[10px] text-muted-foreground text-center">
+              A IA responde com base na <strong>Base de Conhecimento</strong> do escritório e nas{' '}
+              <strong>últimas 20 mensagens</strong> do lead.
+            </div>
+          </form>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }

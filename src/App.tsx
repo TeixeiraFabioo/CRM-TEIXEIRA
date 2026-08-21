@@ -34,6 +34,7 @@ import RelatoriosPage from '@/pages/Relatorios'
 import AutomacoesPage from '@/pages/Automacoes'
 import IntegrationsPage from '@/pages/Integrations'
 import SettingsPage from '@/pages/Settings'
+import KnowledgeBasePage from '@/pages/KnowledgeBase'
 import NotFound from '@/pages/NotFound'
 
 export default function App() {
@@ -93,6 +94,7 @@ export default function App() {
             {/* System */}
             <Route path="integrations" element={<IntegrationsPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="base-conhecimento" element={<KnowledgeBasePage />} />
 
             {/* Fallback */}
             <Route path="*" element={<NotFound />} />

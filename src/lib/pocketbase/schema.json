@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-21T12:43:40.190Z",
+  "generatedAt": "2026-08-21T13:03:39.223Z",
   "collections": [
     {
       "name": "users",
@@ -3230,6 +3230,53 @@
         "CREATE INDEX idx_lead_messages_lead ON lead_messages (lead_id, created)",
         "CREATE INDEX idx_lead_messages_tenant ON lead_messages (tenant_id)"
       ]
+    },
+    {
+      "name": "knowledge_base",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
+        "view": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
+        "create": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.role = 'manager')",
+        "update": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.role = 'manager')",
+        "delete": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.role = 'manager')"
+      },
+      "fields": [
+        {
+          "name": "tenant_id",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "content",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "updated_by",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": ["CREATE INDEX idx_knowledge_base_tenant ON knowledge_base (tenant_id)"]
     }
   ]
 }

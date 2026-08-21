@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Settings as SettingsIcon,
   Building,
@@ -25,6 +26,8 @@ import {
   UserX,
   Server,
   Info,
+  BookOpen,
+  Sparkles,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -474,6 +477,12 @@ export function SettingsPage() {
             Escritório &amp; Pixel
           </TabsTrigger>
           <TabsTrigger
+            value="conhecimento"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 flex items-center gap-1.5"
+          >
+            <BookOpen className="h-3.5 w-3.5" /> Base de Conhecimento
+          </TabsTrigger>
+          <TabsTrigger
             value="servicos"
             className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2"
           >
@@ -498,6 +507,40 @@ export function SettingsPage() {
             Regras de SLA ({slas.length})
           </TabsTrigger>
         </TabsList>
+
+        {/* TAB BASE DE CONHECIMENTO (LINK/PREVIEW) */}
+        <TabsContent value="conhecimento" className="pt-4 space-y-4">
+          <div className="bg-card border rounded-xl p-5 shadow-xs space-y-4 max-w-3xl">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <h3 className="font-bold text-sm flex items-center gap-2">
+                  <BookOpen className="h-4 w-4 text-amber-500" />
+                  Base de Conhecimento do Assistente IA
+                </h3>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Gerencie o repositório de teses jurídicas, alçadas de desconto de honorários e
+                  procedimentos que instruem o Assistente IA do escritório.
+                </p>
+              </div>
+              <Link to="/base-conhecimento">
+                <Button className="bg-[#0A1F3F] text-white text-xs gap-1.5 shrink-0">
+                  <Sparkles className="h-3.5 w-3.5 text-amber-300" /> Abrir Editor Completo
+                </Button>
+              </Link>
+            </div>
+
+            <div className="p-4 bg-muted/30 rounded-lg border text-xs space-y-2">
+              <div className="font-semibold text-foreground flex items-center gap-2">
+                <Shield className="h-4 w-4 text-emerald-500" /> Controle de Permissões
+              </div>
+              <p className="text-muted-foreground text-[11px] leading-relaxed">
+                Apenas <strong>Administradores</strong> e <strong>Gestores</strong> possuem
+                permissão para atualizar o conteúdo da Base de Conhecimento. Usuários padrão possuem
+                acesso de leitura e usam o conhecimento através do Assistente IA nos leads.
+              </p>
+            </div>
+          </div>
+        </TabsContent>
 
         {/* TAB ESCRITORIO */}
         <TabsContent value="empresa" className="pt-4 space-y-4">

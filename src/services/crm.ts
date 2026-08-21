@@ -818,4 +818,60 @@ export const CrmService = {
       return []
     }
   },
+
+  // --- KNOWLEDGE BASE ---
+  async getKnowledgeBase(tenantId: string) {
+    try {
+      const list = await pb.collection('knowledge_base').getList(1, 1, {
+        filter: `tenant_id = "${tenantId}"`,
+        sort: '-updated',
+        expand: 'updated_by',
+      })
+      return list.items.length > 0 ? list.items[0] : null
+    } catch (e) {
+      console.warn('Failed to get knowledge base', e)
+      return null
+    }
+  },
+
+  async upsertKnowledgeBase(tenantId: string, content: string) {
+    const user = pb.authStore.record
+    const existing = await this.getKnowledgeBase(tenantId)
+    if (existing) {
+      const updated = await pb.collection('knowledge_base').update(
+        existing.id,
+        {
+          content,
+          updated_by: user?.id,
+        },
+        {
+          expand: 'updated_by',
+        },
+      )
+      await this.logAudit(
+        tenantId,
+        'update_knowledge_base',
+        'knowledge_base',
+        existing.id,
+        { length: existing.content?.length },
+        { length: content.length },
+      )
+      return updated
+    } else {
+      const created = await pb.collection('knowledge_base').create(
+        {
+          tenant_id: tenantId,
+          content,
+          updated_by: user?.id,
+        },
+        {
+          expand: 'updated_by',
+        },
+      )
+      await this.logAudit(tenantId, 'create_knowledge_base', 'knowledge_base', created.id, null, {
+        length: content.length,
+      })
+      return created
+    }
+  },
 }
