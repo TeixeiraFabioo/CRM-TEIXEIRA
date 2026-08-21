@@ -3,8 +3,13 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from '@/components/ui/toaster'
 import { TenantProvider } from '@/contexts/TenantContext'
 import Layout from '@/components/Layout'
+import { AuthGuard } from '@/components/AuthGuard'
 
-// Pages
+// Auth Pages
+import LoginPage from '@/pages/Login'
+import RegisterPage from '@/pages/Register'
+
+// CRM Pages
 import DashboardPage from '@/pages/Index'
 import LeadsPage from '@/pages/Leads'
 import LeadDetailPage from '@/pages/LeadDetail'
@@ -36,7 +41,19 @@ export default function App() {
     <TenantProvider>
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Layout />}>
+          {/* Public Auth Routes */}
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/cadastro" element={<RegisterPage />} />
+
+          {/* Protected CRM Application Routes */}
+          <Route
+            path="/"
+            element={
+              <AuthGuard>
+                <Layout />
+              </AuthGuard>
+            }
+          >
             <Route index element={<DashboardPage />} />
 
             {/* Leads */}

@@ -44,7 +44,7 @@ import pb from '@/lib/pocketbase/client'
 export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { tenant, pixelId } = useTenant()
+  const { tenant, user, logout, pixelId } = useTenant()
   const { isReady } = useMetaPixel()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -199,25 +199,43 @@ export default function Layout() {
         </div>
 
         {/* User profile footer */}
-        <div className="p-3 border-t border-[#152e59] bg-[#07162c]/80 flex items-center justify-between">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="h-8 w-8 rounded-full bg-blue-700 flex items-center justify-center text-white text-xs font-bold ring-1 ring-white/20">
-              {currentUser?.name ? currentUser.name.charAt(0) : 'F'}
+        <div className="p-3 border-t border-[#152e59] bg-[#07162c]/80 flex items-center justify-between gap-1">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <div className="h-8 w-8 rounded-full bg-blue-700 flex items-center justify-center text-white text-xs font-bold ring-1 ring-white/20 shrink-0">
+              {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
             </div>
             <div className="min-w-0">
               <div className="text-xs font-semibold text-slate-100 truncate">
-                {currentUser?.name || 'Dr. Fabio Santos'}
+                {user?.name || 'Usuário'}
               </div>
               <div className="text-[10px] text-slate-400 truncate">
-                {currentUser?.email || 'fabio.saantost@gmail.com'}
+                {user?.email || 'usuario@escritorio.adv.br'}
               </div>
             </div>
           </div>
-          <Link to="/settings">
-            <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-400 hover:text-white">
-              <Settings className="h-4 w-4" />
+          <div className="flex items-center gap-0.5 shrink-0">
+            <Link to="/settings" title="Configurações">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-slate-400 hover:text-white"
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+            </Link>
+            <Button
+              variant="ghost"
+              size="icon"
+              title="Sair do CRM"
+              onClick={() => {
+                logout()
+                navigate('/login')
+              }}
+              className="h-7 w-7 text-slate-400 hover:text-red-400 hover:bg-red-950/30"
+            >
+              <LogOut className="h-4 w-4" />
             </Button>
-          </Link>
+          </div>
         </div>
       </aside>
 
@@ -284,6 +302,20 @@ export default function Layout() {
 
             {/* Quick Actions Dropdown */}
             <QuickActionMenu />
+
+            {/* Logout Header Button */}
+            <Button
+              variant="ghost"
+              size="icon"
+              title="Encerrar Sessão"
+              onClick={() => {
+                logout()
+                navigate('/login')
+              }}
+              className="h-9 w-9 text-muted-foreground hover:text-destructive"
+            >
+              <LogOut className="h-4 w-4" />
+            </Button>
           </div>
         </header>
 

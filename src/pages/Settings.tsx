@@ -46,7 +46,7 @@ import {
 } from '@/types/platform'
 
 export function SettingsPage() {
-  const { tenant, refreshTenant } = useTenant()
+  const { tenant, user, refreshTenant, logout } = useTenant()
   const { toast } = useToast()
 
   const [services, setServices] = useState<ServiceRecord[]>([])
@@ -288,6 +288,34 @@ export function SettingsPage() {
 
         {/* TAB USUARIOS */}
         <TabsContent value="usuarios" className="pt-4 space-y-4">
+          {/* Active Logged In User Card */}
+          {user && (
+            <div className="bg-[#0A1F3F] text-white p-4 rounded-xl border border-[#152e59] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-amber-500 text-slate-950 font-bold flex items-center justify-center text-sm">
+                  {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                </div>
+                <div>
+                  <div className="font-bold text-sm text-slate-100 flex items-center gap-2">
+                    {user.name}
+                    <Badge className="bg-amber-400/20 text-amber-300 border-amber-400/30 text-[10px]">
+                      Sua Sessão Ativa ({user.role})
+                    </Badge>
+                  </div>
+                  <div className="text-xs text-slate-300">{user.email}</div>
+                </div>
+              </div>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={logout}
+                className="text-xs h-8 bg-red-600/80 hover:bg-red-700"
+              >
+                Encerrar Sessão
+              </Button>
+            </div>
+          )}
+
           <div className="bg-card border rounded-xl overflow-hidden">
             <table className="w-full text-xs text-left">
               <thead className="bg-muted/50 uppercase text-[11px] font-semibold border-b">
@@ -300,8 +328,13 @@ export function SettingsPage() {
               </thead>
               <tbody className="divide-y">
                 {users.map((u) => (
-                  <tr key={u.id}>
-                    <td className="p-3 pl-4 font-semibold">{u.name}</td>
+                  <tr key={u.id} className={u.id === user?.id ? 'bg-primary/5 font-medium' : ''}>
+                    <td className="p-3 pl-4 font-semibold">
+                      {u.name}{' '}
+                      {u.id === user?.id && (
+                        <span className="text-[10px] text-primary">(Você)</span>
+                      )}
+                    </td>
                     <td className="p-3 text-muted-foreground">{u.email}</td>
                     <td className="p-3 uppercase font-mono text-[10px]">{u.role}</td>
                     <td className="p-3">
