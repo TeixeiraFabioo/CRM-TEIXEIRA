@@ -5,7 +5,8 @@ import { TenantProvider } from '@/contexts/TenantContext'
 import Layout from '@/components/Layout'
 import { AuthGuard } from '@/components/AuthGuard'
 
-// Auth Pages
+// Public Pages
+import LandingPage from '@/pages/LandingPage'
 import LoginPage from '@/pages/Login'
 import RegisterPage from '@/pages/Register'
 
@@ -43,7 +44,8 @@ export default function App() {
     <TenantProvider>
       <BrowserRouter>
         <Routes>
-          {/* Public Auth Routes */}
+          {/* Public Routes */}
+          <Route path="/landing" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/cadastro" element={<RegisterPage />} />
 

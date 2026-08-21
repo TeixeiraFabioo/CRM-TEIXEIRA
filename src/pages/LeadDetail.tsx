@@ -1298,19 +1298,61 @@ ${formattedHistory}
             </h3>
             <div className="space-y-2 text-xs">
               <div className="flex justify-between py-1 border-b border-border/40">
-                <span className="text-muted-foreground">Canal:</span>
-                <span className="font-medium">{lead.channel || lead.source || 'Meta Ads'}</span>
+                <span className="text-muted-foreground">Origem / Canal:</span>
+                <span className="font-medium flex items-center gap-1">
+                  {lead.origem === 'landing_page'
+                    ? 'Landing Page'
+                    : lead.channel || lead.source || 'Meta Ads'}
+                  {lead.origem === 'landing_page' && (
+                    <Badge
+                      variant="outline"
+                      className="text-[9px] px-1 py-0 h-4 bg-amber-500/10 text-amber-600 border-amber-500/20"
+                    >
+                      Site
+                    </Badge>
+                  )}
+                </span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-border/40">
+                <span className="text-muted-foreground">Área Jurídica:</span>
+                <span className="font-medium">
+                  {lead.area || lead.service || 'Direito Tributário'}
+                </span>
               </div>
               <div className="flex justify-between py-1 border-b border-border/40">
                 <span className="text-muted-foreground">Campanha:</span>
                 <span className="font-medium truncate max-w-[150px]">
-                  {lead.campaign || lead.utm_campaign || 'PIS/COFINS Q3'}
+                  {lead.campaign || lead.utm_campaign || 'Orgânico / Landing Page'}
                 </span>
               </div>
               <div className="flex justify-between py-1 border-b border-border/40">
                 <span className="text-muted-foreground">UTM Source:</span>
-                <span className="font-mono text-[11px]">{lead.utm_source || 'meta_instagram'}</span>
+                <span className="font-mono text-[11px]">{lead.utm_source || '—'}</span>
               </div>
+              {lead.utm_medium && (
+                <div className="flex justify-between py-1 border-b border-border/40">
+                  <span className="text-muted-foreground">UTM Medium:</span>
+                  <span className="font-mono text-[11px]">{lead.utm_medium}</span>
+                </div>
+              )}
+              {lead.utm_campaign && (
+                <div className="flex justify-between py-1 border-b border-border/40">
+                  <span className="text-muted-foreground">UTM Campaign:</span>
+                  <span className="font-mono text-[11px]">{lead.utm_campaign}</span>
+                </div>
+              )}
+              {lead.utm_content && (
+                <div className="flex justify-between py-1 border-b border-border/40">
+                  <span className="text-muted-foreground">UTM Content:</span>
+                  <span className="font-mono text-[11px]">{lead.utm_content}</span>
+                </div>
+              )}
+              {lead.utm_term && (
+                <div className="flex justify-between py-1 border-b border-border/40">
+                  <span className="text-muted-foreground">UTM Term:</span>
+                  <span className="font-mono text-[11px]">{lead.utm_term}</span>
+                </div>
+              )}
               <div className="flex justify-between py-1 border-b border-border/40">
                 <span className="text-muted-foreground">Data Captura:</span>
                 <span className="font-mono text-[11px]">

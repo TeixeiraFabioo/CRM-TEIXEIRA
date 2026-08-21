@@ -392,6 +392,7 @@ export function LeadsPage() {
                 <SelectItem value="all">Todas as Origens</SelectItem>
                 <SelectItem value="Meta Ads">Meta Ads (Instagram/FB)</SelectItem>
                 <SelectItem value="Google Ads">Google Ads</SelectItem>
+                <SelectItem value="landing_page">Landing Page Institucional</SelectItem>
                 <SelectItem value="Indicação">Indicação</SelectItem>
                 <SelectItem value="Site">Site / Formulário</SelectItem>
                 <SelectItem value="WhatsApp">WhatsApp Direto</SelectItem>
@@ -495,12 +496,23 @@ export function LeadsPage() {
 
                     {/* Origem */}
                     <td className="p-3.5">
-                      <div className="font-medium text-foreground">
-                        {lead.origem || lead.source || 'Meta Ads'}
+                      <div className="font-medium text-foreground flex items-center gap-1.5 flex-wrap">
+                        <span>
+                          {lead.origem === 'landing_page' || lead.source === 'landing_page'
+                            ? 'Landing Page'
+                            : lead.origem || lead.source || 'Meta Ads'}
+                        </span>
+                        {(lead.origem === 'landing_page' || lead.source === 'landing_page') && (
+                          <span className="text-[9px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 font-semibold border border-amber-500/20">
+                            Web
+                          </span>
+                        )}
                       </div>
-                      {(lead.campaign || lead.utm_campaign) && (
-                        <div className="text-[10px] text-muted-foreground truncate max-w-[130px]">
-                          {lead.campaign || lead.utm_campaign}
+                      {(lead.utm_source || lead.utm_campaign || lead.campaign) && (
+                        <div className="text-[10px] text-muted-foreground truncate max-w-[140px] mt-0.5 font-mono">
+                          {lead.utm_source
+                            ? `utm: ${lead.utm_source}`
+                            : lead.campaign || lead.utm_campaign}
                         </div>
                       )}
                     </td>
