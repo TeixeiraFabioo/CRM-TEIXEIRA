@@ -227,6 +227,7 @@ export const CrmService = {
     const rec = await pb.collection('customers').create<CustomerRecord>({
       tenant_id: tenantId,
       status: 'Ativo',
+      active: true,
       data_conversao: new Date().toISOString(),
       ...data,
     })
@@ -235,7 +236,28 @@ export const CrmService = {
   },
 
   async updateCustomer(id: string, data: Partial<CustomerRecord>): Promise<CustomerRecord> {
-    return await pb.collection('customers').update<CustomerRecord>(id, data)
+    const old = await pb
+      .collection('customers')
+      .getOne<CustomerRecord>(id)
+      .catch(() => null)
+    const rec = await pb.collection('customers').update<CustomerRecord>(id, data)
+    if (old) {
+      await this.logAudit(rec.tenant_id, 'update', 'customer', id, old, rec)
+    }
+    return rec
+  },
+
+  async toggleCustomerStatus(id: string, active: boolean): Promise<CustomerRecord> {
+    const status = active ? 'Ativo' : 'Inativo'
+    const rec = await pb.collection('customers').update<CustomerRecord>(id, {
+      active,
+      status,
+    })
+    await this.logAudit(rec.tenant_id, active ? 'activate' : 'deactivate', 'customer', id, null, {
+      active,
+      status,
+    })
+    return rec
   },
 
   // --- PIPELINES & STAGES ---
@@ -356,6 +378,7 @@ export const CrmService = {
           state: lead.estado,
           source: lead.source || lead.origem || 'Meta Ads',
           status: 'Ativo - Contratado',
+          active: true,
           lifetime_value: updatedOpp.value,
           valor_total_contratado: updatedOpp.value,
           servicos_contratados: updatedOpp.servico ? [updatedOpp.servico] : ['Assessoria Jurídica'],

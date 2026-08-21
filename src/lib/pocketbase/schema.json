@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-21T02:19:19.212Z",
+  "generatedAt": "2026-08-21T12:36:30.241Z",
   "collections": [
     {
       "name": "users",
@@ -75,6 +75,12 @@
         {
           "name": "last_login",
           "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "active",
+          "type": "bool",
           "required": false,
           "system": false
         }
@@ -965,6 +971,12 @@
           "required": false,
           "system": false,
           "collectionRef": "users"
+        },
+        {
+          "name": "active",
+          "type": "bool",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": ["CREATE INDEX idx_customers_tenant ON customers (tenant_id)"]

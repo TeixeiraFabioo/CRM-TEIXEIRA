@@ -16,10 +16,12 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { useTenant } from '@/contexts/TenantContext'
 import { CrmService } from '@/services/crm'
+import pb from '@/lib/pocketbase/client'
 import { TimelineView, TimelineItem } from '@/components/TimelineView'
 import {
   CustomerRecord,
@@ -43,6 +45,7 @@ export function CustomerDetailPage() {
   const [notes, setNotes] = useState<NoteRecord[]>([])
   const [tasks, setTasks] = useState<TaskRecord[]>([])
   const [loading, setLoading] = useState(true)
+  const [isTogglingStatus, setIsTogglingStatus] = useState(false)
 
   const loadCustomerData = async () => {
     if (!id || !tenant?.id) return
@@ -74,6 +77,45 @@ export function CustomerDetailPage() {
   useEffect(() => {
     loadCustomerData()
   }, [id, tenant?.id])
+
+  const handleToggleCustomerStatus = async (checked: boolean) => {
+    if (!customer?.id || !tenant?.id) return
+    setIsTogglingStatus(true)
+
+    try {
+      const updated = await pb.collection('customers').update<CustomerRecord>(customer.id, {
+        active: checked,
+        status: checked ? 'Ativo' : 'Inativo',
+      })
+
+      await CrmService.logAudit(
+        tenant.id,
+        checked ? 'activate_customer' : 'deactivate_customer',
+        'customer',
+        customer.id,
+        { active: customer.active, status: customer.status },
+        { active: checked, status: checked ? 'Ativo' : 'Inativo' },
+      )
+
+      setCustomer((prev) =>
+        prev ? { ...prev, active: checked, status: checked ? 'Ativo' : 'Inativo' } : null,
+      )
+
+      toast({
+        title: checked ? 'Cliente Ativado' : 'Cliente Inativado',
+        description: `O status do cliente foi alterado para ${checked ? 'Ativo' : 'Inativo'}.`,
+      })
+    } catch (err: any) {
+      console.error('Error toggling customer status in detail:', err)
+      toast({
+        title: 'Erro ao alterar status',
+        description: err?.message || 'Falha ao salvar alteração.',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsTogglingStatus(false)
+    }
+  }
 
   const timelineItems: TimelineItem[] = []
   if (customer) {
@@ -155,8 +197,14 @@ export function CustomerDetailPage() {
               <h1 className="text-2xl font-bold tracking-tight text-foreground font-legal-serif">
                 {customer.name}
               </h1>
-              <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
-                {customer.status || 'Ativo'}
+              <Badge
+                className={
+                  customer.active !== false && customer.status !== 'Inativo'
+                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                    : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30'
+                }
+              >
+                {customer.active !== false && customer.status !== 'Inativo' ? 'Ativo' : 'Inativo'}
               </Badge>
             </div>
             <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-3">
@@ -177,7 +225,27 @@ export function CustomerDetailPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          {/* Active Status Switch Control */}
+          <div className="flex items-center gap-2 bg-card border border-border/80 px-3 py-1.5 rounded-xl shadow-xs">
+            <span className="text-xs font-semibold text-muted-foreground">Status do Cliente:</span>
+            <Switch
+              checked={customer.active !== false && customer.status !== 'Inativo'}
+              disabled={isTogglingStatus}
+              onCheckedChange={handleToggleCustomerStatus}
+              aria-label="Alternar cliente ativo ou inativo"
+            />
+            <span
+              className={`text-xs font-bold ${
+                customer.active !== false && customer.status !== 'Inativo'
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-rose-600 dark:text-rose-400'
+              }`}
+            >
+              {customer.active !== false && customer.status !== 'Inativo' ? 'Ativo' : 'Inativo'}
+            </span>
+          </div>
+
           <Button
             onClick={() => navigate(`/propostas?cliente_id=${id}`)}
             className="h-9 gap-1.5 bg-[#0A1F3F] hover:bg-[#0A1F3F]/90 text-white text-xs font-semibold"

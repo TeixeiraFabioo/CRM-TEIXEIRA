@@ -4,7 +4,7 @@ import { useTenant } from '@/contexts/TenantContext'
 import { Loader2 } from 'lucide-react'
 
 export const AuthGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated, isLoading } = useTenant()
+  const { isAuthenticated, isLoading, user, logout } = useTenant()
   const location = useLocation()
 
   if (isLoading) {
@@ -19,6 +19,11 @@ export const AuthGuard: React.FC<{ children: React.ReactNode }> = ({ children })
   }
 
   if (!isAuthenticated) {
+    return <Navigate to="/login" state={{ from: location }} replace />
+  }
+
+  if (user && (user.active === false || user.status === 'inactive')) {
+    logout()
     return <Navigate to="/login" state={{ from: location }} replace />
   }
 

@@ -110,6 +110,16 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setUser(authUser)
     setIsAuthenticated(true)
 
+    // Check if user is active
+    if (authUser.active === false || authUser.status === 'inactive') {
+      pb.authStore.clear()
+      setUser(null)
+      setIsAuthenticated(false)
+      throw new Error(
+        'Esta conta de usuário está desativada. Entre em contato com o administrador do escritório.',
+      )
+    }
+
     if (authUser.tenant_id) {
       try {
         const t = await TenantService.getTenant(authUser.tenant_id)
@@ -186,6 +196,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       role_id: roleId || undefined,
       tenant_id: createdTenant.id,
       status: 'active',
+      active: true,
       verified: true,
       settings: { dark_mode: true, language: 'pt-BR' },
     })

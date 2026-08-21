@@ -32,8 +32,10 @@ export interface UserRecord {
   name: string
   email: string
   role: 'admin' | 'manager' | 'user'
+  role_id?: string
   tenant_id: string
-  status: 'active' | 'inactive' | 'invited'
+  status?: 'active' | 'inactive' | 'invited'
+  active?: boolean
   avatar?: string
   settings?: Record<string, unknown>
   last_login?: string
@@ -154,6 +156,7 @@ export interface CustomerRecord {
   country?: string
   source?: string
   status?: string
+  active?: boolean
   lifetime_value?: number
   valor_total_contratado?: number
   servicos_contratados?: string[]

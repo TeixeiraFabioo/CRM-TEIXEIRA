@@ -17,9 +17,11 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/hooks/use-toast'
 import { useTenant } from '@/contexts/TenantContext'
 import { CrmService } from '@/services/crm'
+import pb from '@/lib/pocketbase/client'
 import { CustomerRecord } from '@/types/platform'
 
 export function CustomersPage() {
@@ -30,6 +32,8 @@ export function CustomersPage() {
   const [customers, setCustomers] = useState<CustomerRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all')
+  const [togglingCustomerId, setTogglingCustomerId] = useState<string | null>(null)
 
   const loadCustomers = async () => {
     if (!tenant?.id) return
@@ -49,15 +53,71 @@ export function CustomersPage() {
     loadCustomers()
   }, [tenant?.id])
 
+  const handleToggleCustomerActive = async (e: React.MouseEvent, cust: CustomerRecord) => {
+    e.stopPropagation()
+    const currentActive = cust.active !== false && cust.status !== 'Inativo'
+    const newActive = !currentActive
+    setTogglingCustomerId(cust.id)
+
+    try {
+      await pb.collection('customers').update(cust.id, {
+        active: newActive,
+        status: newActive ? 'Ativo' : 'Inativo',
+      })
+
+      if (tenant?.id) {
+        await CrmService.logAudit(
+          tenant.id,
+          newActive ? 'activate_customer' : 'deactivate_customer',
+          'customer',
+          cust.id,
+          { active: currentActive, status: cust.status },
+          { active: newActive, status: newActive ? 'Ativo' : 'Inativo' },
+        )
+      }
+
+      setCustomers((prev) =>
+        prev.map((c) =>
+          c.id === cust.id
+            ? { ...c, active: newActive, status: newActive ? 'Ativo' : 'Inativo' }
+            : c,
+        ),
+      )
+
+      toast({
+        title: newActive ? 'Cliente Ativado' : 'Cliente Inativado',
+        description: `Status de ${cust.name} atualizado para ${newActive ? 'Ativo' : 'Inativo'}.`,
+      })
+    } catch (err: any) {
+      console.error('Error toggling customer status:', err)
+      toast({
+        title: 'Erro ao atualizar status do cliente',
+        description: err?.message || 'Falha ao salvar no banco de dados.',
+        variant: 'destructive',
+      })
+    } finally {
+      setTogglingCustomerId(null)
+    }
+  }
+
   const filteredCustomers = customers.filter((c) => {
     const q = searchTerm.toLowerCase()
-    return (
+    const matchesQuery =
       (c.name || '').toLowerCase().includes(q) ||
       (c.company || '').toLowerCase().includes(q) ||
       (c.email || '').toLowerCase().includes(q) ||
       (c.document || '').includes(q)
-    )
+
+    const isCustomerActive = c.active !== false && c.status !== 'Inativo'
+    if (statusFilter === 'active') return matchesQuery && isCustomerActive
+    if (statusFilter === 'inactive') return matchesQuery && !isCustomerActive
+    return matchesQuery
   })
+
+  const activeCustomersCount = customers.filter(
+    (c) => c.active !== false && c.status !== 'Inativo',
+  ).length
+  const inactiveCustomersCount = customers.length - activeCustomersCount
 
   const totalContracted = customers.reduce(
     (sum, c) => sum + (c.lifetime_value || c.valor_total_contratado || 0),
@@ -74,11 +134,11 @@ export function CustomersPage() {
               Clientes Jurídicos Contratados
             </h1>
             <Badge variant="outline" className="font-mono text-xs">
-              {filteredCustomers.length} clientes ativos
+              {activeCustomersCount} ativos • {inactiveCustomersCount} inativos
             </Badge>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Carteira de clientes convertidos com contratos ativos e histórico perpétuo.
+            Carteira de clientes convertidos com gestão de status, contratos e histórico perpétuo.
           </p>
         </div>
 
@@ -94,9 +154,9 @@ export function CustomersPage() {
         </div>
       </div>
 
-      {/* Search Bar */}
-      <div className="bg-card border border-border/80 rounded-xl p-4 shadow-xs">
-        <div className="relative">
+      {/* Search Bar & Status Filter */}
+      <div className="bg-card border border-border/80 rounded-xl p-4 shadow-xs flex flex-col sm:flex-row items-center gap-3">
+        <div className="relative flex-1 w-full">
           <Search className="h-4 w-4 absolute left-3 top-2.5 text-muted-foreground" />
           <Input
             value={searchTerm}
@@ -104,6 +164,36 @@ export function CustomersPage() {
             placeholder="Pesquisar por nome do cliente, empresa, CPF/CNPJ, e-mail..."
             className="pl-9 h-9 text-xs"
           />
+        </div>
+
+        <div className="flex items-center gap-1.5 shrink-0 bg-muted/50 p-1 rounded-lg border text-xs">
+          <Button
+            type="button"
+            variant={statusFilter === 'all' ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => setStatusFilter('all')}
+            className={`h-7 text-xs px-2.5 ${statusFilter === 'all' ? 'bg-[#0A1F3F] text-white' : ''}`}
+          >
+            Todos ({customers.length})
+          </Button>
+          <Button
+            type="button"
+            variant={statusFilter === 'active' ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => setStatusFilter('active')}
+            className={`h-7 text-xs px-2.5 ${statusFilter === 'active' ? 'bg-emerald-700 text-white' : ''}`}
+          >
+            Ativos ({activeCustomersCount})
+          </Button>
+          <Button
+            type="button"
+            variant={statusFilter === 'inactive' ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => setStatusFilter('inactive')}
+            className={`h-7 text-xs px-2.5 ${statusFilter === 'inactive' ? 'bg-slate-700 text-white' : ''}`}
+          >
+            Inativos ({inactiveCustomersCount})
+          </Button>
         </div>
       </div>
 
@@ -198,11 +288,28 @@ export function CustomersPage() {
                         : '—'}
                     </td>
 
-                    {/* Status */}
-                    <td className="p-3.5">
-                      <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
-                        {cust.status || 'Ativo'}
-                      </Badge>
+                    {/* Status & Active Switch Toggle */}
+                    <td className="p-3.5" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={cust.active !== false && cust.status !== 'Inativo'}
+                          disabled={togglingCustomerId === cust.id}
+                          onCheckedChange={() => {
+                            const syntheticEvent = { stopPropagation: () => {} } as React.MouseEvent
+                            handleToggleCustomerActive(syntheticEvent, cust)
+                          }}
+                          aria-label="Alternar status do cliente"
+                        />
+                        <Badge
+                          className={
+                            cust.active !== false && cust.status !== 'Inativo'
+                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-[10px]'
+                              : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 text-[10px]'
+                          }
+                        >
+                          {cust.active !== false && cust.status !== 'Inativo' ? 'Ativo' : 'Inativo'}
+                        </Badge>
+                      </div>
                     </td>
 
                     {/* Action */}
