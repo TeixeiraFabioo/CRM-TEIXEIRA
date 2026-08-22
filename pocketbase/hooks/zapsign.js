@@ -108,6 +108,12 @@ onRecordAfterUpdateSuccess((e) => {
       let signerName = 'Signatário Principal'
       let signerEmail = ''
       let signerPhone = ''
+      let signerDocument = ''
+      let signerRg = ''
+      let signerAddress = ''
+      let signerCity = ''
+      let signerState = ''
+      let signerEstadoCivil = ''
 
       const clienteId = record.getString('cliente_id')
       const oportunidadeId = record.getString('oportunidade_id')
@@ -121,6 +127,12 @@ onRecordAfterUpdateSuccess((e) => {
             signerName = cust.getString('name') || signerName
             signerEmail = cust.getString('email') || signerEmail
             signerPhone = cust.getString('phone') || cust.getString('whatsapp') || signerPhone
+            signerDocument = cust.getString('document') || signerDocument
+            signerRg = cust.getString('rg') || signerRg
+            signerAddress = cust.getString('address') || signerAddress
+            signerCity = cust.getString('city') || signerCity
+            signerState = cust.getString('state') || signerState
+            signerEstadoCivil = cust.getString('estado_civil') || signerEstadoCivil
           }
         } catch (_) {}
       }
@@ -203,6 +215,14 @@ onRecordAfterUpdateSuccess((e) => {
           '\n' +
           (signerEmail ? '**E-mail:** ' + signerEmail + '\n' : '') +
           (signerPhone ? '**Telefone/WhatsApp:** ' + signerPhone + '\n' : '') +
+          (signerDocument ? '**CPF/CNPJ:** ' + signerDocument + '\n' : '') +
+          (signerRg ? '**RG:** ' + signerRg + '\n' : '') +
+          (signerAddress || signerCity || signerState
+            ? '**Endereço:** ' +
+              [signerAddress, signerCity, signerState].filter(Boolean).join(', ') +
+              '\n'
+            : '') +
+          (signerEstadoCivil ? '**Estado Civil:** ' + signerEstadoCivil + '\n' : '') +
           (val
             ? '**Valor:** R$ ' +
               Number(val).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) +
@@ -879,6 +899,18 @@ routerAdd(
           '\n' +
           (signerEmail ? '**E-mail:** ' + signerEmail + '\n' : '') +
           (signerPhone ? '**Telefone/WhatsApp:** ' + signerPhone + '\n' : '') +
+          (customerData.document ? '**CPF/CNPJ:** ' + customerData.document + '\n' : '') +
+          (customerData.rg ? '**RG:** ' + customerData.rg + '\n' : '') +
+          (customerData.address || customerData.city || customerData.state
+            ? '**Endereço:** ' +
+              [customerData.address, customerData.city, customerData.state]
+                .filter(Boolean)
+                .join(', ') +
+              '\n'
+            : '') +
+          (customerData.estado_civil
+            ? '**Estado Civil:** ' + customerData.estado_civil + '\n'
+            : '') +
           (contractData.valor
             ? '**Valor:** R$ ' +
               Number(contractData.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) +

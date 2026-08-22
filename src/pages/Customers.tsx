@@ -14,16 +14,70 @@ import {
   Eye,
   FileDown,
   Trash2,
+  Pencil,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
 import { useTenant, useUserRole } from '@/contexts/TenantContext'
 import { CrmService } from '@/services/crm'
 import pb from '@/lib/pocketbase/client'
 import { CustomerRecord } from '@/types/platform'
+
+const ESTADOS_CIVIS = ['Solteiro', 'Casado', 'Divorciado', 'Viúvo', 'União Estável']
+const UFS = [
+  'AC',
+  'AL',
+  'AP',
+  'AM',
+  'BA',
+  'CE',
+  'DF',
+  'ES',
+  'GO',
+  'MA',
+  'MT',
+  'MS',
+  'MG',
+  'PA',
+  'PB',
+  'PR',
+  'PE',
+  'PI',
+  'RJ',
+  'RN',
+  'RS',
+  'RO',
+  'RR',
+  'SC',
+  'SP',
+  'SE',
+  'TO',
+]
+
+type CustomerFormData = Partial<
+  Pick<
+    CustomerRecord,
+    'name' | 'email' | 'phone' | 'document' | 'rg' | 'estado_civil' | 'address' | 'city' | 'state'
+  >
+>
 
 export function CustomersPage() {
   const { tenant } = useTenant()
@@ -36,6 +90,11 @@ export function CustomersPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [togglingCustomerId, setTogglingCustomerId] = useState<string | null>(null)
+
+  const [editModalOpen, setEditModalOpen] = useState(false)
+  const [editingCustomer, setEditingCustomer] = useState<CustomerRecord | null>(null)
+  const [editFormData, setEditFormData] = useState<CustomerFormData>({})
+  const [savingEdit, setSavingEdit] = useState(false)
 
   const loadCustomers = async () => {
     if (!tenant?.id) return
@@ -121,6 +180,48 @@ export function CustomersPage() {
         description: err?.message || 'Falha ao excluir no banco de dados.',
         variant: 'destructive',
       })
+    }
+  }
+
+  const openEditModal = (cust: CustomerRecord) => {
+    setEditingCustomer(cust)
+    setEditFormData({
+      name: cust.name || '',
+      email: cust.email || '',
+      phone: cust.phone || '',
+      document: cust.document || '',
+      rg: (cust as any).rg || '',
+      estado_civil: (cust as any).estado_civil || '',
+      address: cust.address || '',
+      city: cust.city || '',
+      state: cust.state || '',
+    })
+    setEditModalOpen(true)
+  }
+
+  const handleEditSave = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingCustomer) return
+    if (!editFormData.name || !editFormData.name.trim()) {
+      toast({ title: 'Nome é obrigatório', variant: 'destructive' })
+      return
+    }
+    setSavingEdit(true)
+    try {
+      await pb.collection('customers').update(editingCustomer.id, { ...editFormData })
+      toast({ title: 'Cliente atualizado com sucesso!' })
+      setEditModalOpen(false)
+      setEditingCustomer(null)
+      await loadCustomers()
+    } catch (err: any) {
+      console.error('Error updating customer:', err)
+      toast({
+        title: 'Erro ao atualizar cliente',
+        description: err?.message || 'Falha ao salvar no banco de dados.',
+        variant: 'destructive',
+      })
+    } finally {
+      setSavingEdit(false)
     }
   }
 
@@ -347,6 +448,14 @@ export function CustomersPage() {
                         >
                           <Eye className="h-3.5 w-3.5" /> Visão 360º
                         </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openEditModal(cust)}
+                          className="h-7 text-xs gap-1"
+                        >
+                          <Pencil className="h-3.5 w-3.5" /> Editar
+                        </Button>
                         {userRole === 'admin' && (
                           <Button
                             variant="outline"
@@ -366,6 +475,134 @@ export function CustomersPage() {
           </table>
         </div>
       </div>
+
+      {/* MODAL DE EDIÇÃO DE CLIENTE */}
+      <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-legal-serif flex items-center gap-2">
+              <Pencil className="h-5 w-5 text-primary" />
+              Editar Cliente
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleEditSave} className="space-y-3 pt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Nome *</Label>
+                <Input
+                  required
+                  value={editFormData.name || ''}
+                  onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                  className="h-9 text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">E-mail</Label>
+                <Input
+                  type="email"
+                  value={editFormData.email || ''}
+                  onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+                  className="h-9 text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Telefone</Label>
+                <Input
+                  value={editFormData.phone || ''}
+                  onChange={(e) => setEditFormData({ ...editFormData, phone: e.target.value })}
+                  className="h-9 text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">CPF/CNPJ</Label>
+                <Input
+                  value={editFormData.document || ''}
+                  onChange={(e) => setEditFormData({ ...editFormData, document: e.target.value })}
+                  className="h-9 text-xs font-mono"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">RG</Label>
+                <Input
+                  value={editFormData.rg || ''}
+                  onChange={(e) => setEditFormData({ ...editFormData, rg: e.target.value })}
+                  className="h-9 text-xs font-mono"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Estado Civil</Label>
+                <Select
+                  value={editFormData.estado_civil || ''}
+                  onValueChange={(val) => setEditFormData({ ...editFormData, estado_civil: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Selecione..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ESTADOS_CIVIS.map((ec) => (
+                      <SelectItem key={ec} value={ec}>
+                        {ec}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label className="text-xs font-semibold">Endereço</Label>
+                <Input
+                  value={editFormData.address || ''}
+                  onChange={(e) => setEditFormData({ ...editFormData, address: e.target.value })}
+                  className="h-9 text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Cidade</Label>
+                <Input
+                  value={editFormData.city || ''}
+                  onChange={(e) => setEditFormData({ ...editFormData, city: e.target.value })}
+                  className="h-9 text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Estado (UF)</Label>
+                <Select
+                  value={editFormData.state || ''}
+                  onValueChange={(val) => setEditFormData({ ...editFormData, state: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Selecione a UF..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {UFS.map((uf) => (
+                      <SelectItem key={uf} value={uf}>
+                        {uf}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <DialogFooter className="pt-2 border-t">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setEditModalOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={savingEdit}
+                className="bg-[#0A1F3F] text-white"
+              >
+                {savingEdit ? 'Salvando...' : 'Salvar Alterações'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-22T14:40:16.247Z",
+  "generatedAt": "2026-08-22T14:57:03.624Z",
   "collections": [
     {
       "name": "users",
@@ -1007,6 +1007,18 @@
         {
           "name": "active",
           "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "rg",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "estado_civil",
+          "type": "text",
           "required": false,
           "system": false
         }

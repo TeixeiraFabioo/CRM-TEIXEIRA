@@ -157,6 +157,8 @@ export interface CustomerRecord {
   email?: string
   company?: string
   document?: string
+  rg?: string
+  estado_civil?: string
   address?: string
   city?: string
   state?: string

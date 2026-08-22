@@ -2,35 +2,38 @@
 // $ai.agent(slug).chat (Skip-shape). Don't hand-roll the SSE reader —
 // past attempts shipped "undefinedundefined…" and "[object Object]…".
 
-import pb from '@/lib/pocketbase/client'
+export interface ChatMessageInput {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
 
-/**
- * Non-streaming chat completion proxied through the backend hooks
- * (`/backend/v1/ai/chat` for authenticated CRM use,
- * `/backend/v1/ai/landing-chat` for the public landing widget).
- * The hooks own the call to `$ai.chat` — the frontend never holds keys
- * or talks to the LLM gateway directly. Returns the assistant text.
- *
- * Pass `public: true` to hit the anonymous landing endpoint (which fixes
- * the system prompt server-side and discards any client `system` turn).
- */
 export interface GenerateChatResponseOptions {
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  messages: ChatMessageInput[]
   temperature?: number
   public?: boolean
 }
 
-export async function generateChatResponse(opts: GenerateChatResponseOptions): Promise<string> {
-  const endpoint = opts.public ? '/backend/v1/ai/landing-chat' : '/backend/v1/ai/chat'
-  const res = (await pb.send(endpoint, {
-    method: 'POST',
-    body: {
-      messages: opts.messages,
-      temperature: opts.temperature,
-    },
-  })) as { text?: unknown } | undefined
+// Non-streaming chat completion against the project backend's $ai.chat proxy.
+// Returns the assistant message content (empty string on failure).
+export async function generateChatResponse(options: GenerateChatResponseOptions): Promise<string> {
+  const body: Record<string, unknown> = {
+    messages: options.messages,
+  }
+  if (options.temperature !== undefined) body.temperature = options.temperature
+  if (options.public !== undefined) body.public = options.public
 
-  return typeof res?.text === 'string' ? res.text : ''
+  const res = await fetch('/api/ai/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    throw new Error(`Chat request failed: ${res.status}`)
+  }
+
+  const data = (await res.json()) as { content?: string; reply?: string; message?: string }
+  return data.content || data.reply || data.message || ''
 }
 
 export interface OpenAIChatResult {

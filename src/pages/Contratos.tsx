@@ -37,6 +37,7 @@ import {
 import { useToast } from '@/hooks/use-toast'
 import { useTenant } from '@/contexts/TenantContext'
 import { CrmService } from '@/services/crm'
+import pb from '@/lib/pocketbase/client'
 import { ContractRecord, CustomerRecord } from '@/types/platform'
 
 export function ContratosPage() {
@@ -104,6 +105,41 @@ export function ContratosPage() {
   const handleSendForSignature = async (contractId: string) => {
     setSendingId(contractId)
     try {
+      // Buscar o contrato atual para obter o cliente vinculado
+      const contract = await pb.collection('contracts').getOne<ContractRecord>(contractId)
+      const clienteId = contract.cliente_id
+
+      if (clienteId) {
+        let cliente: CustomerRecord | null = null
+        try {
+          cliente = await pb.collection('customers').getOne<CustomerRecord>(clienteId)
+        } catch (errCust) {
+          console.error('Erro ao buscar cliente vinculado ao contrato:', errCust)
+        }
+
+        if (cliente) {
+          // Validar campos obrigatórios do cliente
+          const missing: string[] = []
+          if (!cliente.name || !cliente.name.trim()) missing.push('Nome')
+          if (!cliente.email && !cliente.phone) missing.push('E-mail ou Telefone')
+          if (!cliente.document) missing.push('CPF/CNPJ')
+          if (!(cliente as any).rg) missing.push('RG')
+          if (!cliente.address) missing.push('Endereço')
+          if (!cliente.city) missing.push('Cidade')
+          if (!cliente.state) missing.push('Estado (UF)')
+          if (!(cliente as any).estado_civil) missing.push('Estado Civil')
+
+          if (missing.length > 0) {
+            toast({
+              title: 'Dados incompletos do cliente',
+              description: `Campos faltando: ${missing.join(', ')}.`,
+              variant: 'destructive',
+            })
+            return
+          }
+        }
+      }
+
       await CrmService.sendContractForSignature(contractId)
       toast({
         title: 'Contrato enviado para assinatura!',
