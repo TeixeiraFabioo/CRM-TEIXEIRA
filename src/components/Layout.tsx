@@ -35,17 +35,16 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { useTenant } from '@/contexts/TenantContext'
+import { useTenant, type UserRole } from '@/contexts/TenantContext'
 import { useMetaPixel, useMetaPixelRouteTracker } from '@/hooks/useMetaPixel'
 import { GlobalSearchModal } from './GlobalSearchModal'
 import { NotificationsDropdown } from './NotificationsDropdown'
 import { QuickActionMenu } from './QuickActionMenu'
-import pb from '@/lib/pocketbase/client'
 
 export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { tenant, user, logout, pixelId } = useTenant()
+  const { tenant, user, logout, pixelId, userRole } = useTenant()
   const { isReady } = useMetaPixel()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -134,23 +133,67 @@ export default function Layout() {
   // - user (advogado/consultor): sees PRINCIPAL + CADASTROS & CONTATOS +
   //   a restricted DOCUMENTOS & HONORÁRIOS group (Propostas + Contratos
   //   only). Does NOT see MARKETING nor SISTEMA.
-  const role = (user?.role as 'admin' | 'manager' | 'user' | undefined) || 'user'
+  // Role-based menu filtering (must mirror RequireRole in App.tsx).
+  //   admin    → sees everything
+  //   gestor   → everything EXCEPT the admin-only "SISTEMA & INTEGRAÇÕES" group
+  //              (Configurações do Escritório, Central de Integrações, Trilha
+  //              de Auditoria, Administração de Usuários)
+  //   advogado → Dashboard, Leads, Pipeline, Clientes, Tarefas, Base de
+  //              Conhecimento — the records under their own responsibility.
+  // Items NOT in a role's allow-list are removed from the menu entirely
+  // (not just disabled) so the restricted routes are not discoverable.
+  const role: UserRole = userRole
+
+  const GESTOR_PATHS = new Set([
+    '/',
+    '/leads',
+    '/pipeline',
+    '/clientes',
+    '/pessoas',
+    '/empresas',
+    '/opportunities',
+    '/tarefas',
+    '/propostas',
+    '/contratos',
+    '/relatorios',
+    '/marketing',
+    '/campanhas',
+    '/inteligencia',
+    '/metas',
+    '/ranking',
+    '/comissoes',
+    '/automacoes',
+    '/base-conhecimento',
+  ])
+  const ADVOGADO_PATHS = new Set([
+    '/',
+    '/leads',
+    '/pipeline',
+    '/clientes',
+    '/tarefas',
+    '/base-conhecimento',
+  ])
+
+  const allowedPaths =
+    role === 'admin'
+      ? null // null = no filtering
+      : role === 'gestor'
+        ? GESTOR_PATHS
+        : ADVOGADO_PATHS
 
   const filteredNavGroups = navGroups
     .map((group) => {
+      // The whole "SISTEMA & INTEGRAÇÕES" group is admin-only — every item
+      // in it is an admin-only path, so hide the group outright for non-admins.
       if (group.title === 'SISTEMA & INTEGRAÇÕES' && role !== 'admin') return null
-      if (group.title === 'MARKETING & INTELIGÊNCIA' && role === 'user') return null
-      if (group.title === 'DOCUMENTOS & HONORÁRIOS' && role === 'user') {
-        return {
-          ...group,
-          items: group.items.filter((item) => ['/propostas', '/contratos'].includes(item.path)),
-        }
-      }
-      return group
+
+      if (!allowedPaths) return group
+
+      const kept = group.items.filter((item) => allowedPaths.has(item.path))
+      if (kept.length === 0) return null
+      return { ...group, items: kept }
     })
     .filter((g): g is (typeof navGroups)[number] => g !== null)
-
-  const currentUser = pb.authStore.record
 
   return (
     <div className="min-h-screen flex bg-background text-foreground antialiased selection:bg-primary/20">
@@ -178,7 +221,7 @@ export default function Layout() {
 
         {/* Navigation links scrollable */}
         <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6 custom-scrollbar">
-          {navGroups.map((group) => (
+          {filteredNavGroups.map((group) => (
             <div key={group.title}>
               <div className="px-3 mb-2 text-[10px] font-bold text-slate-400 tracking-wider">
                 {group.title}
@@ -239,15 +282,17 @@ export default function Layout() {
             </div>
           </div>
           <div className="flex items-center gap-0.5 shrink-0">
-            <Link to="/settings" title="Configurações">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 text-slate-400 hover:text-white"
-              >
-                <Settings className="h-4 w-4" />
-              </Button>
-            </Link>
+            {role === 'admin' && (
+              <Link to="/settings" title="Configurações">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-slate-400 hover:text-white"
+                >
+                  <Settings className="h-4 w-4" />
+                </Button>
+              </Link>
+            )}
             <Button
               variant="ghost"
               size="icon"
@@ -303,13 +348,13 @@ export default function Layout() {
                 <span>Pixel:</span>
                 <span className="font-mono font-bold">{pixelId}</span>
               </div>
-            ) : (
+            ) : role === 'admin' ? (
               <Link to="/settings" className="hidden md:block">
                 <Badge variant="outline" className="text-[11px] text-amber-600 border-amber-500/30">
                   Pixel não vinculado
                 </Badge>
               </Link>
-            )}
+            ) : null}
 
             {/* Dark Mode Toggle */}
             <Button

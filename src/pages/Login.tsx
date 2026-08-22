@@ -69,25 +69,6 @@ export default function LoginPage() {
     }
   }
 
-  const handleQuickDemoLogin = async () => {
-    setEmail('fabio.saantost@gmail.com')
-    setPassword('Skip@Pass')
-    setIsLoading(true)
-    setErrorMessage(null)
-    try {
-      await login('fabio.saantost@gmail.com', 'Skip@Pass')
-      toast({
-        title: 'Login de Administrador efetuado',
-        description: 'Bem-vindo de volta, Dr. Fabio Santos.',
-      })
-      navigate(from, { replace: true })
-    } catch (err: any) {
-      setErrorMessage(err?.message || 'Falha ao autenticar admin padrão.')
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
   const handlePasswordReset = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!email) {

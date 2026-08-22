@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-08-22T13:27:14.324Z",
+  "generatedAt": "2026-08-22T14:15:28.643Z",
   "collections": [
     {
       "name": "users",
       "type": "auth",
       "apiRules": {
-        "list": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
-        "view": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
+        "list": "@request.auth.id != '' && (id = @request.auth.id || @request.auth.role = 'admin' || @request.auth.role = 'manager') && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
+        "view": "@request.auth.id != '' && (id = @request.auth.id || @request.auth.role = 'admin' || @request.auth.role = 'manager') && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
         "create": "",
         "update": "@request.auth.id != '' && (id = @request.auth.id || (@request.auth.role = 'admin' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')))",
         "delete": "@request.auth.id != '' && (id = @request.auth.id || (@request.auth.role = 'admin' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')))"
@@ -168,9 +168,9 @@
       "apiRules": {
         "list": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
         "view": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
-        "create": "@request.auth.id != ''",
-        "update": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
-        "delete": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')"
+        "create": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "update": "@request.auth.id != '' && @request.auth.role = 'admin' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
+        "delete": "@request.auth.id != '' && @request.auth.role = 'admin' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')"
       },
       "fields": [
         {
@@ -221,9 +221,9 @@
       "apiRules": {
         "list": "@request.auth.id != ''",
         "view": "@request.auth.id != ''",
-        "create": "@request.auth.id != ''",
-        "update": "@request.auth.id != ''",
-        "delete": "@request.auth.id != ''"
+        "create": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "update": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "delete": "@request.auth.id != '' && @request.auth.role = 'admin'"
       },
       "fields": [
         {
@@ -2646,11 +2646,11 @@
       "name": "commissions",
       "type": "base",
       "apiRules": {
-        "list": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
-        "view": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
-        "create": "@request.auth.id != ''",
-        "update": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
-        "delete": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')"
+        "list": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.role = 'manager') && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
+        "view": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.role = 'manager') && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
+        "create": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.role = 'manager')",
+        "update": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.role = 'manager') && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
+        "delete": "@request.auth.id != '' && @request.auth.role = 'admin' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')"
       },
       "fields": [
         {
@@ -2978,11 +2978,11 @@
       "name": "sla_configs",
       "type": "base",
       "apiRules": {
-        "list": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
-        "view": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
-        "create": "@request.auth.id != ''",
-        "update": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
-        "delete": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')"
+        "list": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.role = 'manager') && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
+        "view": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.role = 'manager') && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
+        "create": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.role = 'manager')",
+        "update": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.role = 'manager') && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
+        "delete": "@request.auth.id != '' && @request.auth.role = 'admin' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')"
       },
       "fields": [
         {
@@ -3073,11 +3073,11 @@
       "name": "lead_distribution",
       "type": "base",
       "apiRules": {
-        "list": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
-        "view": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
-        "create": "@request.auth.id != ''",
-        "update": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
-        "delete": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')"
+        "list": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.role = 'manager') && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
+        "view": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.role = 'manager') && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
+        "create": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.role = 'manager')",
+        "update": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.role = 'manager') && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
+        "delete": "@request.auth.id != '' && @request.auth.role = 'admin' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')"
       },
       "fields": [
         {

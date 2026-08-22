@@ -1,8 +1,35 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  useMemo,
+} from 'react'
 import { TenantRecord, UserRecord, PermissionRecord } from '@/types/platform'
 import { TenantService } from '@/services/tenant'
 import { metaPixel } from '@/lib/metaPixel'
 import pb from '@/lib/pocketbase/client'
+
+/**
+ * The canonical role names used throughout the app. The PocketBase `users.role`
+ * select field stores `admin` | `manager` | `user`, but the product surface
+ * calls them admin | gestor | advogado — we normalise to these three labels
+ * so UI strings, route guards and menu filters all agree.
+ */
+export type UserRole = 'admin' | 'gestor' | 'advogado'
+
+/**
+ * Normalise whatever raw role value is stored on the auth record into one of
+ * the three canonical labels. Anything unknown falls back to the most
+ * restrictive role (advogado), which is the safe default.
+ */
+function normaliseRole(raw: unknown): UserRole {
+  if (raw === 'admin') return 'admin'
+  if (raw === 'manager' || raw === 'gestor') return 'gestor'
+  return 'advogado'
+}
 
 interface TenantContextType {
   tenant: TenantRecord | null
@@ -10,6 +37,16 @@ interface TenantContextType {
   isAuthenticated: boolean
   isLoading: boolean
   pixelId: string
+  /** Canonical role for the logged-in user (admin | gestor | advogado). */
+  userRole: UserRole
+  /**
+   * Returns true when the current user is permitted to perform `action`.
+   * Admins always pass; gestores pass for everything except `delete` and
+   * admin-only system actions (`manage_users`, `manage_settings`,
+   * `manage_integrations`, `view_audit`); advogados only pass for the
+   * CRUD actions on records under their own responsibility.
+   */
+  hasPermission: (action: string) => boolean
   login: (email: string, pass: string) => Promise<void>
   register: (params: {
     officeName: string
@@ -31,6 +68,52 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   })
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => pb.authStore.isValid)
   const [isLoading, setIsLoading] = useState<boolean>(true)
+  // Explicitly tracked role + permissions so callers don't have to re-fetch
+  // them on every render and so `useUserRole` can return a stable value.
+  const [userRole, setUserRole] = useState<UserRole>('advogado')
+  const [permissions, setPermissions] = useState<PermissionRecord[]>([])
+  // Avoid refetching permissions for the same user id on every authStore
+  // change event (which can fire several times during login).
+  const loadedPermsForRef = useRef<string | null>(null)
+
+  /**
+   * Load the role record + its permissions for the given user. Fetches the
+   * `roles` row referenced by `user.role_id` (if any) and every `permissions`
+   * row pointing back at it. Failures degrade gracefully — the role falls
+   * back to the value already on the auth record and permissions become [].
+   */
+  const loadRoleAndPermissions = useCallback(async (authUser: UserRecord | null) => {
+    if (!authUser) {
+      setUserRole('advogado')
+      setPermissions([])
+      loadedPermsForRef.current = null
+      return
+    }
+
+    const role = normaliseRole(authUser.role)
+    setUserRole(role)
+
+    // Permissions only make sense for non-admin roles (admin is unrestricted).
+    if (role === 'admin' || !authUser.role_id) {
+      setPermissions([])
+      loadedPermsForRef.current = authUser.id
+      return
+    }
+
+    // Already loaded for this user — don't refetch on spurious authStore events.
+    if (loadedPermsForRef.current === authUser.id) return
+    loadedPermsForRef.current = authUser.id
+
+    try {
+      const perms = await pb.collection('permissions').getFullList<PermissionRecord>({
+        filter: `role_id = "${authUser.role_id}"`,
+      })
+      setPermissions(perms)
+    } catch (err) {
+      console.warn('Failed to load permissions for user role', err)
+      setPermissions([])
+    }
+  }, [])
 
   const loadTenantAndUser = useCallback(async () => {
     setIsLoading(true)
@@ -39,6 +122,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const authUser = pb.authStore.record as unknown as UserRecord
         setUser(authUser)
         setIsAuthenticated(true)
+        loadRoleAndPermissions(authUser)
 
         // If user has a tenant_id, load it. Otherwise load default tenant or first tenant
         if (authUser.tenant_id) {
@@ -64,6 +148,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setUser(null)
         setIsAuthenticated(false)
         setTenant(null)
+        loadRoleAndPermissions(null)
         metaPixel.remove()
       }
     } catch (error) {
@@ -71,7 +156,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [loadRoleAndPermissions])
 
   useEffect(() => {
     loadTenantAndUser()
@@ -80,7 +165,10 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const unsubscribe = pb.authStore.onChange((token, record) => {
       const isValid = pb.authStore.isValid && !!record
       setIsAuthenticated(isValid)
-      setUser((record as unknown as UserRecord) || null)
+      const authUser = (record as unknown as UserRecord) || null
+      setUser(authUser)
+      // Keep the role + permissions cache in sync with whoever is now logged in.
+      loadRoleAndPermissions(authUser)
 
       if (isValid && record?.tenant_id) {
         TenantService.getTenant(record.tenant_id)
@@ -102,13 +190,15 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return () => {
       unsubscribe()
     }
-  }, [loadTenantAndUser])
+  }, [loadTenantAndUser, loadRoleAndPermissions])
 
   const login = async (email: string, pass: string) => {
     const authData = await pb.collection('users').authWithPassword(email.trim(), pass)
     const authUser = authData.record as unknown as UserRecord
     setUser(authUser)
     setIsAuthenticated(true)
+    // Fetch the role + permissions for the freshly authenticated user.
+    loadRoleAndPermissions(authUser)
 
     // Check if user is active
     if (authUser.active === false || authUser.status === 'inactive') {
@@ -206,6 +296,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const authUser = authData.record as unknown as UserRecord
     setUser(authUser)
     setIsAuthenticated(true)
+    // New registrants are admins, but keep the cache consistent regardless.
+    loadRoleAndPermissions(authUser)
     setTenant(createdTenant)
 
     // 6. Create default pipeline and stages for the new tenant so CRM is immediately functional
@@ -302,6 +394,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setUser(null)
     setIsAuthenticated(false)
     setTenant(null)
+    setUserRole('advogado')
+    setPermissions([])
+    loadedPermsForRef.current = null
     metaPixel.remove()
   }
 
@@ -327,24 +422,64 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const pixelId = tenant?.meta_pixel_id || tenant?.settings?.meta_pixel_id || ''
 
-  return (
-    <TenantContext.Provider
-      value={{
-        tenant,
-        user,
-        isAuthenticated,
-        isLoading,
-        pixelId,
-        login,
-        register,
-        logout,
-        updatePixelId,
-        refreshTenant,
-      }}
-    >
-      {children}
-    </TenantContext.Provider>
+  // Role-based permission helper. The action strings used by the UI map to
+  // the `action` values stored on the `permissions` collection
+  // (view | create | edit | delete | manage | ...). Admin is always allowed;
+  // gestor is allowed everything except deletes and admin-only system actions;
+  // advogado is restricted to record-level CRUD on records under their
+  // responsibility (the API rules enforce the row-level scope on the backend).
+  const hasPermission = useCallback(
+    (action: string): boolean => {
+      // Admin: unrestricted.
+      if (userRole === 'admin') return true
+
+      // Gestor: everything except deletes and admin-only system actions.
+      const adminOnlyActions = new Set([
+        'delete',
+        'manage_users',
+        'manage_settings',
+        'manage_integrations',
+        'view_audit',
+        'manage_audit',
+      ])
+      if (userRole === 'gestor') {
+        return !adminOnlyActions.has(action)
+      }
+
+      // Advogado: limited CRUD on records under their responsibility.
+      const advogadoAllowed = new Set(['view', 'create', 'edit'])
+      if (userRole === 'advogado') {
+        if (!advogadoAllowed.has(action)) return false
+        // If an explicit permission record exists for this action, honour it.
+        if (permissions.length === 0) return true
+        return permissions.some((p) => p.action === action && p.granted !== false)
+      }
+
+      return false
+    },
+    [userRole, permissions],
   )
+
+  const value = useMemo(
+    () => ({
+      tenant,
+      user,
+      isAuthenticated,
+      isLoading,
+      pixelId,
+      userRole,
+      hasPermission,
+      login,
+      register,
+      logout,
+      updatePixelId,
+      refreshTenant,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tenant, user, isAuthenticated, isLoading, pixelId, userRole, permissions, hasPermission],
+  )
+
+  return <TenantContext.Provider value={value}>{children}</TenantContext.Provider>
 }
 
 export function useTenant() {
@@ -353,4 +488,15 @@ export function useTenant() {
     throw new Error('useTenant must be used within a TenantProvider')
   }
   return context
+}
+
+/**
+ * Convenience hook for components that only need the role + a hasPermission
+ * check (route guards, menu filters, action buttons). Returns `role: null`
+ * while the auth context is still loading so callers can render a spinner
+ * before deciding to redirect.
+ */
+export function useUserRole() {
+  const { userRole, isLoading } = useTenant()
+  return { role: isLoading ? null : userRole, isLoading } as const
 }
