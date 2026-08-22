@@ -192,6 +192,20 @@ export function SettingsPage() {
 
   // Edit User modal state
   const [editUserModalOpen, setEditUserModalOpen] = useState(false)
+  // Reset Password Confirmation
+  const [resetPasswordModalOpen, setResetPasswordModalOpen] = useState(false)
+  const [userToReset, setUserToReset] = useState<UserRecord | null>(null)
+  const [isResettingPassword, setIsResettingPassword] = useState(false)
+  // Reset password mode: 'random' (default) or 'custom'
+  const [resetPasswordMode, setResetPasswordMode] = useState<'random' | 'custom'>('random')
+  const [resetNewPassword, setResetNewPassword] = useState('')
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('')
+
+  // Toggle User Active Status state
+  const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
+
+  // Edit User modal state
+  const [editUserModalOpen, setEditUserModalOpen] = useState(false)
   const [editingUser, setEditingUser] = useState<UserRecord | null>(null)
   const [editUserData, setEditUserData] = useState({
     name: '',
@@ -199,9 +213,102 @@ export function SettingsPage() {
     role: 'user' as 'admin' | 'manager' | 'user',
     team: '',
   })
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
+
+  // Role-based hierarchy:
+  //   admin  → can manage any user (incl. other admins), except self
+  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
+  //            and user/advogado), except self
+  //   advogado → never reaches this page (RequireRole blocks it), but keep
+  //            a safe fallback.
   const isAdmin = userRole === 'admin'
 
   /**
+   * Whether the current user is allowed to perform management actions
+   * (reset password / delete / toggle active / edit) on `target`.
+   * Admins: anyone but self. Gestor: only non-admin users (and not self,
+   * but self-handling stays in each handler for a clearer toast).
+   */
+  const canManageUser = (target: UserRecord): boolean => {
+    if (!target) return false
+    if (isAdmin) return true
+    if (userRole === 'gestor') return target.role !== 'admin'
+    return false
+  }
+
+  const generateSecurePassword = (length = 12) => {
+    const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*+='
+    let password = ''
+    // Ensure at least 1 lowercase, 1 uppercase, 1 number, 1 symbol
+    password += 'abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 26)]
+    password += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[Math.floor(Math.random() * 26)]
+    password += '0123456789'[Math.floor(Math.random() * 10)]
+    password += '!@#$%&*+='[Math.floor(Math.random() * 9)]
+    for (let i = 4; i < length; i++) {
+      const randomIndex = Math.floor(Math.random() * charset.length)
+      password += charset[randomIndex]
+    }
+    // Shuffle
+    return password
+      .split('')
+      .sort(() => 0.5 - Math.random())
+      .join('')
+  }
+
+  const loadAll = async () => {
+=======
+  // Edit User modal state
+  const [editUserModalOpen, setEditUserModalOpen] = useState(false)
+  const [editingUser, setEditingUser] = useState<UserRecord | null>(null)
+  const [editUserData, setEditUserData] = useState({
+    name: '',
+    email: '',
+    role: 'user' as 'admin' | 'manager' | 'user',
+    team: '',
+  })
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
+
+  // Role-based hierarchy:
+  //   admin  → can manage any user (incl. other admins), except self
+  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
+  //            and user/advogado), except self
+  //   advogado → never reaches this page (RequireRole blocks it), but keep
+  //            a safe fallback.
+  const isAdmin = userRole === 'admin'
+
+  /**
+   * Whether the current user is allowed to perform management actions
+   * (reset password / delete / toggle active / edit) on `target`.
+   * Admins: anyone but self. Gestor: only non-admin users (and not self,
+   * but self-handling stays in each handler for a clearer toast).
+   */
+  const canManageUser = (target: UserRecord): boolean => {
+    if (!target) return false
+    if (isAdmin) return true
+    if (userRole === 'gestor') return target.role !== 'admin'
+    return false
+  }
+
+  const generateSecurePassword = (length = 12) => {
+    const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*+='
+    let password = ''
+    // Ensure at least 1 lowercase, 1 uppercase, 1 number, 1 symbol
+    password += 'abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 26)]
+    password += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[Math.floor(Math.random() * 26)]
+    password += '0123456789'[Math.floor(Math.random() * 10)]
+    password += '!@#$%&*+='[Math.floor(Math.random() * 9)]
+    for (let i = 4; i < length; i++) {
+      const randomIndex = Math.floor(Math.random() * charset.length)
+      password += charset[randomIndex]
+    }
+    // Shuffle
+    return password
+      .split('')
+      .sort(() => 0.5 - Math.random())
+      .join('')
+  }
+
+  const loadAll = async () => {
 =======
 =======
 =======
