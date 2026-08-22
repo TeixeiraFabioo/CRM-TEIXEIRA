@@ -267,6 +267,47 @@ export interface StreamAgentChatResult {
   toolCalls: Array<{ id: string; name: string; ok: boolean }>
 }
 
+export interface GenerateChatResponseOptions {
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  temperature?: number
+  public?: boolean
+  signal?: AbortSignal
+}
+
+/**
+ * Helper to generate a non-streaming chat completion from the server backend
+ * or local fallback when calling Skip AI / OpenAI endpoints.
+ */
+export async function generateChatResponse(options: GenerateChatResponseOptions): Promise<string> {
+  const { messages, temperature = 0.7, signal } = options
+
+  try {
+    const res = await fetch('/api/ai/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messages,
+        temperature,
+      }),
+      signal,
+    })
+
+    if (!res.ok) {
+      throw new Error(`AI request failed: ${res.status}`)
+    }
+
+    const data = (await res.json()) as OpenAIChatResult
+    return data.choices?.[0]?.message?.content || ''
+  } catch (err) {
+    console.warn('generateChatResponse fallback due to error:', err)
+    // Return a structured graceful fallback message if the endpoint is offline
+    const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user')?.content || ''
+    return `Agradecemos o contato. Nossos advogados especialistas em Direito Tributário, Bancário e Trabalhista irão avaliar detalhadamente sua demanda sobre: "${lastUserMessage.slice(0, 80)}...". Por favor, preencha o formulário para agendarmos um alinhamento direto com a equipe jurídica.`
+  }
+}
+
 // Drive an agent stream end-to-end. Resolves only after `done` (turn fully persisted);
 // throws on abort, on the `error` event, or if the stream ends before `done`.
 export async function streamAgentChat(

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Settings as SettingsIcon,
@@ -28,6 +28,11 @@ import {
   Info,
   BookOpen,
   Sparkles,
+  MessageSquareText,
+  SlidersHorizontal,
+  Edit2,
+  Check,
+  ShieldAlert,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -67,7 +72,7 @@ import { useTenant } from '@/contexts/TenantContext'
 import { CrmService } from '@/services/crm'
 import { TenantService } from '@/services/tenant'
 import pb from '@/lib/pocketbase/client'
-import {
+import type {
   ServiceRecord,
   TagRecord,
   TemplateRecord,
@@ -77,7 +82,6 @@ import {
   UserRecord,
   LeadDistributionRecord,
 } from '@/types/platform'
-import { MessageSquareText, SlidersHorizontal, Edit2, Check } from 'lucide-react'
 
 export function SettingsPage() {
   const { tenant, user, refreshTenant, logout, userRole } = useTenant()
@@ -107,11 +111,14 @@ export function SettingsPage() {
   const [savingSla, setSavingSla] = useState<boolean>(false)
 
   // Office settings
-  const [officeName, setOfficeName] = useState('Teixeira & Nascimento – Advogados')
-  const [metaPixelId, setMetaPixelId] = useState(tenant?.meta_pixel_id || '948271038592014')
-  const [oabRegistro, setOabRegistro] = useState('OAB/SP 48.920')
+  const [officeName, setOfficeName] = useState(tenant?.name || 'Teixeira & Nascimento – Advogados')
+  const [metaPixelId, setMetaPixelId] = useState(
+    tenant?.meta_pixel_id || tenant?.settings?.meta_pixel_id || '',
+  )
+  const [oabRegistro, setOabRegistro] = useState(tenant?.settings?.oab_registro || 'OAB/SP 48.920')
   const [endereco, setEndereco] = useState(
-    'Av. Paulista, 1842 - Edifício Horizon, 14º Andar - São Paulo/SP',
+    tenant?.settings?.endereco_completo ||
+      'Av. Paulista, 1842 - Edifício Horizon, 14º Andar - São Paulo/SP',
   )
 
   // Modals
@@ -154,16 +161,19 @@ export function SettingsPage() {
     ordem: 0,
   })
 
-  // User Management state
+  // ==========================================
+  // USER MANAGEMENT STATE
+  // ==========================================
   const [createUserModalOpen, setCreateUserModalOpen] = useState(false)
   const [newUser, setNewUser] = useState({
     name: '',
     email: '',
     role: 'user' as 'admin' | 'manager' | 'user',
+    team: '',
   })
   const [isSubmittingUser, setIsSubmittingUser] = useState(false)
 
-  // Password Display Modal (for created user or reset password)
+  // Password Display Modal (for newly created user or randomly generated password reset)
   const [passwordModalOpen, setPasswordModalOpen] = useState(false)
   const [passwordModalData, setPasswordModalData] = useState<{
     userEmail: string
@@ -173,73 +183,60 @@ export function SettingsPage() {
   } | null>(null)
   const [copiedPassword, setCopiedPassword] = useState(false)
 
+  // Edit User modal state
+  const [editUserModalOpen, setEditUserModalOpen] = useState(false)
+  const [editingUser, setEditingUser] = useState<UserRecord | null>(null)
+  const [editUserData, setEditUserData] = useState({
+    name: '',
+    email: '',
+    role: 'user' as 'admin' | 'manager' | 'user',
+    team: '',
+  })
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
+
   // Delete User Confirmation
   const [deleteUserModalOpen, setDeleteUserModalOpen] = useState(false)
   const [userToDelete, setUserToDelete] = useState<UserRecord | null>(null)
   const [isDeletingUser, setIsDeletingUser] = useState(false)
 
-  // Reset Password Confirmation
+  // Reset Password Modal
   const [resetPasswordModalOpen, setResetPasswordModalOpen] = useState(false)
   const [userToReset, setUserToReset] = useState<UserRecord | null>(null)
   const [isResettingPassword, setIsResettingPassword] = useState(false)
-  // Reset password mode: 'random' (default) or 'custom'
   const [resetPasswordMode, setResetPasswordMode] = useState<'random' | 'custom'>('random')
   const [resetNewPassword, setResetNewPassword] = useState('')
   const [resetConfirmPassword, setResetConfirmPassword] = useState('')
+  const [showResetCustomPassword, setShowResetCustomPassword] = useState(false)
 
   // Toggle User Active Status state
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
 
-  // Edit User modal state
-  const [editUserModalOpen, setEditUserModalOpen] = useState(false)
-  // Reset Password Confirmation
-  const [resetPasswordModalOpen, setResetPasswordModalOpen] = useState(false)
-  const [userToReset, setUserToReset] = useState<UserRecord | null>(null)
-  const [isResettingPassword, setIsResettingPassword] = useState(false)
-  // Reset password mode: 'random' (default) or 'custom'
-  const [resetPasswordMode, setResetPasswordMode] = useState<'random' | 'custom'>('random')
-  const [resetNewPassword, setResetNewPassword] = useState('')
-  const [resetConfirmPassword, setResetConfirmPassword] = useState('')
-
-  // Toggle User Active Status state
-  const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
-
-  // Edit User modal state
-  const [editUserModalOpen, setEditUserModalOpen] = useState(false)
-  const [editingUser, setEditingUser] = useState<UserRecord | null>(null)
-  const [editUserData, setEditUserData] = useState({
-    name: '',
-    email: '',
-    role: 'user' as 'admin' | 'manager' | 'user',
-    team: '',
-  })
-  const [isSavingEdit, setIsSavingEdit] = useState(false)
-
-  // Role-based hierarchy:
-  //   admin  → can manage any user (incl. other admins), except self
-  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
-  //            and user/advogado), except self
-  //   advogado → never reaches this page (RequireRole blocks it), but keep
-  //            a safe fallback.
+  // --------------------------------------------------
+  // HIERARCHY RULE (Mandatory Phase E Rule):
+  // - Admin can edit, toggle status, delete, reset password of ANY user (except self deletion/deactivation).
+  // - Gestor (manager) CANNOT edit, deactivate, delete or reset password of an user with role "admin".
+  // - Gestor CAN manage users with role "manager" or "user" within their tenant.
+  // --------------------------------------------------
   const isAdmin = userRole === 'admin'
+  const isGestor = userRole === 'gestor'
 
   /**
-   * Whether the current user is allowed to perform management actions
-   * (reset password / delete / toggle active / edit) on `target`.
-   * Admins: anyone but self. Gestor: only non-admin users (and not self,
-   * but self-handling stays in each handler for a clearer toast).
+   * Returns true if current logged-in user has permission to manage (edit/reset/delete/toggle)
+   * the target user.
    */
   const canManageUser = (target: UserRecord): boolean => {
     if (!target) return false
     if (isAdmin) return true
-    if (userRole === 'gestor') return target.role !== 'admin'
+    if (isGestor) {
+      // Gestor NEVER manages an admin
+      return target.role !== 'admin'
+    }
     return false
   }
 
   const generateSecurePassword = (length = 12) => {
     const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*+='
     let password = ''
-    // Ensure at least 1 lowercase, 1 uppercase, 1 number, 1 symbol
     password += 'abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 26)]
     password += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[Math.floor(Math.random() * 26)]
     password += '0123456789'[Math.floor(Math.random() * 10)]
@@ -248,383 +245,13 @@ export function SettingsPage() {
       const randomIndex = Math.floor(Math.random() * charset.length)
       password += charset[randomIndex]
     }
-    // Shuffle
     return password
       .split('')
       .sort(() => 0.5 - Math.random())
       .join('')
   }
 
-  const loadAll = async () => {
-=======
-  // Edit User modal state
-  const [editUserModalOpen, setEditUserModalOpen] = useState(false)
-  const [editingUser, setEditingUser] = useState<UserRecord | null>(null)
-  const [editUserData, setEditUserData] = useState({
-    name: '',
-    email: '',
-    role: 'user' as 'admin' | 'manager' | 'user',
-    team: '',
-  })
-  const [isSavingEdit, setIsSavingEdit] = useState(false)
-
-  // Role-based hierarchy:
-  //   admin  → can manage any user (incl. other admins), except self
-  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
-  //            and user/advogado), except self
-  //   advogado → never reaches this page (RequireRole blocks it), but keep
-  //            a safe fallback.
-  const isAdmin = userRole === 'admin'
-
-  /**
-   * Whether the current user is allowed to perform management actions
-   * (reset password / delete / toggle active / edit) on `target`.
-   * Admins: anyone but self. Gestor: only non-admin users (and not self,
-   * but self-handling stays in each handler for a clearer toast).
-   */
-  const canManageUser = (target: UserRecord): boolean => {
-    if (!target) return false
-    if (isAdmin) return true
-    if (userRole === 'gestor') return target.role !== 'admin'
-    return false
-  }
-
-  const generateSecurePassword = (length = 12) => {
-    const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*+='
-    let password = ''
-    // Ensure at least 1 lowercase, 1 uppercase, 1 number, 1 symbol
-    password += 'abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 26)]
-    password += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[Math.floor(Math.random() * 26)]
-    password += '0123456789'[Math.floor(Math.random() * 10)]
-    password += '!@#$%&*+='[Math.floor(Math.random() * 9)]
-    for (let i = 4; i < length; i++) {
-      const randomIndex = Math.floor(Math.random() * charset.length)
-      password += charset[randomIndex]
-    }
-    // Shuffle
-    return password
-      .split('')
-      .sort(() => 0.5 - Math.random())
-      .join('')
-  }
-
-  const loadAll = async () => {
-=======
-=======
-=======
-=======
-  const isAdmin = userRole === 'admin'
-
-  /**
-=======
-  // Reset Password Confirmation
-  const [resetPasswordModalOpen, setResetPasswordModalOpen] = useState(false)
-  const [userToReset, setUserToReset] = useState<UserRecord | null>(null)
-  const [isResettingPassword, setIsResettingPassword] = useState(false)
-  // Reset password mode: 'random' (default) or 'custom'
-  const [resetPasswordMode, setResetPasswordMode] = useState<'random' | 'custom'>('random')
-  const [resetNewPassword, setResetNewPassword] = useState('')
-  const [resetConfirmPassword, setResetConfirmPassword] = useState('')
-
-  // Toggle User Active Status state
-  const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
-
-  // Edit User modal state
-  const [editUserModalOpen, setEditUserModalOpen] = useState(false)
-  const [editingUser, setEditingUser] = useState<UserRecord | null>(null)
-  const [editUserData, setEditUserData] = useState({
-    name: '',
-    email: '',
-    role: 'user' as 'admin' | 'manager' | 'user',
-    team: '',
-  })
-  const [isSavingEdit, setIsSavingEdit] = useState(false)
-
-  // Role-based hierarchy:
-  //   admin  → can manage any user (incl. other admins), except self
-  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
-  //            and user/advogado), except self
-  //   advogado → never reaches this page (RequireRole blocks it), but keep
-  //            a safe fallback.
-  const isAdmin = userRole === 'admin'
-
-  /**
-   * Whether the current user is allowed to perform management actions
-   * (reset password / delete / toggle active / edit) on `target`.
-   * Admins: anyone but self. Gestor: only non-admin users (and not self,
-   * but self-handling stays in each handler for a clearer toast).
-   */
-  const canManageUser = (target: UserRecord): boolean => {
-    if (!target) return false
-    if (isAdmin) return true
-    if (userRole === 'gestor') return target.role !== 'admin'
-    return false
-  }
-
-  const generateSecurePassword = (length = 12) => {
-=======
-  // Role-based hierarchy:
-  //   admin  → can manage any user (incl. other admins), except self
-  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
-  //            and user/advogado), except self
-  //   advogado → never reaches this page (RequireRole blocks it), but keep
-  //            a safe fallback.
-  const isAdmin = userRole === 'admin'
-
-  /**
-   * Whether the current user is allowed to perform management actions
-   * (reset password / delete / toggle active / edit) on `target`.
-   * Admins: anyone but self. Gestor: only non-admin users (and not self,
-   * but self-handling stays in each handler for a clearer toast).
-   */
-  const canManageUser = (target: UserRecord): boolean => {
-    if (!target) return false
-    if (isAdmin) return true
-    if (userRole === 'gestor') return target.role !== 'admin'
-    return false
-  }
-
-  const generateSecurePassword = (length = 12) => {
-=======
-=======
-  const isAdmin = userRole === 'admin'
-
-  /**
-=======
-=======
-=======
-=======
-  const isAdmin = userRole === 'admin'
-
-  /**
-=======
-  // Reset Password Confirmation
-  const [resetPasswordModalOpen, setResetPasswordModalOpen] = useState(false)
-  const [userToReset, setUserToReset] = useState<UserRecord | null>(null)
-  const [isResettingPassword, setIsResettingPassword] = useState(false)
-  // Reset password mode: 'random' (default) or 'custom'
-  const [resetPasswordMode, setResetPasswordMode] = useState<'random' | 'custom'>('random')
-  const [resetNewPassword, setResetNewPassword] = useState('')
-  const [resetConfirmPassword, setResetConfirmPassword] = useState('')
-
-  // Toggle User Active Status state
-  const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
-
-  // Edit User modal state
-  const [editUserModalOpen, setEditUserModalOpen] = useState(false)
-  const [editingUser, setEditingUser] = useState<UserRecord | null>(null)
-  const [editUserData, setEditUserData] = useState({
-    name: '',
-    email: '',
-    role: 'user' as 'admin' | 'manager' | 'user',
-    team: '',
-  })
-  const [isSavingEdit, setIsSavingEdit] = useState(false)
-
-  // Role-based hierarchy:
-  //   admin  → can manage any user (incl. other admins), except self
-  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
-  //            and user/advogado), except self
-  //   advogado → never reaches this page (RequireRole blocks it), but keep
-  //            a safe fallback.
-  const isAdmin = userRole === 'admin'
-
-  /**
-   * Whether the current user is allowed to perform management actions
-   * (reset password / delete / toggle active / edit) on `target`.
-   * Admins: anyone but self. Gestor: only non-admin users (and not self,
-   * but self-handling stays in each handler for a clearer toast).
-   */
-  const canManageUser = (target: UserRecord): boolean => {
-    if (!target) return false
-    if (isAdmin) return true
-    if (userRole === 'gestor') return target.role !== 'admin'
-    return false
-  }
-
-  const generateSecurePassword = (length = 12) => {
-=======
-  const [isSavingEdit, setIsSavingEdit] = useState(false)
-
-  // Role-based hierarchy:
-  //   admin  → can manage any user (incl. other admins), except self
-  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
-  //            and user/advogado), except self
-  //   advogado → never reaches this page (RequireRole blocks it), but keep
-  //            a safe fallback.
-  const isAdmin = userRole === 'admin'
-
-  /**
-   * Whether the current user is allowed to perform management actions
-   * (reset password / delete / toggle active / edit) on `target`.
-   * Admins: anyone but self. Gestor: only non-admin users (and not self,
-   * but self-handling stays in each handler for a clearer toast).
-   */
-  const canManageUser = (target: UserRecord): boolean => {
-    if (!target) return false
-    if (isAdmin) return true
-    if (userRole === 'gestor') return target.role !== 'admin'
-    return false
-  }
-
-  const generateSecurePassword = (length = 12) => {
-=======
-  const isAdmin = userRole === 'admin'
-
-  /**
-=======
-=======
-=======
-=======
-  const isAdmin = userRole === 'admin'
-
-  /**
-=======
-  // Reset Password Confirmation
-  const [resetPasswordModalOpen, setResetPasswordModalOpen] = useState(false)
-  const [userToReset, setUserToReset] = useState<UserRecord | null>(null)
-  const [isResettingPassword, setIsResettingPassword] = useState(false)
-  // Reset password mode: 'random' (default) or 'custom'
-  const [resetPasswordMode, setResetPasswordMode] = useState<'random' | 'custom'>('random')
-  const [resetNewPassword, setResetNewPassword] = useState('')
-  const [resetConfirmPassword, setResetConfirmPassword] = useState('')
-
-  // Toggle User Active Status state
-  const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
-
-  // Edit User modal state
-  const [editUserModalOpen, setEditUserModalOpen] = useState(false)
-  const [editingUser, setEditingUser] = useState<UserRecord | null>(null)
-  const [editUserData, setEditUserData] = useState({
-    name: '',
-    email: '',
-    role: 'user' as 'admin' | 'manager' | 'user',
-    team: '',
-  })
-  const [isSavingEdit, setIsSavingEdit] = useState(false)
-
-  // Role-based hierarchy:
-  //   admin  → can manage any user (incl. other admins), except self
-  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
-  //            and user/advogado), except self
-  //   advogado → never reaches this page (RequireRole blocks it), but keep
-  //            a safe fallback.
-  const isAdmin = userRole === 'admin'
-
-  /**
-   * Whether the current user is allowed to perform management actions
-   * (reset password / delete / toggle active / edit) on `target`.
-   * Admins: anyone but self. Gestor: only non-admin users (and not self,
-   * but self-handling stays in each handler for a clearer toast).
-   */
-  const canManageUser = (target: UserRecord): boolean => {
-    if (!target) return false
-    if (isAdmin) return true
-    if (userRole === 'gestor') return target.role !== 'admin'
-    return false
-  }
-
-  const generateSecurePassword = (length = 12) => {
-=======
-  // Role-based hierarchy:
-  //   admin  → can manage any user (incl. other admins), except self
-  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
-  //            and user/advogado), except self
-  //   advogado → never reaches this page (RequireRole blocks it), but keep
-  //            a safe fallback.
-  const isAdmin = userRole === 'admin'
-
-  /**
-   * Whether the current user is allowed to perform management actions
-   * (reset password / delete / toggle active / edit) on `target`.
-   * Admins: anyone but self. Gestor: only non-admin users (and not self,
-   * but self-handling stays in each handler for a clearer toast).
-   */
-  const canManageUser = (target: UserRecord): boolean => {
-    if (!target) return false
-    if (isAdmin) return true
-    if (userRole === 'gestor') return target.role !== 'admin'
-    return false
-  }
-
-  const generateSecurePassword = (length = 12) => {
-=======
-=======
-  const isAdmin = userRole === 'admin'
-
-  /**
-=======
-=======
-=======
-=======
-  const isAdmin = userRole === 'admin'
-
-  /**
-=======
-  // Reset Password Confirmation
-  const [resetPasswordModalOpen, setResetPasswordModalOpen] = useState(false)
-  const [userToReset, setUserToReset] = useState<UserRecord | null>(null)
-  const [isResettingPassword, setIsResettingPassword] = useState(false)
-  // Reset password mode: 'random' (default) or 'custom'
-  const [resetPasswordMode, setResetPasswordMode] = useState<'random' | 'custom'>('random')
-  const [resetNewPassword, setResetNewPassword] = useState('')
-  const [resetConfirmPassword, setResetConfirmPassword] = useState('')
-
-  // Toggle User Active Status state
-  const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
-
-  // Edit User modal state
-  const [editUserModalOpen, setEditUserModalOpen] = useState(false)
-  const [editingUser, setEditingUser] = useState<UserRecord | null>(null)
-  const [editUserData, setEditUserData] = useState({
-    name: '',
-    email: '',
-    role: 'user' as 'admin' | 'manager' | 'user',
-    team: '',
-  })
-  const [isSavingEdit, setIsSavingEdit] = useState(false)
-
-  // Role-based hierarchy:
-  //   admin  → can manage any user (incl. other admins), except self
-  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
-  //            and user/advogado), except self
-  //   advogado → never reaches this page (RequireRole blocks it), but keep
-  //            a safe fallback.
-  const isAdmin = userRole === 'admin'
-
-  /**
-   * Whether the current user is allowed to perform management actions
-   * (reset password / delete / toggle active / edit) on `target`.
-   * Admins: anyone but self. Gestor: only non-admin users (and not self,
-   * but self-handling stays in each handler for a clearer toast).
-   */
-  const canManageUser = (target: UserRecord): boolean => {
-    if (!target) return false
-    if (isAdmin) return true
-    if (userRole === 'gestor') return target.role !== 'admin'
-    return false
-  }
-
-  const generateSecurePassword = (length = 12) => {
-    const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*+='
-    let password = ''
-    // Ensure at least 1 lowercase, 1 uppercase, 1 number, 1 symbol
-    password += 'abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 26)]
-    password += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[Math.floor(Math.random() * 26)]
-    password += '0123456789'[Math.floor(Math.random() * 10)]
-    password += '!@#$%&*+='[Math.floor(Math.random() * 9)]
-    for (let i = 4; i < length; i++) {
-      const randomIndex = Math.floor(Math.random() * charset.length)
-      password += charset[randomIndex]
-    }
-    // Shuffle
-    return password
-      .split('')
-      .sort(() => 0.5 - Math.random())
-      .join('')
-  }
-
-  const loadAll = async () => {
+  const loadAll = useCallback(async () => {
     if (!tenant?.id) return
     setLoading(true)
     try {
@@ -636,10 +263,19 @@ export function SettingsPage() {
           CrmService.getCustomFields(tenant.id),
           CrmService.getTemplates(tenant.id),
           CrmService.getSlaConfigs(tenant.id),
-          CrmService.getUsers(tenant.id),
+          // Direct users query for the tenant as per spec:
+          // pb.collection('users').getFullList({ filter: 'tenant_id = "${tenantId}"' })
+          pb
+            .collection('users')
+            .getFullList<UserRecord>({
+              filter: `tenant_id = "${tenant.id}"`,
+              sort: 'name',
+            })
+            .catch(() => CrmService.getUsers(tenant.id)),
           CrmService.getLeadDistributionConfig(tenant.id),
           CrmService.getRecentLeadDistributions(tenant.id, 20),
         ])
+
       setServices(sList)
       setTags(tList)
       setMessageTemplates(msgTmpList)
@@ -663,19 +299,22 @@ export function SettingsPage() {
         )
         setSlaIsActive(primarySla.is_active !== false && primarySla.ativo !== false)
       }
+    } catch (err) {
+      console.error('Error loading settings data:', err)
     } finally {
       setLoading(false)
     }
-  }
+  }, [tenant?.id])
 
   useEffect(() => {
     loadAll()
-  }, [tenant?.id])
+  }, [loadAll])
 
   const handleSaveOffice = async () => {
     if (!tenant?.id) return
     try {
       await TenantService.updateTenantSettings(tenant.id, {
+        name: officeName,
         meta_pixel_id: metaPixelId,
         settings: {
           ...tenant.settings,
@@ -685,13 +324,18 @@ export function SettingsPage() {
         },
       })
       await CrmService.logAudit(tenant.id, 'update_settings', 'tenant', tenant.id, null, {
+        officeName,
         metaPixelId,
         oabRegistro,
       })
       toast({ title: 'Configurações do escritório salvas com sucesso!' })
       refreshTenant()
-    } catch (e) {
-      toast({ title: 'Erro ao salvar configurações', variant: 'destructive' })
+    } catch (e: any) {
+      toast({
+        title: 'Erro ao salvar configurações',
+        description: e?.message,
+        variant: 'destructive',
+      })
     }
   }
 
@@ -702,9 +346,15 @@ export function SettingsPage() {
       await CrmService.createService(tenant.id, newService)
       toast({ title: 'Serviço jurídico cadastrado!' })
       setServiceModalOpen(false)
+      setNewService({
+        nome: '',
+        area: 'Direito Tributário',
+        valor_padrao: 15000,
+        categoria: 'Consultoria',
+      })
       loadAll()
-    } catch (e) {
-      toast({ title: 'Erro ao cadastrar serviço', variant: 'destructive' })
+    } catch (e: any) {
+      toast({ title: 'Erro ao cadastrar serviço', description: e?.message, variant: 'destructive' })
     }
   }
 
@@ -850,12 +500,26 @@ export function SettingsPage() {
     }
   }
 
-  // --- USER MANAGEMENT HANDLERS ---
+  // ==========================================
+  // USER MANAGEMENT ACTIONS
+  // ==========================================
+
+  // 1. Create user
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!tenant?.id) return
     if (!newUser.name.trim() || !newUser.email.trim()) {
       toast({ title: 'Preencha nome e e-mail do usuário', variant: 'destructive' })
+      return
+    }
+
+    // Hierarchy check: Gestor cannot create an Admin user
+    if (isGestor && newUser.role === 'admin') {
+      toast({
+        title: 'Ação não permitida',
+        description: 'Gestores só podem cadastrar usuários com perfil Gestor ou Advogado/Usuário.',
+        variant: 'destructive',
+      })
       return
     }
 
@@ -869,6 +533,7 @@ export function SettingsPage() {
         password: tempPassword,
         passwordConfirm: tempPassword,
         role: newUser.role,
+        team: newUser.team || undefined,
         active: true,
         status: 'active',
         tenant_id: tenant.id,
@@ -879,6 +544,7 @@ export function SettingsPage() {
         name: createdUser.name,
         email: createdUser.email,
         role: createdUser.role,
+        team: createdUser.team,
       })
 
       toast({
@@ -887,9 +553,9 @@ export function SettingsPage() {
       })
 
       setCreateUserModalOpen(false)
-      setNewUser({ name: '', email: '', role: 'user' })
+      setNewUser({ name: '', email: '', role: 'user', team: '' })
 
-      // Show temporary password modal
+      // Show temporary password modal once with copy button
       setPasswordModalData({
         userEmail: createdUser.email,
         userName: createdUser.name,
@@ -916,6 +582,104 @@ export function SettingsPage() {
     }
   }
 
+  // 2. Edit user
+  const handleOpenEditUser = (u: UserRecord) => {
+    if (!canManageUser(u)) {
+      toast({
+        title: 'Ação não permitida',
+        description: 'Gestores não possuem permissão para editar usuários administradores.',
+        variant: 'destructive',
+      })
+      return
+    }
+    setEditingUser(u)
+    setEditUserData({
+      name: u.name || '',
+      email: u.email || '',
+      role: (u.role as 'admin' | 'manager' | 'user') || 'user',
+      team: (u.team as string) || '',
+    })
+    setEditUserModalOpen(true)
+  }
+
+  const handleSaveEditUser = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!tenant?.id || !editingUser) return
+
+    // Hierarchy check: Gestor cannot edit an admin
+    if (!canManageUser(editingUser)) {
+      toast({
+        title: 'Ação não permitida',
+        description: 'Você não possui permissão para editar um administrador.',
+        variant: 'destructive',
+      })
+      setEditUserModalOpen(false)
+      return
+    }
+
+    // Gestor cannot promote anyone to Admin
+    if (isGestor && editUserData.role === 'admin' && editingUser.role !== 'admin') {
+      toast({
+        title: 'Ação não permitida',
+        description: 'Apenas Administradores podem conceder o perfil de Administrador.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (!editUserData.name.trim() || !editUserData.email.trim()) {
+      toast({ title: 'Preencha nome e e-mail', variant: 'destructive' })
+      return
+    }
+
+    setIsSavingEdit(true)
+    try {
+      const updatePayload: Record<string, any> = {
+        name: editUserData.name.trim(),
+        email: editUserData.email.trim().toLowerCase(),
+        team: editUserData.team || '',
+      }
+
+      // Only admins or valid hierarchy roles can change role
+      if (isAdmin) {
+        updatePayload.role = editUserData.role
+      } else if (isGestor && editUserData.role !== 'admin') {
+        updatePayload.role = editUserData.role
+      }
+
+      const updated = await pb.collection('users').update<UserRecord>(editingUser.id, updatePayload)
+
+      await CrmService.logAudit(tenant.id, 'update_user', 'user', editingUser.id, editingUser, {
+        name: updated.name,
+        email: updated.email,
+        role: updated.role,
+        team: updated.team,
+      })
+
+      toast({
+        title: 'Usuário atualizado com sucesso!',
+        description: `Os dados de ${updated.name} foram atualizados.`,
+      })
+
+      setUsers((prev) => prev.map((u) => (u.id === editingUser.id ? { ...u, ...updated } : u)))
+
+      setEditUserModalOpen(false)
+      setEditingUser(null)
+    } catch (err: any) {
+      console.error('Error editing user:', err)
+      const errorMsg =
+        err?.data?.data?.email?.message || err?.message || 'Não foi possível atualizar o usuário.'
+      toast({
+        title: 'Erro ao atualizar usuário',
+        description: errorMsg,
+        variant: 'destructive',
+      })
+    } finally {
+      setIsSavingEdit(false)
+    }
+  }
+
+  // 3. Toggle Active / Inactive
   const handleToggleUserActive = async (targetUser: UserRecord, currentActive: boolean) => {
     if (!tenant?.id) return
 
@@ -923,7 +687,17 @@ export function SettingsPage() {
     if (targetUser.id === user?.id) {
       toast({
         title: 'Ação não permitida',
-        description: 'Você não pode desativar seu próprio usuário de administrador.',
+        description: 'Você não pode desativar seu próprio usuário logado.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    // Hierarchy check: Gestor cannot deactivate an admin
+    if (!canManageUser(targetUser)) {
+      toast({
+        title: 'Ação não permitida',
+        description: 'Gestores não podem desativar usuários com papel Administrador.',
         variant: 'destructive',
       })
       return
@@ -970,15 +744,31 @@ export function SettingsPage() {
     }
   }
 
+  // 4. Reset Password (with Random vs Custom typed password)
+  const handleOpenResetPassword = (u: UserRecord) => {
+    if (!canManageUser(u)) {
+      toast({
+        title: 'Ação não permitida',
+        description: 'Gestores não podem redefinir a senha de administradores.',
+        variant: 'destructive',
+      })
+      return
+    }
+    setUserToReset(u)
+    setResetPasswordMode('random')
+    setResetNewPassword('')
+    setResetConfirmPassword('')
+    setShowResetCustomPassword(false)
+    setResetPasswordModalOpen(true)
+  }
+
   const handleResetPassword = async () => {
     if (!tenant?.id || !userToReset) return
 
-    // Defense-in-depth: never allow resetting an admin's password from a
-    // gestor session, even if the dialog was somehow opened.
     if (!canManageUser(userToReset)) {
       toast({
         title: 'Ação não permitida',
-        description: 'Você não pode redefinir a senha de um administrador.',
+        description: 'Você não possui permissão para redefinir a senha deste usuário.',
         variant: 'destructive',
       })
       setResetPasswordModalOpen(false)
@@ -986,7 +776,7 @@ export function SettingsPage() {
       return
     }
 
-    let newPassword = ''
+    let finalPassword = ''
 
     if (resetPasswordMode === 'custom') {
       if (!resetNewPassword || resetNewPassword.length < 8) {
@@ -1000,22 +790,21 @@ export function SettingsPage() {
       if (resetNewPassword !== resetConfirmPassword) {
         toast({
           title: 'As senhas não conferem',
-          description: 'Confirme a nova senha digitando-a novamente.',
+          description: 'A confirmação de senha precisa ser idêntica à nova senha.',
           variant: 'destructive',
         })
         return
       }
-      newPassword = resetNewPassword
+      finalPassword = resetNewPassword
     } else {
-      newPassword = generateSecurePassword(12)
+      finalPassword = generateSecurePassword(12)
     }
 
     setIsResettingPassword(true)
-
     try {
       await pb.collection('users').update(userToReset.id, {
-        password: newPassword,
-        passwordConfirm: newPassword,
+        password: finalPassword,
+        passwordConfirm: finalPassword,
       })
 
       await CrmService.logAudit(tenant.id, 'reset_password_user', 'user', userToReset.id, null, {
@@ -1027,24 +816,24 @@ export function SettingsPage() {
         title: 'Senha redefinida com sucesso!',
         description:
           resetPasswordMode === 'custom'
-            ? `Senha personalizada definida para ${userToReset.name}.`
+            ? `Senha personalizada definida com sucesso para ${userToReset.name}.`
             : `Nova senha aleatória gerada para ${userToReset.name}.`,
       })
 
       setResetPasswordModalOpen(false)
 
-      // Only reveal the generated password when it was randomly generated;
-      // a custom password is already known to the gestor/admin.
+      // Show temporary password modal if randomly generated
       if (resetPasswordMode === 'random') {
         setPasswordModalData({
           userEmail: userToReset.email,
           userName: userToReset.name,
-          password: newPassword,
+          password: finalPassword,
           isReset: true,
         })
         setCopiedPassword(false)
         setPasswordModalOpen(true)
       }
+
       setUserToReset(null)
       setResetPasswordMode('random')
       setResetNewPassword('')
@@ -1053,7 +842,7 @@ export function SettingsPage() {
       console.error('Error resetting password:', err)
       toast({
         title: 'Erro ao redefinir senha',
-        description: err?.message || 'Falha ao atualizar a senha do usuário.',
+        description: err?.message || 'Falha ao atualizar a senha no servidor.',
         variant: 'destructive',
       })
     } finally {
@@ -1061,77 +850,46 @@ export function SettingsPage() {
     }
   }
 
-  const handleSaveEditUser = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!tenant?.id || !editingUser) return
-
-    // Defense-in-depth: gestor cannot edit an admin.
-    if (!canManageUser(editingUser)) {
+  // 5. Delete User
+  const handleOpenDeleteUser = (u: UserRecord) => {
+    if (u.id === user?.id) {
       toast({
         title: 'Ação não permitida',
-        description: 'Você não pode editar um administrador.',
+        description: 'Você não pode excluir sua própria conta.',
         variant: 'destructive',
       })
-      setEditUserModalOpen(false)
       return
     }
-
-    if (!editUserData.name.trim() || !editUserData.email.trim()) {
-      toast({ title: 'Preencha nome e e-mail', variant: 'destructive' })
-      return
-    }
-
-    setIsSavingEdit(true)
-    try {
-      const updated = await pb.collection('users').update<UserRecord>(editingUser.id, {
-        name: editUserData.name.trim(),
-        email: editUserData.email.trim().toLowerCase(),
-        role: editUserData.role,
-        team: editUserData.team || '',
-      })
-
-      await CrmService.logAudit(tenant.id, 'update_user', 'user', editingUser.id, null, {
-        name: updated.name,
-        email: updated.email,
-        role: updated.role,
-        team: updated.team,
-      })
-
+    if (!canManageUser(u)) {
       toast({
-        title: 'Usuário atualizado com sucesso!',
-        description: `Dados de ${updated.name} foram salvos.`,
-      })
-
-      setUsers((prev) =>
-        prev.map((u) => (u.id === editingUser.id ? { ...u, ...updated } : u)),
-      )
-
-      setEditUserModalOpen(false)
-      setEditingUser(null)
-    } catch (err: any) {
-      console.error('Error editing user:', err)
-      const errorMsg =
-        err?.data?.data?.email?.message ||
-        err?.message ||
-        'Não foi possível atualizar o usuário.'
-      toast({
-        title: 'Erro ao atualizar usuário',
-        description: errorMsg,
+        title: 'Ação não permitida',
+        description: 'Gestores não podem excluir administradores do sistema.',
         variant: 'destructive',
       })
-    } finally {
-      setIsSavingEdit(false)
+      return
     }
+    setUserToDelete(u)
+    setDeleteUserModalOpen(true)
   }
 
   const handleDeleteUser = async () => {
     if (!tenant?.id || !userToDelete) return
 
-    // Prevent deleting oneself
     if (userToDelete.id === user?.id) {
       toast({
         title: 'Ação não permitida',
-        description: 'Você não pode excluir sua própria conta de administrador.',
+        description: 'Você não pode excluir sua própria conta.',
+        variant: 'destructive',
+      })
+      setDeleteUserModalOpen(false)
+      setUserToDelete(null)
+      return
+    }
+
+    if (!canManageUser(userToDelete)) {
+      toast({
+        title: 'Ação não permitida',
+        description: 'Você não possui permissão para excluir este usuário.',
         variant: 'destructive',
       })
       setDeleteUserModalOpen(false)
@@ -1252,33 +1010,49 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold font-legal-serif">Configurações do Escritório</h1>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          Gestão multi-tenant, equipes jurídicas, catálogo de serviços, distribuição de leads, SLAs
-          e auditoria.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold font-legal-serif flex items-center gap-2">
+            <SettingsIcon className="h-6 w-6 text-amber-500" />
+            Configurações do Escritório
+          </h1>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Gestão multi-tenant, controle de equipe jurídica, distribuição de leads, catálogo de
+            serviços e SLAs.
+          </p>
+        </div>
+        <Link to="/meu-perfil">
+          <Button variant="outline" size="sm" className="text-xs gap-1.5 h-8">
+            <UserCheck className="h-3.5 w-3.5 text-primary" /> Ir para Meu Perfil
+          </Button>
+        </Link>
       </div>
 
-      <Tabs defaultValue="empresa" className="w-full">
+      <Tabs defaultValue="usuarios" className="w-full">
         <TabsList className="w-full justify-start border-b rounded-none p-0 h-10 bg-transparent gap-4 overflow-x-auto">
           <TabsTrigger
-            value="empresa"
-            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 whitespace-nowrap"
+            value="usuarios"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 flex items-center gap-1.5 whitespace-nowrap"
           >
-            Escritório &amp; Pixel
+            <Users className="h-3.5 w-3.5" /> Equipe &amp; Usuários ({users.length})
+          </TabsTrigger>
+          <TabsTrigger
+            value="empresa"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 flex items-center gap-1.5 whitespace-nowrap"
+          >
+            <Building className="h-3.5 w-3.5" /> Escritório &amp; Pixel
           </TabsTrigger>
           <TabsTrigger
             value="distribuicao"
-            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 whitespace-nowrap"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 flex items-center gap-1.5 whitespace-nowrap"
           >
-            Distribuição de Leads
+            <Users className="h-3.5 w-3.5" /> Distribuição de Leads
           </TabsTrigger>
           <TabsTrigger
             value="sla"
-            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 whitespace-nowrap"
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 flex items-center gap-1.5 whitespace-nowrap"
           >
-            SLA de Atendimento
+            <Clock className="h-3.5 w-3.5" /> SLA de Atendimento
           </TabsTrigger>
           <TabsTrigger
             value="conhecimento"
@@ -1291,12 +1065,6 @@ export function SettingsPage() {
             className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 whitespace-nowrap"
           >
             Serviços Jurídicos ({services.length})
-          </TabsTrigger>
-          <TabsTrigger
-            value="usuarios"
-            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 whitespace-nowrap"
-          >
-            Equipe &amp; Usuários ({users.length})
           </TabsTrigger>
           <TabsTrigger
             value="message_templates"
@@ -1318,41 +1086,269 @@ export function SettingsPage() {
           </TabsTrigger>
         </TabsList>
 
-        {/* TAB BASE DE CONHECIMENTO (LINK/PREVIEW) */}
-        <TabsContent value="conhecimento" className="pt-4 space-y-4">
-          <div className="bg-card border rounded-xl p-5 shadow-xs space-y-4 max-w-3xl">
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-1">
-                <h3 className="font-bold text-sm flex items-center gap-2">
-                  <BookOpen className="h-4 w-4 text-amber-500" />
-                  Base de Conhecimento do Assistente IA
-                </h3>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  Gerencie o repositório de teses jurídicas, alçadas de desconto de honorários e
-                  procedimentos que instruem o Assistente IA do escritório.
-                </p>
-              </div>
-              <Link to="/base-conhecimento">
-                <Button className="bg-[#0A1F3F] text-white text-xs gap-1.5 shrink-0">
-                  <Sparkles className="h-3.5 w-3.5 text-amber-300" /> Abrir Editor Completo
-                </Button>
-              </Link>
-            </div>
-
-            <div className="p-4 bg-muted/30 rounded-lg border text-xs space-y-2">
-              <div className="font-semibold text-foreground flex items-center gap-2">
-                <Shield className="h-4 w-4 text-emerald-500" /> Controle de Permissões
-              </div>
-              <p className="text-muted-foreground text-[11px] leading-relaxed">
-                Apenas <strong>Administradores</strong> e <strong>Gestores</strong> possuem
-                permissão para atualizar o conteúdo da Base de Conhecimento. Usuários padrão possuem
-                acesso de leitura e usam o conhecimento através do Assistente IA nos leads.
+        {/* TAB 1: EQUIPE & USUÁRIOS (FASE E CORE FOCUS) */}
+        <TabsContent value="usuarios" className="pt-4 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="font-bold text-sm text-foreground font-legal-serif flex items-center gap-2">
+                <Users className="h-4 w-4 text-primary" />
+                Gestão de Equipe e Controle de Acesso
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Gerencie todos os membros do tenant, seus papéis, equipes, senhas e status de
+                ativação.
               </p>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => {
+                setNewUser({ name: '', email: '', role: 'user', team: '' })
+                setCreateUserModalOpen(true)
+              }}
+              className="h-8 text-xs bg-[#0A1F3F] hover:bg-[#0A1F3F]/90 text-white gap-1.5 shadow-xs shrink-0"
+            >
+              <UserPlus className="h-3.5 w-3.5" /> Adicionar Novo Usuário
+            </Button>
+          </div>
+
+          {/* Active Logged-in User Context Card */}
+          {user && (
+            <div className="bg-[#0A1F3F] text-white p-4 rounded-xl border border-[#152e59] flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-gradient-to-br from-amber-500 to-amber-700 text-slate-950 font-bold flex items-center justify-center text-sm ring-2 ring-amber-400/30 shrink-0">
+                  {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                </div>
+                <div>
+                  <div className="font-bold text-sm text-slate-100 flex items-center gap-2">
+                    {user.name}
+                    <Badge className="bg-amber-400/20 text-amber-300 border-amber-400/30 text-[10px]">
+                      Sua Sessão Ativa (
+                      {user.role === 'admin'
+                        ? 'Administrador'
+                        : user.role === 'manager'
+                          ? 'Gestor'
+                          : 'Advogado/Usuário'}
+                      )
+                    </Badge>
+                  </div>
+                  <div className="text-xs text-slate-300">{user.email}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Link to="/meu-perfil">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs h-8 border-slate-600 text-slate-200 hover:bg-slate-800"
+                  >
+                    Editar Meu Perfil
+                  </Button>
+                </Link>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => {
+                    logout()
+                    window.location.assign('/login')
+                  }}
+                  className="text-xs h-8 bg-red-600/80 hover:bg-red-700"
+                >
+                  Encerrar Sessão
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Hierarchy information alert */}
+          <Alert className="border-blue-500/30 bg-blue-500/5 text-blue-950 dark:text-blue-200">
+            <Shield className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            <AlertTitle className="text-xs font-bold text-blue-900 dark:text-blue-300">
+              Regras de Hierarquia e Permissões
+            </AlertTitle>
+            <AlertDescription className="text-[11px] text-blue-800/90 dark:text-blue-300/80 mt-0.5 leading-relaxed">
+              <strong>Administradores:</strong> Podem criar, editar, resetar senhas e excluir
+              qualquer usuário.
+              <br />
+              <strong>Gestores:</strong> Podem criar e gerenciar usuários com papel de Gestor ou
+              Advogado. Gestores <strong>nunca</strong> podem editar, desativar, resetar senha ou
+              excluir um usuário com papel de Administrador.
+            </AlertDescription>
+          </Alert>
+
+          {/* Users Table */}
+          <div className="bg-card border rounded-xl overflow-hidden shadow-xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-muted/50 uppercase text-[11px] font-semibold border-b text-muted-foreground">
+                  <tr>
+                    <th className="p-3 pl-4">Nome</th>
+                    <th className="p-3">E-mail</th>
+                    <th className="p-3">Papel / Role</th>
+                    <th className="p-3">Equipe</th>
+                    <th className="p-3">Data de Criação</th>
+                    <th className="p-3 text-center">Status</th>
+                    <th className="p-3 pr-4 text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {loading ? (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                        Carregando usuários do tenant...
+                      </td>
+                    </tr>
+                  ) : users.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                        Nenhum usuário cadastrado neste escritório.
+                      </td>
+                    </tr>
+                  ) : (
+                    users.map((u) => {
+                      const isUserActive = u.active !== false && u.status !== 'inactive'
+                      const isSelf = u.id === user?.id
+                      const canManage = canManageUser(u)
+                      const isTargetAdmin = u.role === 'admin'
+
+                      return (
+                        <tr
+                          key={u.id}
+                          className={`hover:bg-muted/30 transition-colors ${
+                            isSelf ? 'bg-primary/5 font-medium' : ''
+                          } ${!isUserActive ? 'opacity-70 bg-muted/20' : ''}`}
+                        >
+                          <td className="p-3 pl-4">
+                            <div className="font-semibold text-foreground flex items-center gap-1.5">
+                              {u.name}
+                              {isSelf && (
+                                <Badge variant="secondary" className="text-[10px] py-0 px-1.5">
+                                  Você
+                                </Badge>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-3 text-muted-foreground font-mono text-[11px]">
+                            {u.email}
+                          </td>
+                          <td className="p-3">
+                            <Badge
+                              variant="outline"
+                              className={`uppercase font-mono text-[10px] ${
+                                u.role === 'admin'
+                                  ? 'border-amber-500/50 text-amber-600 dark:text-amber-400 bg-amber-500/10'
+                                  : u.role === 'manager'
+                                    ? 'border-blue-500/50 text-blue-600 dark:text-blue-400 bg-blue-500/10'
+                                    : 'border-slate-500/30 text-muted-foreground'
+                              }`}
+                            >
+                              {u.role === 'admin'
+                                ? 'Admin'
+                                : u.role === 'manager'
+                                  ? 'Gestor'
+                                  : 'Advogado'}
+                            </Badge>
+                          </td>
+                          <td className="p-3 text-muted-foreground text-[11px]">
+                            {u.team
+                              ? u.team === 'comercial'
+                                ? 'Comercial'
+                                : u.team === 'juridico'
+                                  ? 'Jurídico'
+                                  : u.team === 'financeiro'
+                                    ? 'Financeiro'
+                                    : u.team
+                              : '—'}
+                          </td>
+                          <td className="p-3 text-muted-foreground text-[11px] whitespace-nowrap">
+                            {u.created ? new Date(u.created).toLocaleDateString('pt-BR') : '—'}
+                          </td>
+                          <td className="p-3 text-center">
+                            {canManage ? (
+                              <div className="flex items-center justify-center gap-2">
+                                <Switch
+                                  checked={isUserActive}
+                                  disabled={isSelf || togglingUserId === u.id}
+                                  onCheckedChange={() => handleToggleUserActive(u, isUserActive)}
+                                  aria-label="Ativar ou inativar usuário"
+                                />
+                                <span
+                                  className={`text-[11px] font-semibold ${
+                                    isUserActive
+                                      ? 'text-emerald-600 dark:text-emerald-400'
+                                      : 'text-rose-600 dark:text-rose-400'
+                                  }`}
+                                >
+                                  {isUserActive ? 'Ativo' : 'Inativo'}
+                                </span>
+                              </div>
+                            ) : (
+                              <Badge
+                                className={
+                                  isUserActive
+                                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                                    : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30'
+                                }
+                              >
+                                {isUserActive ? 'Ativo' : 'Inativo'}
+                              </Badge>
+                            )}
+                          </td>
+                          <td className="p-3 pr-4 text-right">
+                            {canManage ? (
+                              <div className="flex items-center justify-end gap-1.5">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleOpenEditUser(u)}
+                                  title="Editar usuário"
+                                  className="h-7 text-xs px-2 gap-1"
+                                >
+                                  <Edit2 className="h-3 w-3" />
+                                  <span className="hidden sm:inline">Editar</span>
+                                </Button>
+
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleOpenResetPassword(u)}
+                                  title="Resetar senha"
+                                  className="h-7 text-xs px-2 gap-1 text-amber-600 dark:text-amber-400 hover:text-amber-700"
+                                >
+                                  <KeyRound className="h-3 w-3" />
+                                  <span className="hidden sm:inline">Resetar Senha</span>
+                                </Button>
+
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={isSelf}
+                                  onClick={() => handleOpenDeleteUser(u)}
+                                  title={
+                                    isSelf ? 'Você não pode excluir a si mesmo' : 'Excluir usuário'
+                                  }
+                                  className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-30"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <span className="text-[11px] text-muted-foreground italic flex items-center justify-end gap-1">
+                                <ShieldAlert className="h-3 w-3 text-amber-500" />
+                                Protegido (Admin)
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </TabsContent>
 
-        {/* TAB ESCRITORIO */}
+        {/* TAB 2: ESCRITORIO & PIXEL */}
         <TabsContent value="empresa" className="pt-4 space-y-4">
           <div className="bg-card border rounded-xl p-5 shadow-xs space-y-4 max-w-2xl">
             <h3 className="font-bold text-sm">Dados da Sociedade de Advogados</h3>
@@ -1387,6 +1383,7 @@ export function SettingsPage() {
                   value={metaPixelId}
                   onChange={(e) => setMetaPixelId(e.target.value)}
                   className="h-9 text-xs font-mono mt-1"
+                  placeholder="Ex: 948271038592014"
                 />
               </div>
               <Button
@@ -1399,7 +1396,215 @@ export function SettingsPage() {
           </div>
         </TabsContent>
 
-        {/* TAB SERVIÇOS */}
+        {/* TAB 3: DISTRIBUIÇÃO DE LEADS */}
+        <TabsContent value="distribuicao" className="pt-4 space-y-6">
+          <div className="bg-card border rounded-xl p-5 shadow-xs space-y-5 max-w-3xl">
+            <div>
+              <h3 className="font-bold text-sm flex items-center gap-2">
+                <Users className="h-4 w-4 text-primary" />
+                Distribuição Automática de Leads (Round-Robin)
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                Distribua novos leads criados automaticamente em fila circular (round-robin) entre
+                os advogados e atendentes ativos do escritório.
+              </p>
+            </div>
+
+            <div className="space-y-4 border rounded-lg p-4 bg-muted/20">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="text-xs font-semibold">Ativar Distribuição Automática</Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Quando ativo, novos leads sem responsável definido serão atribuídos
+                    automaticamente.
+                  </p>
+                </div>
+                <Switch
+                  checked={distributionEnabled}
+                  onCheckedChange={setDistributionEnabled}
+                  aria-label="Ativar distribuição automática"
+                />
+              </div>
+
+              <div className="space-y-1.5 pt-2">
+                <Label className="text-xs font-semibold">Método de Distribuição</Label>
+                <Select
+                  value={distributionMethod}
+                  onValueChange={(val: 'round_robin' | 'manual') => setDistributionMethod(val)}
+                  disabled={!distributionEnabled}
+                >
+                  <SelectTrigger className="h-9 text-xs max-w-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="round_robin">
+                      Round-Robin (Distribuição Equitativa Circular)
+                    </SelectItem>
+                    <SelectItem value="manual">Manual (Atribuição pelo Gestor)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <Button
+                size="sm"
+                onClick={handleSaveDistribution}
+                disabled={savingDistribution}
+                className="bg-[#0A1F3F] text-white text-xs gap-1.5 mt-2"
+              >
+                <Save className="h-3.5 w-3.5" />
+                {savingDistribution ? 'Salvando...' : 'Salvar Preferências de Distribuição'}
+              </Button>
+            </div>
+          </div>
+
+          <div className="bg-card border rounded-xl p-5 shadow-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-sm">Últimas Distribuições Registradas</h3>
+                <p className="text-xs text-muted-foreground">
+                  Registro em tempo real da alocação de leads.
+                </p>
+              </div>
+              <Badge variant="outline" className="text-xs">
+                {recentDistributions.length} distribuições recentes
+              </Badge>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-muted/50 uppercase text-[11px] font-semibold border-b text-muted-foreground">
+                  <tr>
+                    <th className="p-3 pl-4">Lead</th>
+                    <th className="p-3">Responsável Atribuído</th>
+                    <th className="p-3">Método</th>
+                    <th className="p-3 pr-4 text-right">Data / Hora</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {recentDistributions.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="p-6 text-center text-muted-foreground">
+                        Nenhuma distribuição automática registrada ainda.
+                      </td>
+                    </tr>
+                  ) : (
+                    recentDistributions.map((dist) => (
+                      <tr key={dist.id} className="hover:bg-muted/30 transition-colors">
+                        <td className="p-3 pl-4 font-semibold text-foreground">
+                          {dist.expand?.lead_id?.name || dist.lead_id || 'Lead Jurídico'}
+                        </td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-2 font-medium">
+                            <UserCheck className="h-3.5 w-3.5 text-emerald-500" />
+                            <span>{dist.expand?.user_id?.name || dist.user_id || 'Advogado'}</span>
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <Badge variant="outline" className="text-[10px] uppercase font-mono">
+                            {dist.distribution_method || dist.metodo || 'round_robin'}
+                          </Badge>
+                        </td>
+                        <td className="p-3 pr-4 text-right text-muted-foreground font-mono text-[11px]">
+                          {dist.created
+                            ? new Date(dist.created).toLocaleString('pt-BR', {
+                                dateStyle: 'short',
+                                timeStyle: 'short',
+                              })
+                            : '—'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* TAB 4: SLA */}
+        <TabsContent value="sla" className="pt-4 space-y-6">
+          <div className="bg-card border rounded-xl p-5 shadow-xs space-y-5 max-w-3xl">
+            <div>
+              <h3 className="font-bold text-sm flex items-center gap-2">
+                <Clock className="h-4 w-4 text-amber-500" />
+                SLA de Primeiro Atendimento (Tempo de Resposta)
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                Defina o tempo máximo tolerado para o primeiro contato com novos leads jurídicos.
+              </p>
+            </div>
+
+            <div className="space-y-4 border rounded-lg p-4 bg-muted/20">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="text-xs font-semibold">Monitoramento de SLA Ativo</Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Exibe alerta visual nos cards e linhas de leads com SLA violado.
+                  </p>
+                </div>
+                <Switch
+                  checked={slaIsActive}
+                  onCheckedChange={setSlaIsActive}
+                  aria-label="Ativar monitoramento de SLA"
+                />
+              </div>
+
+              <div className="space-y-1.5 pt-2">
+                <Label className="text-xs font-semibold">
+                  Tempo Máximo de Primeira Resposta (em minutos) *
+                </Label>
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={1440}
+                    value={slaFirstResponseMinutes}
+                    onChange={(e) => setSlaFirstResponseMinutes(Number(e.target.value))}
+                    className="h-9 text-xs w-36 font-mono"
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    minutos ({Math.round((slaFirstResponseMinutes / 60) * 10) / 10}h)
+                  </span>
+                </div>
+              </div>
+
+              <Button
+                size="sm"
+                onClick={handleSaveSlaConfig}
+                disabled={savingSla}
+                className="bg-[#0A1F3F] text-white text-xs gap-1.5 mt-2"
+              >
+                <Save className="h-3.5 w-3.5" />
+                {savingSla ? 'Salvando...' : 'Salvar Regra de SLA'}
+              </Button>
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* TAB 5: BASE DE CONHECIMENTO */}
+        <TabsContent value="conhecimento" className="pt-4 space-y-4">
+          <div className="bg-card border rounded-xl p-5 shadow-xs space-y-4 max-w-3xl">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <h3 className="font-bold text-sm flex items-center gap-2">
+                  <BookOpen className="h-4 w-4 text-amber-500" />
+                  Base de Conhecimento do Assistente IA
+                </h3>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Gerencie o repositório de teses jurídicas, alçadas de desconto de honorários e
+                  procedimentos que instruem o Assistente IA do escritório.
+                </p>
+              </div>
+              <Link to="/base-conhecimento">
+                <Button className="bg-[#0A1F3F] text-white text-xs gap-1.5 shrink-0">
+                  <Sparkles className="h-3.5 w-3.5 text-amber-300" /> Abrir Editor Completo
+                </Button>
+              </Link>
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* TAB 6: SERVIÇOS JURÍDICOS */}
         <TabsContent value="servicos" className="pt-4 space-y-4">
           <div className="flex justify-between items-center">
             <h3 className="font-bold text-sm">Catálogo de Serviços Jurídicos</h3>
@@ -1441,315 +1646,7 @@ export function SettingsPage() {
           </div>
         </TabsContent>
 
-        {/* TAB USUARIOS */}
-        <TabsContent value="usuarios" className="pt-4 space-y-4">
-          {/* Admin User Management Header & Actions */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <h3 className="font-bold text-sm text-foreground font-legal-serif">
-                Gestão de Equipe e Controle de Acesso
-              </h3>
-              <p className="text-xs text-muted-foreground">
-                Administre os membros do escritório, papéis, senhas e ativação de acessos ao CRM.
-                {!isAdmin && (
-                  <span className="mt-1 block text-amber-600 dark:text-amber-400">
-                    Como Gestor, você gerencia apenas usuários não-administradores (Gestores e
-                    Advogados). Administradores não podem ser editados, desativados ou removidos por
-                    você.
-                  </span>
-                )}
-              </p>
-            </div>
-            {isAdmin && (
-              <Button
-                size="sm"
-                onClick={() => setCreateUserModalOpen(true)}
-                className="h-8 text-xs bg-[#0A1F3F] hover:bg-[#0A1F3F]/90 text-white gap-1.5 shadow-xs"
-              >
-                <UserPlus className="h-3.5 w-3.5" /> Adicionar Novo Usuário
-              </Button>
-            )}
-          </div>
-
-          {/* Active Logged In User Card */}
-          {user && (
-            <div className="bg-[#0A1F3F] text-white p-4 rounded-xl border border-[#152e59] flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-full bg-amber-500 text-slate-950 font-bold flex items-center justify-center text-sm ring-2 ring-amber-400/30 shrink-0">
-                  {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
-                </div>
-                <div>
-                  <div className="font-bold text-sm text-slate-100 flex items-center gap-2">
-                    {user.name}
-                    <Badge className="bg-amber-400/20 text-amber-300 border-amber-400/30 text-[10px]">
-                      Sua Sessão Ativa (
-                      {user.role === 'admin'
-                        ? 'Administrador'
-                        : user.role === 'manager'
-                          ? 'Gestor'
-                          : 'Advogado/Usuário'}
-                      )
-                    </Badge>
-                  </div>
-                  <div className="text-xs text-slate-300">{user.email}</div>
-                </div>
-              </div>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={logout}
-                className="text-xs h-8 bg-red-600/80 hover:bg-red-700 w-fit"
-              >
-                Encerrar Sessão
-              </Button>
-            </div>
-          )}
-
-          {/* SMTP Alert Information for Admins */}
-          <Alert className="border-amber-500/30 bg-amber-500/5 text-amber-950 dark:text-amber-200">
-            <Server className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-            <AlertTitle className="text-xs font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
-              Configuração SMTP para Envio de E-mails e Redefinição de Senha
-            </AlertTitle>
-            <AlertDescription className="text-[11px] text-amber-700/90 dark:text-amber-300/80 mt-1 leading-relaxed">
-              O backend Skip Cloud utiliza envio seguro transacional. Para que a função de
-              recuperação automática de senha via e-mail (
-              <code className="font-mono bg-amber-500/10 px-1 py-0.5 rounded text-[10px]">
-                pb.collection('users').requestPasswordReset
-              </code>
-              ) e notificações funcionem em produção, certifique-se de configurar as seguintes
-              variáveis de ambiente no PocketBase:
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-1.5 mt-2 font-mono text-[10px] bg-background/60 p-2.5 rounded-md border border-amber-500/20 text-foreground">
-                <div>
-                  • <strong>SMTP_HOST:</strong> ex: smtp.gmail.com / smtp.office365.com
-                </div>
-                <div>
-                  • <strong>SMTP_PORT:</strong> 587 ou 465
-                </div>
-                <div>
-                  • <strong>SMTP_SECURITY:</strong> STARTTLS ou TLS
-                </div>
-                <div>
-                  • <strong>SMTP_USERNAME:</strong> seu-email@dominio.adv.br
-                </div>
-                <div>
-                  • <strong>SMTP_PASSWORD:</strong> sua-senha-de-app
-                </div>
-                <div>
-                  • <strong>SMTP_SENDER_NAME:</strong> Teixeira &amp; Nascimento
-                </div>
-              </div>
-              <p className="mt-1.5 text-[10px] text-muted-foreground">
-                <Info className="inline h-3 w-3 mr-1" />
-                Como administrador, você também pode resetar senhas instantaneamente através do
-                botão &quot;Resetar Senha&quot; na tabela abaixo, gerando uma credencial temporária
-                de uso único.
-              </p>
-            </AlertDescription>
-          </Alert>
-
-          {/* Users Table */}
-          <div className="bg-card border rounded-xl overflow-hidden shadow-xs">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-muted/50 uppercase text-[11px] font-semibold border-b text-muted-foreground">
-                  <tr>
-                    <th className="p-3 pl-4">Nome do Advogado/Usuário</th>
-                    <th className="p-3">E-mail</th>
-                    <th className="p-3">Papel / Perfil</th>
-                    <th className="p-3">Equipe</th>
-                    <th className="p-3">Data de Criação</th>
-                    <th className="p-3">Último Acesso</th>
-                    <th className="p-3 text-center">Status (Ativo)</th>
-                    <th className="p-3 pr-4 text-right">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {loading ? (
-                    <tr>
-                      <td
-                        colSpan={8}
-                        className="p-6 text-center text-muted-foreground"
-                      >
-                        Carregando usuários do escritório...
-                      </td>
-                    </tr>
-                  ) : users.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={8}
-                        className="p-6 text-center text-muted-foreground"
-                      >
-                        Nenhum usuário cadastrado.
-                      </td>
-                    </tr>
-                  ) : (
-                    users.map((u) => {
-                      const isUserActive = u.active !== false && u.status !== 'inactive'
-                      const isSelf = u.id === user?.id
-                      const canManage = canManageUser(u)
-
-                      return (
-                        <tr
-                          key={u.id}
-                          className={`hover:bg-muted/30 transition-colors ${
-                            isSelf ? 'bg-primary/5 font-medium' : ''
-                          } ${!isUserActive ? 'opacity-70 bg-muted/20' : ''}`}
-                        >
-                          <td className="p-3 pl-4">
-                            <div className="font-semibold text-foreground flex items-center gap-1.5">
-                              {u.name}
-                              {isSelf && (
-                                <Badge variant="secondary" className="text-[10px] py-0 px-1.5">
-                                  Você
-                                </Badge>
-                              )}
-                            </div>
-                          </td>
-                          <td className="p-3 text-muted-foreground font-mono text-[11px]">
-                            {u.email}
-                          </td>
-                          <td className="p-3">
-                            <Badge
-                              variant="outline"
-                              className={`uppercase font-mono text-[10px] ${
-                                u.role === 'admin'
-                                  ? 'border-amber-500/50 text-amber-600 dark:text-amber-400 bg-amber-500/10'
-                                  : u.role === 'manager'
-                                    ? 'border-blue-500/50 text-blue-600 dark:text-blue-400 bg-blue-500/10'
-                                    : 'border-slate-500/30 text-muted-foreground'
-                              }`}
-                            >
-                              {u.role === 'admin'
-                                ? 'Admin'
-                                : u.role === 'manager'
-                                  ? 'Gestor'
-                                  : 'Usuário'}
-                            </Badge>
-                          </td>
-                          <td className="p-3 text-muted-foreground text-[11px]">
-                            {u.team
-                              ? u.team === 'comercial'
-                                ? 'Comercial'
-                                : u.team === 'juridico'
-                                  ? 'Jurídico'
-                                  : u.team === 'financeiro'
-                                    ? 'Financeiro'
-                                    : u.team
-                              : '—'}
-                          </td>
-                          <td className="p-3 text-muted-foreground text-[11px] whitespace-nowrap">
-                            {u.created ? new Date(u.created).toLocaleDateString('pt-BR') : '—'}
-                          </td>
-                          <td className="p-3 text-muted-foreground text-[11px] whitespace-nowrap">
-                            {u.last_login
-                              ? new Date(u.last_login).toLocaleString('pt-BR', {
-                                  dateStyle: 'short',
-                                  timeStyle: 'short',
-                                })
-                              : 'Nunca acessou'}
-                          </td>
-                          <td className="p-3 text-center">
-                            {canManage ? (
-                              <div className="flex items-center justify-center gap-2">
-                                <Switch
-                                  checked={isUserActive}
-                                  disabled={isSelf || togglingUserId === u.id}
-                                  onCheckedChange={() => handleToggleUserActive(u, isUserActive)}
-                                  aria-label="Ativar ou inativar usuário"
-                                />
-                                <span
-                                  className={`text-[11px] font-semibold ${isUserActive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}
-                                >
-                                  {isUserActive ? 'Ativo' : 'Inativo'}
-                                </span>
-                              </div>
-                            ) : (
-                              <Badge
-                                className={
-                                  isUserActive
-                                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
-                                    : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30'
-                                }
-                              >
-                                {isUserActive ? 'Ativo' : 'Inativo'}
-                              </Badge>
-                            )}
-                          </td>
-
-                          <td className="p-3 pr-4 text-right">
-                            {canManage ? (
-                              <div className="flex items-center justify-end gap-1.5">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    setEditingUser(u)
-                                    setEditUserData({
-                                      name: u.name,
-                                      email: u.email,
-                                      role: (u.role as 'admin' | 'manager' | 'user') || 'user',
-                                      team: (u.team as string) || '',
-                                    })
-                                    setEditUserModalOpen(true)
-                                  }}
-                                  title="Editar usuário"
-                                  className="h-7 text-xs px-2 gap-1"
-                                >
-                                  <Edit2 className="h-3 w-3" />
-                                  <span className="hidden sm:inline">Editar</span>
-                                </Button>
-
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    setUserToReset(u)
-                                    setResetPasswordMode('random')
-                                    setResetNewPassword('')
-                                    setResetConfirmPassword('')
-                                    setResetPasswordModalOpen(true)
-                                  }}
-                                  title="Resetar senha"
-                                  className="h-7 text-xs px-2 gap-1"
-                                >
-                                  <KeyRound className="h-3 w-3 text-amber-500" />
-                                  <span className="hidden sm:inline">Resetar Senha</span>
-                                </Button>
-
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  disabled={isSelf}
-                                  onClick={() => {
-                                    setUserToDelete(u)
-                                    setDeleteUserModalOpen(true)
-                                  }}
-                                  title={
-                                    isSelf ? 'Você não pode excluir a si mesmo' : 'Excluir usuário'
-                                  }
-                                  className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-30"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            ) : (
-                              <span className="text-[10px] text-muted-foreground italic">
-                                Sem ação
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      )
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </TabsContent>
-
-        {/* TAB TEMPLATES DE MENSAGEM */}
+        {/* TAB 7: TEMPLATES DE MENSAGEM */}
         <TabsContent value="message_templates" className="pt-4 space-y-4">
           <div className="flex justify-between items-center">
             <div>
@@ -1758,8 +1655,7 @@ export function SettingsPage() {
                 Templates de Mensagem
               </h3>
               <p className="text-xs text-muted-foreground">
-                Modelos prontos de mensagens (abordagem, follow-up, propostas, etc.) para acelerar o
-                atendimento no chat.
+                Modelos prontos de mensagens para acelerar o atendimento.
               </p>
             </div>
             <Button
@@ -1858,7 +1754,7 @@ export function SettingsPage() {
           </div>
         </TabsContent>
 
-        {/* TAB CAMPOS PERSONALIZADOS */}
+        {/* TAB 8: CAMPOS PERSONALIZADOS */}
         <TabsContent value="custom_fields" className="pt-4 space-y-4">
           <div className="flex justify-between items-center">
             <div>
@@ -1867,7 +1763,7 @@ export function SettingsPage() {
                 Campos Personalizados do Tenant
               </h3>
               <p className="text-xs text-muted-foreground">
-                Crie atributos customizados para qualificar Leads, Clientes e Oportunidades.
+                Crie atributos customizados para Leads, Clientes e Oportunidades.
               </p>
             </div>
             <Button
@@ -1895,9 +1791,9 @@ export function SettingsPage() {
               <thead className="bg-muted/50 uppercase text-[11px] font-semibold border-b text-muted-foreground">
                 <tr>
                   <th className="p-3 pl-4">Nome do Campo</th>
-                  <th className="p-3">Entidade Alvo (Módulo)</th>
-                  <th className="p-3">Tipo de Dado</th>
-                  <th className="p-3">Opções (se seleção)</th>
+                  <th className="p-3">Módulo</th>
+                  <th className="p-3">Tipo</th>
+                  <th className="p-3">Opções</th>
                   <th className="p-3 text-center">Obrigatório</th>
                   <th className="p-3 pr-4 text-right">Ações</th>
                 </tr>
@@ -1991,7 +1887,7 @@ export function SettingsPage() {
           </div>
         </TabsContent>
 
-        {/* TAB TAGS */}
+        {/* TAB 9: TAGS */}
         <TabsContent value="tags" className="pt-4 space-y-4">
           <div className="flex justify-between items-center">
             <div>
@@ -2065,235 +1961,483 @@ export function SettingsPage() {
             ))}
           </div>
         </TabsContent>
+      </Tabs>
 
-        {/* TAB DISTRIBUIÇÃO DE LEADS */}
-        <TabsContent value="distribuicao" className="pt-4 space-y-6">
-          <div className="bg-card border rounded-xl p-5 shadow-xs space-y-5 max-w-3xl">
-            <div>
-              <h3 className="font-bold text-sm flex items-center gap-2">
-                <Users className="h-4 w-4 text-primary" />
-                Distribuição Automática de Leads (Round-Robin)
-              </h3>
-              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                Distribua novos leads criados automaticamente em fila circular (round-robin) entre
-                os vendedores e atendentes ativos do escritório.
-              </p>
+      {/* ==================================================== */}
+      {/* MODALS & DIALOGS */}
+      {/* ==================================================== */}
+
+      {/* CREATE USER DIALOG */}
+      <Dialog open={createUserModalOpen} onOpenChange={setCreateUserModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-legal-serif flex items-center gap-2">
+              <UserPlus className="h-4 w-4 text-amber-500" />
+              Adicionar Novo Usuário ao Escritório
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Cadastre um membro da equipe. Uma senha temporária de 12 caracteres será gerada e
+              exibida uma única vez.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleCreateUser} className="space-y-3.5 pt-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Nome Completo *</Label>
+              <Input
+                required
+                placeholder="Ex: Dra. Juliana Fernandes"
+                value={newUser.name}
+                onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
+                className="h-9 text-xs"
+              />
             </div>
 
-            <div className="space-y-4 border rounded-lg p-4 bg-muted/20">
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label className="text-xs font-semibold">Ativar Distribuição Automática</Label>
-                  <p className="text-[11px] text-muted-foreground">
-                    Quando ativo, novos leads sem responsável definido serão atribuídos
-                    automaticamente.
-                  </p>
-                </div>
-                <Switch
-                  checked={distributionEnabled}
-                  onCheckedChange={setDistributionEnabled}
-                  aria-label="Ativar distribuição automática"
-                />
-              </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">E-mail Corporativo *</Label>
+              <Input
+                required
+                type="email"
+                placeholder="exemplo@teixeiranascimento.adv.br"
+                value={newUser.email}
+                onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                className="h-9 text-xs"
+              />
+            </div>
 
-              <div className="space-y-1.5 pt-2">
-                <Label className="text-xs font-semibold">Método de Distribuição</Label>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Papel / Role *</Label>
                 <Select
-                  value={distributionMethod}
-                  onValueChange={(val: 'round_robin' | 'manual') => setDistributionMethod(val)}
-                  disabled={!distributionEnabled}
+                  value={newUser.role}
+                  onValueChange={(val: 'admin' | 'manager' | 'user') =>
+                    setNewUser({ ...newUser, role: val })
+                  }
                 >
-                  <SelectTrigger className="h-9 text-xs max-w-xs">
+                  <SelectTrigger className="h-9 text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="round_robin">
-                      Round-Robin (Distribuição Equitativa Circular)
-                    </SelectItem>
-                    <SelectItem value="manual">Manual (Atribuição pelo Gestor)</SelectItem>
+                    {isAdmin && <SelectItem value="admin">Administrador</SelectItem>}
+                    <SelectItem value="manager">Gestor</SelectItem>
+                    <SelectItem value="user">Advogado / Consultor</SelectItem>
                   </SelectContent>
                 </Select>
-                <p className="text-[11px] text-muted-foreground">
-                  O algoritmo Round-Robin divide os leads em sequência igualitária entre todos os
-                  usuários ativos com papel de Vendedor/Atendente ou Consultor.
-                </p>
               </div>
 
-              <Button
-                size="sm"
-                onClick={handleSaveDistribution}
-                disabled={savingDistribution}
-                className="bg-[#0A1F3F] text-white text-xs gap-1.5 mt-2"
-              >
-                <Save className="h-3.5 w-3.5" />
-                {savingDistribution ? 'Salvando...' : 'Salvar Preferências de Distribuição'}
-              </Button>
-            </div>
-          </div>
-
-          {/* Histórico das últimas distribuições */}
-          <div className="bg-card border rounded-xl p-5 shadow-xs space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-sm">Últimas Distribuições Registradas</h3>
-                <p className="text-xs text-muted-foreground">
-                  Registro em tempo real da alocação de leads aos vendedores.
-                </p>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Equipe / Time</Label>
+                <Select
+                  value={newUser.team || 'none'}
+                  onValueChange={(val) =>
+                    setNewUser({
+                      ...newUser,
+                      team: val === 'none' ? '' : val,
+                    })
+                  }
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sem equipe</SelectItem>
+                    <SelectItem value="comercial">Comercial</SelectItem>
+                    <SelectItem value="juridico">Jurídico</SelectItem>
+                    <SelectItem value="financeiro">Financeiro</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-              <Badge variant="outline" className="text-xs">
-                {recentDistributions.length} distribuições recentes
-              </Badge>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-muted/50 uppercase text-[11px] font-semibold border-b text-muted-foreground">
-                  <tr>
-                    <th className="p-3 pl-4">Lead</th>
-                    <th className="p-3">Vendedor / Responsável Atribuído</th>
-                    <th className="p-3">Método</th>
-                    <th className="p-3 pr-4 text-right">Data / Hora</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {recentDistributions.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="p-6 text-center text-muted-foreground">
-                        Nenhuma distribuição automática registrada ainda.
-                      </td>
-                    </tr>
-                  ) : (
-                    recentDistributions.map((dist) => (
-                      <tr key={dist.id} className="hover:bg-muted/30 transition-colors">
-                        <td className="p-3 pl-4 font-semibold text-foreground">
-                          {dist.expand?.lead_id?.name || dist.lead_id || 'Lead Jurídico'}
-                        </td>
-                        <td className="p-3">
-                          <div className="flex items-center gap-2 font-medium">
-                            <UserCheck className="h-3.5 w-3.5 text-emerald-500" />
-                            <span>{dist.expand?.user_id?.name || dist.user_id || 'Vendedor'}</span>
-                          </div>
-                        </td>
-                        <td className="p-3">
-                          <Badge variant="outline" className="text-[10px] uppercase font-mono">
-                            {dist.distribution_method || dist.metodo || 'round_robin'}
-                          </Badge>
-                        </td>
-                        <td className="p-3 pr-4 text-right text-muted-foreground font-mono text-[11px]">
-                          {dist.created
-                            ? new Date(dist.created).toLocaleString('pt-BR', {
-                                dateStyle: 'short',
-                                timeStyle: 'short',
-                              })
-                            : '—'}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </TabsContent>
-
-        {/* TAB SLA */}
-        <TabsContent value="sla" className="pt-4 space-y-6">
-          <div className="bg-card border rounded-xl p-5 shadow-xs space-y-5 max-w-3xl">
-            <div>
-              <h3 className="font-bold text-sm flex items-center gap-2">
-                <Clock className="h-4 w-4 text-amber-500" />
-                SLA de Primeiro Atendimento (Tempo de Resposta)
-              </h3>
-              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                Defina o tempo máximo tolerado para o primeiro contato/mensagem com novos leads.
-                Leads sem interação que ultrapassarem esse limite serão sinalizados como atrasados
-                em toda a plataforma.
+            <div className="p-3 bg-muted/40 rounded-lg text-xs space-y-1 border">
+              <div className="font-semibold flex items-center gap-1.5 text-muted-foreground">
+                <Lock className="h-3.5 w-3.5" /> Geração de Senha Temporária
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Ao cadastrar, o sistema gerará uma senha segura de 12 caracteres e a exibirá com
+                botão de cópia.
               </p>
             </div>
 
-            <div className="space-y-4 border rounded-lg p-4 bg-muted/20">
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label className="text-xs font-semibold">Monitoramento de SLA Ativo</Label>
-                  <p className="text-[11px] text-muted-foreground">
-                    Exibe alerta visual nos cards e linhas de leads com SLA violado.
-                  </p>
-                </div>
-                <Switch
-                  checked={slaIsActive}
-                  onCheckedChange={setSlaIsActive}
-                  aria-label="Ativar monitoramento de SLA"
-                />
-              </div>
-
-              <div className="space-y-1.5 pt-2">
-                <Label className="text-xs font-semibold">
-                  Tempo Máximo de Primeira Resposta (em minutos) *
-                </Label>
-                <div className="flex items-center gap-3">
-                  <Input
-                    type="number"
-                    min={1}
-                    max={1440}
-                    value={slaFirstResponseMinutes}
-                    onChange={(e) => setSlaFirstResponseMinutes(Number(e.target.value))}
-                    className="h-9 text-xs w-36 font-mono"
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    minutos ({Math.round((slaFirstResponseMinutes / 60) * 10) / 10}h)
-                  </span>
-                </div>
-                <p className="text-[11px] text-muted-foreground">
-                  Padrão do mercado jurídico de alta conversão: <strong>15 a 30 minutos</strong>{' '}
-                  para leads de campanhas digitais (Meta/Google).
-                </p>
-              </div>
-
+            <DialogFooter className="pt-2">
               <Button
+                type="button"
+                variant="outline"
                 size="sm"
-                onClick={handleSaveSlaConfig}
-                disabled={savingSla}
-                className="bg-[#0A1F3F] text-white text-xs gap-1.5 mt-2"
+                disabled={isSubmittingUser}
+                onClick={() => setCreateUserModalOpen(false)}
               >
-                <Save className="h-3.5 w-3.5" />
-                {savingSla ? 'Salvando...' : 'Salvar Regra de SLA'}
+                Cancelar
               </Button>
-            </div>
-          </div>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isSubmittingUser}
+                className="bg-[#0A1F3F] hover:bg-[#0A1F3F]/90 text-white gap-1.5"
+              >
+                {isSubmittingUser ? 'Cadastrando...' : 'Criar Usuário'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
-          <div className="bg-card border rounded-xl p-5 shadow-xs space-y-3">
-            <h3 className="font-bold text-sm">Políticas de SLA Cadastradas</h3>
-            {slas.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Nenhuma política de SLA configurada.</p>
-            ) : (
-              slas.map((s) => (
-                <div
-                  key={s.id}
-                  className="p-3 bg-muted/40 rounded-lg flex justify-between items-center text-xs"
+      {/* EDIT USER DIALOG (NEW FEATURE IN PHASE E) */}
+      <Dialog open={editUserModalOpen} onOpenChange={setEditUserModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-legal-serif flex items-center gap-2">
+              <Edit2 className="h-4 w-4 text-amber-500" />
+              Editar Usuário
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Atualize as informações de cadastro e perfil de {editingUser?.name}.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleSaveEditUser} className="space-y-3.5 pt-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Nome Completo *</Label>
+              <Input
+                required
+                value={editUserData.name}
+                onChange={(e) => setEditUserData({ ...editUserData, name: e.target.value })}
+                className="h-9 text-xs"
+                placeholder="Ex: Dra. Juliana Fernandes"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">E-mail Corporativo *</Label>
+              <Input
+                required
+                type="email"
+                value={editUserData.email}
+                onChange={(e) => setEditUserData({ ...editUserData, email: e.target.value })}
+                className="h-9 text-xs"
+                placeholder="exemplo@teixeiranascimento.adv.br"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Papel / Role *</Label>
+                <Select
+                  value={editUserData.role}
+                  onValueChange={(val: 'admin' | 'manager' | 'user') =>
+                    setEditUserData({ ...editUserData, role: val })
+                  }
+                  disabled={!isAdmin && !isGestor}
                 >
-                  <div>
-                    <div className="font-bold">
-                      {s.equipe || 'Comercial Geral'} • Origem: {s.origem || 'Todas as Origens'}
-                    </div>
-                    <div className="text-muted-foreground text-[11px]">
-                      Horário de Atendimento: {s.horario_inicio || '08:00'} às{' '}
-                      {s.horario_fim || '19:00'}
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-bold text-primary">
-                      {s.first_response_minutes ?? s.tempo_resposta_minutos ?? 15} minutos
-                    </div>
-                    <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px]">
-                      {s.is_active !== false && s.ativo !== false ? 'Ativo' : 'Inativo'}
-                    </Badge>
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {isAdmin && <SelectItem value="admin">Administrador</SelectItem>}
+                    <SelectItem value="manager">Gestor</SelectItem>
+                    <SelectItem value="user">Advogado / Consultor</SelectItem>
+                  </SelectContent>
+                </Select>
+                {!isAdmin && (
+                  <p className="text-[10px] text-muted-foreground">
+                    Gestores não podem promover usuários a Administrador.
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Equipe / Time</Label>
+                <Select
+                  value={editUserData.team || 'none'}
+                  onValueChange={(val) =>
+                    setEditUserData({
+                      ...editUserData,
+                      team: val === 'none' ? '' : val,
+                    })
+                  }
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sem equipe</SelectItem>
+                    <SelectItem value="comercial">Comercial</SelectItem>
+                    <SelectItem value="juridico">Jurídico</SelectItem>
+                    <SelectItem value="financeiro">Financeiro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isSavingEdit}
+                onClick={() => setEditUserModalOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isSavingEdit}
+                className="bg-[#0A1F3F] hover:bg-[#0A1F3F]/90 text-white gap-1.5"
+              >
+                {isSavingEdit ? 'Salvando...' : 'Salvar Alterações'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* PASSWORD DISPLAY DIALOG (ONE-TIME VIEW WITH COPY BUTTON) */}
+      <Dialog open={passwordModalOpen} onOpenChange={setPasswordModalOpen}>
+        <DialogContent className="max-w-md border-amber-500/30">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-legal-serif flex items-center gap-2 text-amber-600 dark:text-amber-400">
+              <KeyRound className="h-4 w-4" />
+              {passwordModalData?.isReset
+                ? 'Senha Redefinida com Sucesso'
+                : 'Novo Usuário Criado com Sucesso'}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Copie e envie as credenciais abaixo para o usuário.{' '}
+              <strong>Por motivos de segurança, esta senha NÃO será exibida novamente.</strong>
+            </DialogDescription>
+          </DialogHeader>
+
+          {passwordModalData && (
+            <div className="space-y-3.5 py-2">
+              <div className="p-3 bg-muted/60 rounded-lg border space-y-2 text-xs">
+                <div>
+                  <span className="text-muted-foreground block text-[11px]">Usuário:</span>
+                  <span className="font-semibold">{passwordModalData.userName}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground block text-[11px]">E-mail de Acesso:</span>
+                  <span className="font-mono font-medium">{passwordModalData.userEmail}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground block text-[11px]">
+                    Senha Temporária Gerada:
+                  </span>
+                  <div className="flex items-center gap-2 mt-1">
+                    <code className="flex-1 p-2 bg-background font-mono text-sm font-bold tracking-wider rounded border text-foreground select-all">
+                      {passwordModalData.password}
+                    </code>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => copyToClipboard(passwordModalData.password)}
+                      className="bg-[#0A1F3F] text-white hover:bg-[#0A1F3F]/90 text-xs gap-1.5 shrink-0"
+                    >
+                      {copiedPassword ? (
+                        <>
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                          Copiada!
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3.5 w-3.5" />
+                          Copiar Senha
+                        </>
+                      )}
+                    </Button>
                   </div>
                 </div>
-              ))
+              </div>
+
+              <div className="p-2.5 rounded bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-800 dark:text-amber-300 flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
+                <span>
+                  Copie e salve esta senha antes de fechar esta janela. O usuário poderá alterar a
+                  senha a qualquer momento em Meu Perfil.
+                </span>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              type="button"
+              onClick={() => setPasswordModalOpen(false)}
+              className="w-full bg-[#0A1F3F] text-white"
+            >
+              Entendido e Fechar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* RESET PASSWORD DIALOG (RANDOM vs CUSTOM) */}
+      <Dialog open={resetPasswordModalOpen} onOpenChange={setResetPasswordModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-legal-serif flex items-center gap-2 text-amber-600 dark:text-amber-400">
+              <KeyRound className="h-4 w-4" />
+              Resetar Senha do Usuário
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Defina uma nova senha para <strong>{userToReset?.name}</strong> ({userToReset?.email}
+              ).
+            </DialogDescription>
+          </DialogHeader>
+
+          <Alert className="border-amber-500/30 bg-amber-500/5 text-amber-950 dark:text-amber-200">
+            <Info className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+            <AlertTitle className="text-xs font-bold text-amber-800 dark:text-amber-300">
+              Hash Criptográfico Irreversível
+            </AlertTitle>
+            <AlertDescription className="text-[11px] text-amber-700/90 dark:text-amber-300/80">
+              Por segurança, não é possível ver a senha atual do usuário (armazenamento
+              irreversível). Redefina gerando uma senha temporária ou digitando uma nova.
+            </AlertDescription>
+          </Alert>
+
+          <div className="space-y-3.5 py-1">
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
+                <input
+                  type="radio"
+                  name="resetPasswordMode"
+                  value="random"
+                  checked={resetPasswordMode === 'random'}
+                  onChange={() => setResetPasswordMode('random')}
+                  className="h-4 w-4 accent-amber-600"
+                />
+                Opção 1: Gerar senha temporária aleatória de 12 dígitos (Recomendado)
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
+                <input
+                  type="radio"
+                  name="resetPasswordMode"
+                  value="custom"
+                  checked={resetPasswordMode === 'custom'}
+                  onChange={() => setResetPasswordMode('custom')}
+                  className="h-4 w-4 accent-amber-600"
+                />
+                Opção 2: Digitar uma nova senha específica
+              </label>
+            </div>
+
+            {resetPasswordMode === 'custom' && (
+              <div className="space-y-3 pl-4 border-l-2 border-amber-500/40 pt-1">
+                <div className="flex items-center justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setShowResetCustomPassword((s) => !s)}
+                    className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+                  >
+                    {showResetCustomPassword ? (
+                      <>
+                        <EyeOff className="h-3 w-3" /> Ocultar
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="h-3 w-3" /> Visualizar
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold">Nova Senha *</Label>
+                  <Input
+                    type={showResetCustomPassword ? 'text' : 'password'}
+                    value={resetNewPassword}
+                    onChange={(e) => setResetNewPassword(e.target.value)}
+                    placeholder="Mínimo 8 caracteres"
+                    className="h-9 text-xs"
+                    autoComplete="new-password"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold">Confirmar Nova Senha *</Label>
+                  <Input
+                    type={showResetCustomPassword ? 'text' : 'password'}
+                    value={resetConfirmPassword}
+                    onChange={(e) => setResetConfirmPassword(e.target.value)}
+                    placeholder="Repita a nova senha"
+                    className="h-9 text-xs"
+                    autoComplete="new-password"
+                  />
+                  {resetConfirmPassword && resetNewPassword !== resetConfirmPassword && (
+                    <p className="text-[10px] text-red-600 dark:text-red-400">
+                      As senhas digitadas não conferem.
+                    </p>
+                  )}
+                  {resetConfirmPassword &&
+                    resetNewPassword === resetConfirmPassword &&
+                    resetNewPassword.length >= 8 && (
+                      <p className="text-[10px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                        <CheckCircle2 className="h-3 w-3" /> As senhas conferem.
+                      </p>
+                    )}
+                </div>
+              </div>
             )}
           </div>
-        </TabsContent>
-      </Tabs>
+
+          <DialogFooter className="pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isResettingPassword}
+              onClick={() => setResetPasswordModalOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={
+                isResettingPassword ||
+                (resetPasswordMode === 'custom' &&
+                  (!resetNewPassword ||
+                    resetNewPassword.length < 8 ||
+                    resetNewPassword !== resetConfirmPassword))
+              }
+              onClick={handleResetPassword}
+              className="bg-amber-600 hover:bg-amber-700 text-white gap-1.5"
+            >
+              <KeyRound className="h-3.5 w-3.5" />
+              {isResettingPassword
+                ? 'Redefinindo...'
+                : resetPasswordMode === 'custom'
+                  ? 'Definir Senha'
+                  : 'Gerar Senha Aleatória'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CONFIRM DELETE USER DIALOG */}
+      <AlertDialog open={deleteUserModalOpen} onOpenChange={setDeleteUserModalOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-base font-bold font-legal-serif flex items-center gap-2 text-red-600">
+              <Trash2 className="h-4 w-4" />
+              Confirmar Exclusão de Usuário
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-xs">
+              Tem certeza que deseja excluir permanentemente o usuário{' '}
+              <strong>{userToDelete?.name}</strong> ({userToDelete?.email})? Esta ação revogará todo
+              o acesso ao sistema imediatamente e não poderá ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingUser}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isDeletingUser}
+              onClick={handleDeleteUser}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              {isDeletingUser ? 'Excluindo...' : 'Sim, Excluir Usuário'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* CREATE SERVICE MODAL */}
       <Dialog open={serviceModalOpen} onOpenChange={setServiceModalOpen}>
@@ -2478,7 +2622,7 @@ export function SettingsPage() {
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs font-semibold">Status (is_active)</Label>
+                <Label className="text-xs font-semibold">Status</Label>
                 <div className="flex items-center gap-2 h-9 px-1">
                   <Switch
                     checked={messageTemplateData.status === 'ativo'}
@@ -2501,7 +2645,7 @@ export function SettingsPage() {
               <Textarea
                 required
                 rows={5}
-                placeholder="Olá, aqui é do escritório Teixeira & Nascimento Advogados. Identificamos uma oportunidade para sua empresa..."
+                placeholder="Olá, aqui é do escritório Teixeira & Nascimento Advogados..."
                 value={messageTemplateData.conteudo}
                 onChange={(e) =>
                   setMessageTemplateData({ ...messageTemplateData, conteudo: e.target.value })
@@ -2541,7 +2685,7 @@ export function SettingsPage() {
               <Label className="text-xs font-semibold">Nome do Campo *</Label>
               <Input
                 required
-                placeholder="Ex: Faturamento Mensal, Ramo de Atuação, Decisor"
+                placeholder="Ex: Faturamento Mensal, Ramo de Atuação"
                 value={customFieldData.nome}
                 onChange={(e) => setCustomFieldData({ ...customFieldData, nome: e.target.value })}
                 className="h-9 text-xs"
@@ -2550,7 +2694,7 @@ export function SettingsPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs font-semibold">Entidade Alvo (Módulo) *</Label>
+                <Label className="text-xs font-semibold">Entidade Alvo *</Label>
                 <Select
                   value={customFieldData.modulo}
                   onValueChange={(val: any) =>
@@ -2562,7 +2706,7 @@ export function SettingsPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="lead">Lead</SelectItem>
-                    <SelectItem value="customer">Cliente (Customer)</SelectItem>
+                    <SelectItem value="customer">Cliente</SelectItem>
                     <SelectItem value="opportunity">Oportunidade</SelectItem>
                   </SelectContent>
                 </Select>
@@ -2648,412 +2792,8 @@ export function SettingsPage() {
           </form>
         </DialogContent>
       </Dialog>
-
-      {/* CREATE USER MODAL */}
-      <Dialog open={createUserModalOpen} onOpenChange={setCreateUserModalOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-base font-bold font-legal-serif flex items-center gap-2">
-              <UserPlus className="h-4 w-4 text-amber-500" />
-              Adicionar Novo Usuário ao Escritório
-            </DialogTitle>
-            <DialogDescription className="text-xs text-muted-foreground">
-              Cadastre um membro da equipe jurídica. Uma senha temporária segura será gerada
-              automaticamente.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleCreateUser} className="space-y-3.5 pt-2">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Nome Completo *</Label>
-              <Input
-                required
-                placeholder="Ex: Dra. Juliana Fernandes"
-                value={newUser.name}
-                onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
-                className="h-9 text-xs"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">E-mail Corporativo *</Label>
-              <Input
-                required
-                type="email"
-                placeholder="exemplo@teixeiranascimento.adv.br"
-                value={newUser.email}
-                onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
-                className="h-9 text-xs"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Papel / Nível de Acesso *</Label>
-              <Select
-                value={newUser.role}
-                onValueChange={(val: 'admin' | 'manager' | 'user') =>
-                  setNewUser({ ...newUser, role: val })
-                }
-              >
-                <SelectTrigger className="h-9 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">
-                    Administrador (Acesso Total &amp; Configurações)
-                  </SelectItem>
-                  <SelectItem value="manager">Gestor / Supervisor Jurídico</SelectItem>
-                  <SelectItem value="user">Advogado / Consultor Comercial</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="p-3 bg-muted/40 rounded-lg text-xs space-y-1 border">
-              <div className="font-semibold flex items-center gap-1.5 text-muted-foreground">
-                <Lock className="h-3.5 w-3.5" /> Geração de Senha Temporária
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                Ao salvar, o sistema irá gerar uma senha segura aleatória de 12 dígitos e exibir uma
-                única vez para você copiar e enviar ao usuário.
-              </p>
-            </div>
-
-            <DialogFooter className="pt-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={isSubmittingUser}
-                onClick={() => setCreateUserModalOpen(false)}
-              >
-                Cancelar
-              </Button>
-              <Button
-                type="submit"
-                size="sm"
-                disabled={isSubmittingUser}
-                className="bg-[#0A1F3F] hover:bg-[#0A1F3F]/90 text-white gap-1.5"
-              >
-                {isSubmittingUser ? 'Cadastrando...' : 'Criar Usuário'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* PASSWORD DISPLAY DIALOG (ONE-TIME VIEW) */}
-      <Dialog open={passwordModalOpen} onOpenChange={setPasswordModalOpen}>
-        <DialogContent className="max-w-md border-amber-500/30">
-          <DialogHeader>
-            <DialogTitle className="text-base font-bold font-legal-serif flex items-center gap-2 text-amber-600 dark:text-amber-400">
-              <KeyRound className="h-4 w-4" />
-              {passwordModalData?.isReset
-                ? 'Senha Redefinida com Sucesso'
-                : 'Novo Usuário Criado com Sucesso'}
-            </DialogTitle>
-            <DialogDescription className="text-xs text-muted-foreground">
-              Copie e envie as credenciais abaixo para o usuário.{' '}
-              <strong>Por motivos de segurança, esta senha NÃO será exibida novamente.</strong>
-            </DialogDescription>
-          </DialogHeader>
-
-          {passwordModalData && (
-            <div className="space-y-3.5 py-2">
-              <div className="p-3 bg-muted/60 rounded-lg border space-y-2 text-xs">
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Usuário:</span>
-                  <span className="font-semibold">{passwordModalData.userName}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">E-mail de Acesso:</span>
-                  <span className="font-mono font-medium">{passwordModalData.userEmail}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">
-                    Senha Temporária Gerada:
-                  </span>
-                  <div className="flex items-center gap-2 mt-1">
-                    <code className="flex-1 p-2 bg-background font-mono text-sm font-bold tracking-wider rounded border text-foreground select-all">
-                      {passwordModalData.password}
-                    </code>
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => copyToClipboard(passwordModalData.password)}
-                      className="bg-[#0A1F3F] text-white hover:bg-[#0A1F3F]/90 text-xs gap-1.5 shrink-0"
-                    >
-                      {copiedPassword ? (
-                        <>
-                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                          Copiada!
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-3.5 w-3.5" />
-                          Copiar Senha
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-2.5 rounded bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-800 dark:text-amber-300 flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
-                <span>
-                  Certifique-se de salvar ou encaminhar esta senha antes de fechar esta janela. O
-                  usuário deverá alterar sua senha após o primeiro acesso.
-                </span>
-              </div>
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button
-              type="button"
-              onClick={() => setPasswordModalOpen(false)}
-              className="w-full bg-[#0A1F3F] text-white"
-            >
-              Entendido e Fechar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* CONFIRM RESET PASSWORD DIALOG */}
-      <AlertDialog open={resetPasswordModalOpen} onOpenChange={setResetPasswordModalOpen}>
-        <AlertDialogContent className="max-w-md">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-base font-bold font-legal-serif flex items-center gap-2 text-amber-600 dark:text-amber-400">
-              <KeyRound className="h-4 w-4" />
-              Resetar Senha do Usuário
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-xs">
-              Tem certeza que deseja resetar a senha de <strong>{userToReset?.name}</strong> (
-              {userToReset?.email})? A senha anterior deixará de funcionar imediatamente. Por
-              segurança, não é possível ver a senha atual do usuário.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-
-          <div className="space-y-3 py-1">
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
-                <input
-                  type="radio"
-                  name="resetPasswordMode"
-                  value="random"
-                  checked={resetPasswordMode === 'random'}
-                  onChange={() => setResetPasswordMode('random')}
-                  className="h-4 w-4 accent-amber-600"
-                />
-                Gerar senha aleatória (padrão)
-              </label>
-              <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
-                <input
-                  type="radio"
-                  name="resetPasswordMode"
-                  value="custom"
-                  checked={resetPasswordMode === 'custom'}
-                  onChange={() => setResetPasswordMode('custom')}
-                  className="h-4 w-4 accent-amber-600"
-                />
-                Definir senha personalizada
-              </label>
-            </div>
-
-            {resetPasswordMode === 'custom' && (
-              <div className="space-y-2.5 pl-6 border-l-2 border-amber-500/30">
-                <div className="space-y-1">
-                  <Label className="text-xs font-semibold">Nova Senha *</Label>
-                  <Input
-                    type="password"
-                    value={resetNewPassword}
-                    onChange={(e) => setResetNewPassword(e.target.value)}
-                    placeholder="Mínimo 8 caracteres"
-                    className="h-9 text-xs"
-                    autoComplete="new-password"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs font-semibold">Confirmar Nova Senha *</Label>
-                  <Input
-                    type="password"
-                    value={resetConfirmPassword}
-                    onChange={(e) => setResetConfirmPassword(e.target.value)}
-                    placeholder="Repita a nova senha"
-                    className="h-9 text-xs"
-                    autoComplete="new-password"
-                  />
-                  {resetConfirmPassword &&
-                    resetNewPassword !== resetConfirmPassword && (
-                      <p className="text-[10px] text-red-600 dark:text-red-400">
-                        As senhas não conferem.
-                      </p>
-                    )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isResettingPassword}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={
-                isResettingPassword ||
-                (resetPasswordMode === 'custom' &&
-                  (!resetNewPassword ||
-                    resetNewPassword.length < 8 ||
-                    resetNewPassword !== resetConfirmPassword))
-              }
-              onClick={handleResetPassword}
-              className="bg-amber-600 hover:bg-amber-700 text-white"
-            >
-              {isResettingPassword
-                ? 'Redefinindo...'
-                : resetPasswordMode === 'custom'
-                  ? 'Definir Senha'
-                  : 'Gerar Nova Senha'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* EDIT USER DIALOG */}
-      <Dialog open={editUserModalOpen} onOpenChange={setEditUserModalOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-base font-bold font-legal-serif flex items-center gap-2">
-              <Edit2 className="h-4 w-4 text-amber-500" />
-              Editar Usuário
-            </DialogTitle>
-            <DialogDescription className="text-xs text-muted-foreground">
-              Atualize os dados de {editingUser?.name}. As alterações são salvas diretamente no
-              cadastro do usuário.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleSaveEditUser} className="space-y-3.5 pt-2">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Nome Completo *</Label>
-              <Input
-                required
-                value={editUserData.name}
-                onChange={(e) => setEditUserData({ ...editUserData, name: e.target.value })}
-                className="h-9 text-xs"
-                placeholder="Ex: Dra. Juliana Fernandes"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">E-mail Corporativo *</Label>
-              <Input
-                required
-                type="email"
-                value={editUserData.email}
-                onChange={(e) => setEditUserData({ ...editUserData, email: e.target.value })}
-                className="h-9 text-xs"
-                placeholder="exemplo@teixeiranascimento.adv.br"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-semibold">Papel / Nível de Acesso *</Label>
-                <Select
-                  value={editUserData.role}
-                  onValueChange={(val: 'admin' | 'manager' | 'user') =>
-                    setEditUserData({ ...editUserData, role: val })
-                  }
-                  disabled={!isAdmin}
-                >
-                  <SelectTrigger className="h-9 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="admin">Administrador</SelectItem>
-                    <SelectItem value="manager">Gestor</SelectItem>
-                    <SelectItem value="user">Advogado / Consultor</SelectItem>
-                  </SelectContent>
-                </Select>
-                {!isAdmin && (
-                  <p className="text-[10px] text-muted-foreground">
-                    Como Gestor, você não pode alterar o papel de um usuário.
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-xs font-semibold">Equipe / Time</Label>
-                <Select
-                  value={editUserData.team || 'none'}
-                  onValueChange={(val) =>
-                    setEditUserData({
-                      ...editUserData,
-                      team: val === 'none' ? '' : val,
-                    })
-                  }
-                >
-                  <SelectTrigger className="h-9 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Sem equipe</SelectItem>
-                    <SelectItem value="comercial">Comercial</SelectItem>
-                    <SelectItem value="juridico">Jurídico</SelectItem>
-                    <SelectItem value="financeiro">Financeiro</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <DialogFooter className="pt-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={isSavingEdit}
-                onClick={() => setEditUserModalOpen(false)}
-              >
-                Cancelar
-              </Button>
-              <Button
-                type="submit"
-                size="sm"
-                disabled={isSavingEdit}
-                className="bg-[#0A1F3F] hover:bg-[#0A1F3F]/90 text-white gap-1.5"
-              >
-                {isSavingEdit ? 'Salvando...' : 'Salvar Alterações'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* CONFIRM DELETE USER DIALOG */}
-      <AlertDialog open={deleteUserModalOpen} onOpenChange={setDeleteUserModalOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-base font-bold font-legal-serif flex items-center gap-2 text-red-600">
-              <Trash2 className="h-4 w-4" />
-              Confirmar Exclusão de Usuário
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-xs">
-              Tem certeza que deseja excluir permanentemente o usuário{' '}
-              <strong>{userToDelete?.name}</strong> ({userToDelete?.email})? Esta ação revogará todo
-              o acesso ao sistema imediatamente e não poderá ser desfeita.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeletingUser}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={isDeletingUser}
-              onClick={handleDeleteUser}
-              className="bg-red-600 hover:bg-red-700 text-white"
-            >
-              {isDeletingUser ? 'Excluindo...' : 'Sim, Excluir Usuário'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   )
 }
+
 export default SettingsPage
