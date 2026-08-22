@@ -59,7 +59,7 @@ import {
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { useToast } from '@/hooks/use-toast'
 import { generateChatResponse } from '@/lib/skipAi'
-import { useTenant } from '@/contexts/TenantContext'
+import { useTenant, useUserRole } from '@/contexts/TenantContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import { CrmService } from '@/services/crm'
 import { WhatsAppService } from '@/services/whatsapp'
@@ -152,6 +152,7 @@ const getTeamBadge = (team: string) => {
 export function LeadDetailPage() {
   const { id } = useParams<{ id: string }>()
   const { tenant, user } = useTenant()
+  const { role: userRole } = useUserRole()
   const { toast } = useToast()
   const navigate = useNavigate()
 
@@ -174,6 +175,9 @@ export function LeadDetailPage() {
   // Message Templates State
   const [activeMessageTemplates, setActiveMessageTemplates] = useState<MessageTemplateRecord[]>([])
   const [templatePopoverOpen, setTemplatePopoverOpen] = useState(false)
+
+  // Reassignment state
+  const [updatingAssignee, setUpdatingAssignee] = useState(false)
 
   // Chat message input state
   const defaultUserTeam: TeamType =
@@ -323,6 +327,11 @@ export function LeadDetailPage() {
     if (!id || !tenant?.id) return
     setLoading(true)
     try {
+      const tenantUsersPromise = pb.collection('users').getFullList<UserRecord>({
+        filter: `tenant_id = "${tenant.id}"`,
+        sort: 'name',
+      })
+
       const [
         leadData,
         leadMsgs,
@@ -330,7 +339,7 @@ export function LeadDetailPage() {
         allTasks,
         allOpps,
         allProps,
-        allUsers,
+        tenantUsers,
         allTags,
         leadCustomFields,
         allTemplates,
@@ -341,11 +350,13 @@ export function LeadDetailPage() {
         CrmService.getTasks(tenant.id),
         CrmService.getOpportunities(tenant.id),
         CrmService.getProposals(tenant.id),
-        CrmService.getUsers(tenant.id),
+        tenantUsersPromise.catch(async () => CrmService.getUsers(tenant.id)),
         CrmService.getTags(tenant.id),
         CrmService.getCustomFields(tenant.id, 'lead'),
         CrmService.getMessageTemplates(tenant.id),
       ])
+
+      setUsers(tenantUsers)
 
       setLead(leadData)
       setMessages(leadMsgs)
@@ -353,7 +364,6 @@ export function LeadDetailPage() {
       setTasks(allTasks.filter((t) => t.lead_id === id))
       setOpportunities(allOpps.filter((o) => o.lead_id === id))
       setProposals(allProps.filter((p) => p.lead_id === id))
-      setUsers(allUsers)
       setAvailableTags(allTags)
       setCustomFields(leadCustomFields)
       setActiveMessageTemplates(allTemplates.filter((t) => t.status === 'ativo'))
@@ -649,6 +659,117 @@ ${formattedHistory}
       })
     } finally {
       setSavingNoteId(null)
+    }
+  }
+
+  // Permission rule for reassigning lead:
+  // Admin and gestor can reassign any lead.
+  // Advogado/consultor can only reassign leads that belong to them (assigned_to === authUser.id || responsavel_id === authUser.id).
+  const currentAuthId = user?.id || pb.authStore.record?.id || ''
+  const currentLeadAssigneeId = lead?.assigned_to || lead?.responsavel_id || ''
+  const canReassignLead =
+    userRole === 'admin' ||
+    userRole === 'gestor' ||
+    (userRole === 'advogado' && !!currentLeadAssigneeId && currentLeadAssigneeId === currentAuthId)
+
+  const handleAssigneeChange = async (newUserId: string) => {
+    if (!id || !tenant?.id || !lead) return
+    const actualNewUserId = newUserId === '_unassigned_' ? '' : newUserId
+    if (actualNewUserId === currentLeadAssigneeId) return
+
+    const oldUserId = currentLeadAssigneeId
+    const oldUserObj =
+      users.find((u) => u.id === oldUserId) ||
+      lead.expand?.assigned_to ||
+      lead.expand?.responsavel_id
+    const newUserObj = users.find((u) => u.id === actualNewUserId)
+    const fromName = oldUserObj?.name || (oldUserId ? 'Usuário Anterior' : 'Sem responsável')
+    const toName = newUserObj?.name || (actualNewUserId ? 'Novo Usuário' : 'Não atribuído')
+    const operatorId = user?.id || pb.authStore.record?.id || ''
+    const operatorName = user?.name || pb.authStore.record?.name || 'Usuário'
+
+    setUpdatingAssignee(true)
+    try {
+      // 1. Update lead record in PocketBase
+      const updatedLead = await pb.collection('leads').update<LeadRecord>(
+        id,
+        {
+          assigned_to: actualNewUserId || null,
+          responsavel_id: actualNewUserId || null,
+        },
+        {
+          expand: 'assigned_to,responsavel_id,empresa_id',
+        },
+      )
+
+      // 2. Update local state
+      setLead((prev) => (prev ? { ...prev, ...updatedLead } : updatedLead))
+
+      // 3. Register audit log
+      try {
+        await pb.collection('audit_logs').create({
+          tenant_id: tenant.id,
+          user_id: operatorId,
+          action: 'reassign',
+          resource_type: 'leads',
+          resource_id: id,
+          old_value: {
+            assigned_to: oldUserId || null,
+            responsavel_id: oldUserId || null,
+            assigned_name: fromName,
+          },
+          new_value: {
+            assigned_to: actualNewUserId || null,
+            responsavel_id: actualNewUserId || null,
+            assigned_name: toName,
+            details: {
+              from: oldUserId || null,
+              to: actualNewUserId || null,
+              from_name: fromName,
+              to_name: toName,
+            },
+          },
+          user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+        })
+      } catch (auditErr) {
+        console.warn('Falha ao registrar audit log de reatribuição:', auditErr)
+      }
+
+      // 4. Create system message in lead_messages thread
+      try {
+        const nowFormatted = new Date().toLocaleString('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+        await pb.collection('lead_messages').create({
+          lead_id: id,
+          tenant_id: tenant.id,
+          author_id: operatorId,
+          team: (lead.team_owner || lead.team || 'comercial') as any,
+          type: 'sistema',
+          content: `👤 ${operatorName} reatribuiu o responsável do lead de "${fromName}" para "${toName}" em ${nowFormatted}`,
+        })
+        loadMessages(id)
+      } catch (msgErr) {
+        console.warn('Falha ao registrar mensagem de sistema na thread:', msgErr)
+      }
+
+      toast({
+        title: 'Responsável atualizado!',
+        description: `Lead atribuído para ${toName}.`,
+      })
+    } catch (err: any) {
+      console.error('Erro ao reatribuir lead:', err)
+      toast({
+        title: 'Erro ao reatribuir lead',
+        description: err?.message || 'Não foi possível alterar o responsável.',
+        variant: 'destructive',
+      })
+    } finally {
+      setUpdatingAssignee(false)
     }
   }
 
@@ -967,56 +1088,119 @@ ${formattedHistory}
     )
   }
 
+  const currentAssignedUserId = lead.assigned_to || lead.responsavel_id || '_unassigned_'
+
   return (
     <div className="space-y-6">
       {/* Top Breadcrumb & Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            size="icon"
-            className="h-9 w-9 shrink-0"
-            onClick={() => navigate('/leads')}
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold tracking-tight text-foreground font-legal-serif">
-                {lead.name}
-              </h1>
-              <Badge className="bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 gap-1">
-                <Flame className="h-3 w-3" /> {lead.temperature || 'Quente'}
-              </Badge>
-              <Badge variant="outline">{lead.status || 'Em Atendimento'}</Badge>
-              {(() => {
-                const currentTeam = lead.team_owner || lead.team || 'comercial'
-                const tBadge = getTeamBadge(currentTeam)
-                return (
-                  <Badge variant="outline" className={`gap-1 font-medium ${tBadge.className}`}>
-                    Equipe Responsável: {tBadge.label}
-                  </Badge>
-                )
-              })()}
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3">
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-9 w-9 shrink-0 mt-0.5 sm:mt-0"
+              onClick={() => navigate('/leads')}
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-2xl font-bold tracking-tight text-foreground font-legal-serif">
+                  {lead.name}
+                </h1>
+                <Badge className="bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 gap-1">
+                  <Flame className="h-3 w-3" /> {lead.temperature || 'Quente'}
+                </Badge>
+                <Badge variant="outline">{lead.status || 'Em Atendimento'}</Badge>
+                {(() => {
+                  const currentTeam = lead.team_owner || lead.team || 'comercial'
+                  const tBadge = getTeamBadge(currentTeam)
+                  return (
+                    <Badge variant="outline" className={`gap-1 font-medium ${tBadge.className}`}>
+                      Equipe: {tBadge.label}
+                    </Badge>
+                  )
+                })()}
+              </div>
+              <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-3 flex-wrap">
+                <span>
+                  Origem: <strong>{lead.origem || lead.source || 'Meta Ads'}</strong>
+                </span>
+                <span>•</span>
+                <span>
+                  Serviço: <strong>{lead.service || 'Recuperação Tributária'}</strong>
+                </span>
+                <span>•</span>
+                <span>
+                  Valor Potencial:{' '}
+                  <strong>
+                    R${' '}
+                    {Number(lead.potential_value || lead.valor_potencial || 0).toLocaleString(
+                      'pt-BR',
+                    )}
+                  </strong>
+                </span>
+              </div>
             </div>
-            <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-3 flex-wrap">
-              <span>
-                Origem: <strong>{lead.origem || lead.source || 'Meta Ads'}</strong>
-              </span>
-              <span>•</span>
-              <span>
-                Serviço: <strong>{lead.service || 'Recuperação Tributária'}</strong>
-              </span>
-              <span>•</span>
-              <span>
-                Valor Potencial:{' '}
-                <strong>
-                  R${' '}
-                  {Number(lead.potential_value || lead.valor_potencial || 0).toLocaleString(
-                    'pt-BR',
-                  )}
-                </strong>
-              </span>
+          </div>
+
+          {/* Quick Responsável Selector Header Section */}
+          <div className="flex items-center gap-2.5 bg-card border border-border/80 rounded-xl px-3.5 py-2 shadow-2xs self-start lg:self-auto">
+            <div className="flex items-center gap-2">
+              <div className="h-7 w-7 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                <User className="h-4 w-4" />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider leading-none">
+                  Responsável
+                </span>
+                <span className="text-xs font-semibold text-foreground leading-tight mt-0.5">
+                  {updatingAssignee
+                    ? 'Atualizando...'
+                    : lead.expand?.assigned_to?.name ||
+                      lead.expand?.responsavel_id?.name ||
+                      'Não atribuído'}
+                </span>
+              </div>
+            </div>
+
+            <div className="min-w-[180px] sm:min-w-[210px] ml-1">
+              <Select
+                value={currentAssignedUserId}
+                onValueChange={handleAssigneeChange}
+                disabled={updatingAssignee || !canReassignLead}
+              >
+                <SelectTrigger
+                  className="h-8 text-xs font-medium bg-background"
+                  title={
+                    !canReassignLead
+                      ? 'Você só tem permissão para reatribuir leads atribuídos a você.'
+                      : 'Alterar responsável pelo lead'
+                  }
+                >
+                  <SelectValue placeholder="Selecione o responsável..." />
+                </SelectTrigger>
+                <SelectContent align="end" className="max-h-72">
+                  <SelectItem value="_unassigned_">
+                    <span className="text-muted-foreground italic">Sem responsável (Geral)</span>
+                  </SelectItem>
+                  {users.map((u) => {
+                    const roleLabel =
+                      u.role === 'admin' ? 'Admin' : u.role === 'manager' ? 'Gestor' : 'Advogado'
+                    return (
+                      <SelectItem key={u.id} value={u.id}>
+                        <div className="flex items-center justify-between gap-3 w-full">
+                          <span className="font-medium">{u.name || u.email}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase font-mono">
+                            {roleLabel}
+                          </span>
+                        </div>
+                      </SelectItem>
+                    )
+                  })}
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </div>
@@ -1140,24 +1324,71 @@ ${formattedHistory}
               </div>
 
               <div>
-                <span className="text-muted-foreground block text-[11px]">
-                  Equipe &amp; Responsável:
-                </span>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="font-semibold text-foreground">
-                    {lead.expand?.assigned_to?.name ||
-                      lead.expand?.responsavel_id?.name ||
-                      'Equipe Geral'}
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground block text-[11px]">
+                    Responsável Atual:
                   </span>
-                  {(() => {
-                    const curTeam = lead.team_owner || lead.team || 'comercial'
-                    const tb = getTeamBadge(curTeam)
-                    return (
-                      <Badge variant="outline" className={`text-[10px] h-4.5 ${tb.className}`}>
-                        {tb.label}
-                      </Badge>
-                    )
-                  })()}
+                  {!canReassignLead && (
+                    <span className="text-[10px] text-muted-foreground/75 italic">
+                      (Apenas leitura)
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 space-y-1.5">
+                  <Select
+                    value={currentAssignedUserId}
+                    onValueChange={handleAssigneeChange}
+                    disabled={updatingAssignee || !canReassignLead}
+                  >
+                    <SelectTrigger
+                      className="h-8 text-xs font-medium bg-background"
+                      title={
+                        !canReassignLead
+                          ? 'Você só tem permissão para reatribuir leads atribuídos a você.'
+                          : 'Alterar responsável pelo lead'
+                      }
+                    >
+                      <SelectValue placeholder="Selecione o responsável..." />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-64">
+                      <SelectItem value="_unassigned_">
+                        <span className="text-muted-foreground italic">
+                          Sem responsável (Geral)
+                        </span>
+                      </SelectItem>
+                      {users.map((u) => {
+                        const roleLabel =
+                          u.role === 'admin'
+                            ? 'Admin'
+                            : u.role === 'manager'
+                              ? 'Gestor'
+                              : 'Advogado'
+                        return (
+                          <SelectItem key={u.id} value={u.id}>
+                            <div className="flex items-center justify-between gap-3 w-full">
+                              <span className="font-medium">{u.name || u.email}</span>
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase font-mono">
+                                {roleLabel}
+                              </span>
+                            </div>
+                          </SelectItem>
+                        )
+                      })}
+                    </SelectContent>
+                  </Select>
+
+                  <div className="flex items-center justify-between pt-0.5">
+                    <span className="text-[11px] text-muted-foreground">Equipe:</span>
+                    {(() => {
+                      const curTeam = lead.team_owner || lead.team || 'comercial'
+                      const tb = getTeamBadge(curTeam)
+                      return (
+                        <Badge variant="outline" className={`text-[10px] h-4.5 ${tb.className}`}>
+                          {tb.label}
+                        </Badge>
+                      )
+                    })()}
+                  </div>
                 </div>
               </div>
 
