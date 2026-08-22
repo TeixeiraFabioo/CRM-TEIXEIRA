@@ -167,16 +167,18 @@ class MetaPixelManager {
     script.src = 'https://connect.facebook.net/en_US/fbevents.js'
     document.head.appendChild(script)
 
-    // 4. Inject noscript fallback
-    const noscript = document.createElement('noscript')
-    noscript.id = META_PIXEL_NOSCRIPT_ID
-    const img = document.createElement('img')
-    img.height = 1
-    img.width = 1
-    img.style.display = 'none'
-    img.src = `https://www.facebook.com/tr?id=${encodeURIComponent(sanitizedPixelId)}&ev=PageView&noscript=1`
-    noscript.appendChild(img)
-    document.body.appendChild(noscript)
+    // 4. Inject noscript fallback (only in production to avoid failed requests / html-to-image preview capture issues in dev/preview)
+    if (import.meta.env.PROD) {
+      const noscript = document.createElement('noscript')
+      noscript.id = META_PIXEL_NOSCRIPT_ID
+      const img = document.createElement('img')
+      img.height = 1
+      img.width = 1
+      img.style.display = 'none'
+      img.src = `https://www.facebook.com/tr?id=${encodeURIComponent(sanitizedPixelId)}&ev=PageView&noscript=1`
+      noscript.appendChild(img)
+      document.body.appendChild(noscript)
+    }
 
     // 5. Apply LGPD consent rule
     const consent = this.hasConsent()

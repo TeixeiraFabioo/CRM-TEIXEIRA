@@ -2,26 +2,6 @@
 // $ai.agent(slug).chat (Skip-shape). Don't hand-roll the SSE reader —
 // past attempts shipped "undefinedundefined…" and "[object Object]…".
 
-import { pb } from './pocketbase/client'
-
-export interface GenerateChatOptions {
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
-  temperature?: number
-  public?: boolean
-}
-
-export async function generateChatResponse(options: GenerateChatOptions): Promise<string> {
-  const endpoint = options.public ? '/backend/v1/ai/landing-chat' : '/backend/v1/ai/chat'
-  const res = await pb.send<{ text?: string }>(endpoint, {
-    method: 'POST',
-    body: JSON.stringify({
-      messages: options.messages,
-      temperature: options.temperature,
-    }),
-  })
-  return res.text || ''
-}
-
 export interface OpenAIChatResult {
   id: string
   model: string
@@ -285,6 +265,65 @@ export interface StreamAgentChatResult {
   message_id: string
   citations?: AgentCitation[]
   toolCalls: Array<{ id: string; name: string; ok: boolean }>
+}
+
+export interface GenerateChatResponseOptions {
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  temperature?: number
+  public?: boolean
+}
+
+/**
+ * Helper to call either the authenticated or public AI chat backend endpoint.
+ */
+export async function generateChatResponse(options: GenerateChatResponseOptions): Promise<string> {
+  const isPublic = Boolean(options.public)
+  const endpoint = isPublic ? '/backend/v1/ai/landing-chat' : '/backend/v1/ai/chat'
+  const pbBaseUrl = (import.meta as any).env?.VITE_POCKETBASE_URL || ''
+  const fullUrl = `${pbBaseUrl}${endpoint}`
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+
+  // If authenticated and pocketbase token is available, attach Authorization header
+  if (!isPublic && typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem('pocketbase_auth')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (parsed?.token) {
+          headers['Authorization'] = parsed.token
+        }
+      }
+    } catch {
+      // Ignore JSON parse error
+    }
+  }
+
+  const res = await fetch(fullUrl, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      messages: options.messages,
+      temperature: options.temperature,
+    }),
+  })
+
+  if (!res.ok) {
+    let errorMsg = `Chat request failed: ${res.status}`
+    try {
+      const errJson = await res.json()
+      if (errJson?.error) errorMsg = errJson.error
+      else if (errJson?.message) errorMsg = errJson.message
+    } catch {
+      // ignore
+    }
+    throw new Error(errorMsg)
+  }
+
+  const json = await res.json()
+  return json.text || ''
 }
 
 // Drive an agent stream end-to-end. Resolves only after `done` (turn fully persisted);
