@@ -44,7 +44,6 @@ export interface MetaPixelEventPayload {
 }
 
 const META_PIXEL_SCRIPT_ID = 'skip-meta-pixel-script'
-const META_PIXEL_NOSCRIPT_ID = 'skip-meta-pixel-noscript'
 const LGPD_CONSENT_KEY = 'skip_lgpd_pixel_consent'
 
 class MetaPixelManager {
@@ -155,10 +154,6 @@ class MetaPixelManager {
     if (existingScript) {
       existingScript.remove()
     }
-    const existingNoScript = document.getElementById(META_PIXEL_NOSCRIPT_ID)
-    if (existingNoScript) {
-      existingNoScript.remove()
-    }
 
     // 3. Inject the official fbevents.js script tag into <head>
     const script = document.createElement('script')
@@ -167,20 +162,7 @@ class MetaPixelManager {
     script.src = 'https://connect.facebook.net/en_US/fbevents.js'
     document.head.appendChild(script)
 
-    // 4. Inject noscript fallback (only in production to avoid failed requests / html-to-image preview capture issues in dev/preview)
-    if (import.meta.env.PROD) {
-      const noscript = document.createElement('noscript')
-      noscript.id = META_PIXEL_NOSCRIPT_ID
-      const img = document.createElement('img')
-      img.height = 1
-      img.width = 1
-      img.style.display = 'none'
-      img.src = `https://www.facebook.com/tr?id=${encodeURIComponent(sanitizedPixelId)}&ev=PageView&noscript=1`
-      noscript.appendChild(img)
-      document.body.appendChild(noscript)
-    }
-
-    // 5. Apply LGPD consent rule
+    // 4. Apply LGPD consent rule
     const consent = this.hasConsent()
     if (window.fbq) {
       if (!consent) {
@@ -207,8 +189,6 @@ class MetaPixelManager {
     if (typeof window === 'undefined') return
     const script = document.getElementById(META_PIXEL_SCRIPT_ID)
     if (script) script.remove()
-    const noscript = document.getElementById(META_PIXEL_NOSCRIPT_ID)
-    if (noscript) noscript.remove()
     this.currentPixelId = null
     this.isInitialized = false
   }

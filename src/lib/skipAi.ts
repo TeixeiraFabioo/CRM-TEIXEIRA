@@ -268,50 +268,47 @@ export interface StreamAgentChatResult {
 }
 
 export interface GenerateChatResponseOptions {
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  messages: Array<{ role: string; content: string }>
   temperature?: number
   public?: boolean
+  signal?: AbortSignal
 }
 
 /**
- * Helper to call either the authenticated or public AI chat backend endpoint.
+ * Convenience helper to call backend AI chat endpoints (`/backend/v1/ai/chat` or `/backend/v1/ai/landing-chat`).
  */
-export async function generateChatResponse(options: GenerateChatResponseOptions): Promise<string> {
-  const isPublic = Boolean(options.public)
-  const endpoint = isPublic ? '/backend/v1/ai/landing-chat' : '/backend/v1/ai/chat'
-  const pbBaseUrl = (import.meta as any).env?.VITE_POCKETBASE_URL || ''
-  const fullUrl = `${pbBaseUrl}${endpoint}`
+export async function generateChatResponse(opts: GenerateChatResponseOptions): Promise<string> {
+  const endpoint = opts.public ? '/backend/v1/ai/landing-chat' : '/backend/v1/ai/chat'
+  const token = typeof window !== 'undefined' ? localStorage.getItem('pocketbase_auth') : null
+  let authToken = ''
+  if (token) {
+    try {
+      const parsed = JSON.parse(token)
+      authToken = parsed?.token || ''
+    } catch {
+      // ignore
+    }
+  }
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   }
-
-  // If authenticated and pocketbase token is available, attach Authorization header
-  if (!isPublic && typeof window !== 'undefined') {
-    try {
-      const stored = localStorage.getItem('pocketbase_auth')
-      if (stored) {
-        const parsed = JSON.parse(stored)
-        if (parsed?.token) {
-          headers['Authorization'] = parsed.token
-        }
-      }
-    } catch {
-      // Ignore JSON parse error
-    }
+  if (!opts.public && authToken) {
+    headers['Authorization'] = authToken
   }
 
-  const res = await fetch(fullUrl, {
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers,
     body: JSON.stringify({
-      messages: options.messages,
-      temperature: options.temperature,
+      messages: opts.messages,
+      temperature: opts.temperature ?? 0.7,
     }),
+    signal: opts.signal,
   })
 
   if (!res.ok) {
-    let errorMsg = `Chat request failed: ${res.status}`
+    let errorMsg = `HTTP ${res.status}`
     try {
       const errJson = await res.json()
       if (errJson?.error) errorMsg = errJson.error
@@ -322,8 +319,8 @@ export async function generateChatResponse(options: GenerateChatResponseOptions)
     throw new Error(errorMsg)
   }
 
-  const json = await res.json()
-  return json.text || ''
+  const data = await res.json()
+  return data?.text || ''
 }
 
 // Drive an agent stream end-to-end. Resolves only after `done` (turn fully persisted);
