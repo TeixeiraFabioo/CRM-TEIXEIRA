@@ -303,7 +303,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       tenant_id: createdTenant.id,
       status: 'active',
       active: true,
-      verified: true,
       settings: { dark_mode: true, language: 'pt-BR' },
     })
 

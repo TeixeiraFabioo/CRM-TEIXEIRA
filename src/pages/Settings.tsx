@@ -72,6 +72,7 @@ import { useTenant } from '@/contexts/TenantContext'
 import { CrmService } from '@/services/crm'
 import { TenantService } from '@/services/tenant'
 import pb from '@/lib/pocketbase/client'
+import { getErrorMessage } from '@/lib/pocketbase/errors'
 import type {
   ServiceRecord,
   TagRecord,
@@ -537,7 +538,6 @@ export function SettingsPage() {
         active: true,
         status: 'active',
         tenant_id: tenant.id,
-        verified: true,
       })
 
       await CrmService.logAudit(tenant.id, 'create_user', 'user', createdUser.id, null, {
@@ -568,10 +568,15 @@ export function SettingsPage() {
       loadAll()
     } catch (err: any) {
       console.error('Error creating user:', err)
+      const fieldMsg =
+        err?.data?.data && typeof err.data.data === 'object'
+          ? Object.entries(err.data.data)
+              .map(([f, d]: any) => `${f}: ${d?.message || d}`)
+              .join(', ')
+          : null
       const errorMsg =
-        err?.data?.data?.email?.message ||
-        err?.message ||
-        'Não foi possível criar o usuário. Verifique se o e-mail já existe.'
+        fieldMsg ||
+        getErrorMessage(err, 'Não foi possível criar o usuário. Verifique os dados informados.')
       toast({
         title: 'Erro ao cadastrar usuário',
         description: errorMsg,
@@ -667,8 +672,13 @@ export function SettingsPage() {
       setEditingUser(null)
     } catch (err: any) {
       console.error('Error editing user:', err)
-      const errorMsg =
-        err?.data?.data?.email?.message || err?.message || 'Não foi possível atualizar o usuário.'
+      const fieldMsg =
+        err?.data?.data && typeof err.data.data === 'object'
+          ? Object.entries(err.data.data)
+              .map(([f, d]: any) => `${f}: ${d?.message || d}`)
+              .join(', ')
+          : null
+      const errorMsg = fieldMsg || getErrorMessage(err, 'Não foi possível atualizar o usuário.')
       toast({
         title: 'Erro ao atualizar usuário',
         description: errorMsg,
@@ -736,7 +746,7 @@ export function SettingsPage() {
       console.error('Error toggling user active:', err)
       toast({
         title: 'Erro ao atualizar status',
-        description: err?.message || 'Falha ao comunicar com o servidor.',
+        description: getErrorMessage(err, 'Falha ao comunicar com o servidor.'),
         variant: 'destructive',
       })
     } finally {
@@ -842,7 +852,7 @@ export function SettingsPage() {
       console.error('Error resetting password:', err)
       toast({
         title: 'Erro ao redefinir senha',
-        description: err?.message || 'Falha ao atualizar a senha no servidor.',
+        description: getErrorMessage(err, 'Falha ao atualizar a senha no servidor.'),
         variant: 'destructive',
       })
     } finally {
@@ -922,7 +932,7 @@ export function SettingsPage() {
       console.error('Error deleting user:', err)
       toast({
         title: 'Erro ao excluir usuário',
-        description: err?.message || 'Falha ao remover o usuário.',
+        description: getErrorMessage(err, 'Falha ao remover o usuário.'),
         variant: 'destructive',
       })
     } finally {

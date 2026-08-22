@@ -2,6 +2,53 @@
 // $ai.agent(slug).chat (Skip-shape). Don't hand-roll the SSE reader —
 // past attempts shipped "undefinedundefined…" and "[object Object]…".
 
+export interface GenerateChatResponseOptions {
+  messages: Array<{ role: string; content: string }>
+  temperature?: number
+  public?: boolean
+}
+
+export async function generateChatResponse(options: GenerateChatResponseOptions): Promise<string> {
+  const endpoint = options.public ? '/backend/v1/ai/landing-chat' : '/backend/v1/ai/chat'
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+
+  // If pocketbase client has an auth token and request is authenticated, attach Authorization header
+  try {
+    const { default: pb } = await import('@/lib/pocketbase/client')
+    if (pb.authStore.token && !options.public) {
+      headers['Authorization'] = pb.authStore.token
+    }
+  } catch {
+    // ignore
+  }
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      messages: options.messages,
+      temperature: options.temperature,
+    }),
+  })
+
+  if (!response.ok) {
+    let errorMsg = `AI request failed with status ${response.status}`
+    try {
+      const data = await response.json()
+      if (data?.error) errorMsg = data.error
+    } catch {
+      // ignore
+    }
+    throw new Error(errorMsg)
+  }
+
+  const data = await response.json()
+  return data?.text || ''
+}
+
 export interface OpenAIChatResult {
   id: string
   model: string
@@ -265,62 +312,6 @@ export interface StreamAgentChatResult {
   message_id: string
   citations?: AgentCitation[]
   toolCalls: Array<{ id: string; name: string; ok: boolean }>
-}
-
-export interface GenerateChatResponseOptions {
-  messages: Array<{ role: string; content: string }>
-  temperature?: number
-  public?: boolean
-  signal?: AbortSignal
-}
-
-/**
- * Convenience helper to call backend AI chat endpoints (`/backend/v1/ai/chat` or `/backend/v1/ai/landing-chat`).
- */
-export async function generateChatResponse(opts: GenerateChatResponseOptions): Promise<string> {
-  const endpoint = opts.public ? '/backend/v1/ai/landing-chat' : '/backend/v1/ai/chat'
-  const token = typeof window !== 'undefined' ? localStorage.getItem('pocketbase_auth') : null
-  let authToken = ''
-  if (token) {
-    try {
-      const parsed = JSON.parse(token)
-      authToken = parsed?.token || ''
-    } catch {
-      // ignore
-    }
-  }
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  }
-  if (!opts.public && authToken) {
-    headers['Authorization'] = authToken
-  }
-
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      messages: opts.messages,
-      temperature: opts.temperature ?? 0.7,
-    }),
-    signal: opts.signal,
-  })
-
-  if (!res.ok) {
-    let errorMsg = `HTTP ${res.status}`
-    try {
-      const errJson = await res.json()
-      if (errJson?.error) errorMsg = errJson.error
-      else if (errJson?.message) errorMsg = errJson.message
-    } catch {
-      // ignore
-    }
-    throw new Error(errorMsg)
-  }
-
-  const data = await res.json()
-  return data?.text || ''
 }
 
 // Drive an agent stream end-to-end. Resolves only after `done` (turn fully persisted);
