@@ -83,22 +83,106 @@ export default function App() {
             <Route path="tarefas" element={<TarefasPage />} />
             <Route path="propostas" element={<PropostasPage />} />
             <Route path="contratos" element={<ContratosPage />} />
-            <Route path="comissoes" element={<ComissoesPage />} />
-            <Route path="metas" element={<MetasPage />} />
-            <Route path="ranking" element={<RankingPage />} />
+            <Route
+              path="comissoes"
+              element={
+                <RequireRole allowedRoles={['admin', 'manager']}>
+                  <ComissoesPage />
+                </RequireRole>
+              }
+            />
+            <Route
+              path="metas"
+              element={
+                <RequireRole allowedRoles={['admin', 'manager']}>
+                  <MetasPage />
+                </RequireRole>
+              }
+            />
+            <Route
+              path="ranking"
+              element={
+                <RequireRole allowedRoles={['admin', 'manager']}>
+                  <RankingPage />
+                </RequireRole>
+              }
+            />
 
             {/* Marketing & Intelligence */}
-            <Route path="campanhas" element={<CampanhasPage />} />
-            <Route path="marketing" element={<MarketingPage />} />
-            <Route path="inteligencia" element={<InteligenciaPage />} />
-            <Route path="relatorios" element={<RelatoriosPage />} />
-            <Route path="automacoes" element={<AutomacoesPage />} />
+            <Route
+              path="campanhas"
+              element={
+                <RequireRole allowedRoles={['admin', 'manager']}>
+                  <CampanhasPage />
+                </RequireRole>
+              }
+            />
+            <Route
+              path="marketing"
+              element={
+                <RequireRole allowedRoles={['admin', 'manager']}>
+                  <MarketingPage />
+                </RequireRole>
+              }
+            />
+            <Route
+              path="inteligencia"
+              element={
+                <RequireRole allowedRoles={['admin', 'manager']}>
+                  <InteligenciaPage />
+                </RequireRole>
+              }
+            />
+            <Route
+              path="relatorios"
+              element={
+                <RequireRole allowedRoles={['admin', 'manager']}>
+                  <RelatoriosPage />
+                </RequireRole>
+              }
+            />
+            <Route
+              path="automacoes"
+              element={
+                <RequireRole allowedRoles={['admin', 'manager']}>
+                  <AutomacoesPage />
+                </RequireRole>
+              }
+            />
 
             {/* System */}
-            <Route path="integrations" element={<IntegrationsPage />} />
-            <Route path="settings" element={<SettingsPage />} />
-            <Route path="auditoria" element={<AuditLogPage />} />
-            <Route path="base-conhecimento" element={<KnowledgeBasePage />} />
+            <Route
+              path="integrations"
+              element={
+                <RequireRole allowedRoles={['admin']}>
+                  <IntegrationsPage />
+                </RequireRole>
+              }
+            />
+            <Route
+              path="settings"
+              element={
+                <RequireRole allowedRoles={['admin']}>
+                  <SettingsPage />
+                </RequireRole>
+              }
+            />
+            <Route
+              path="auditoria"
+              element={
+                <RequireRole allowedRoles={['admin']}>
+                  <AuditLogPage />
+                </RequireRole>
+              }
+            />
+            <Route
+              path="base-conhecimento"
+              element={
+                <RequireRole allowedRoles={['admin', 'manager']}>
+                  <KnowledgeBasePage />
+                </RequireRole>
+              }
+            />
 
             {/* Fallback */}
             <Route path="*" element={<NotFound />} />

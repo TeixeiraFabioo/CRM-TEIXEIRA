@@ -58,7 +58,8 @@ interface GoalWithProgress extends GoalRecord {
 }
 
 export function MetasPage() {
-  const { tenant } = useTenant()
+  const { tenant, user } = useTenant()
+  const isAdmin = user?.role === 'admin'
   const { toast } = useToast()
 
   const [goals, setGoals] = useState<GoalRecord[]>([])

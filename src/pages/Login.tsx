@@ -260,19 +260,6 @@ export default function LoginPage() {
           </form>
 
           <CardFooter className="flex flex-col gap-3 pt-2 border-t border-[#152e59]/60 text-center">
-            {/* Quick Demo Access Button */}
-            <div className="w-full">
-              <button
-                type="button"
-                onClick={handleQuickDemoLogin}
-                disabled={isLoading}
-                className="w-full py-1.5 px-3 rounded-md bg-[#07162c] hover:bg-[#0d2242] text-[11px] text-slate-300 hover:text-amber-300 border border-[#1e3a6d] transition-all flex items-center justify-center gap-1.5"
-              >
-                <Shield className="h-3 w-3 text-amber-400" />
-                Acesso Rápido com Administrador Padrão (Dr. Fabio Santos)
-              </button>
-            </div>
-
             <div className="text-xs text-slate-300">
               Novo escritório ou filial jurídica?{' '}
               <Link

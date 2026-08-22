@@ -627,6 +627,16 @@ export interface AuditLogRecord {
   created?: string
 }
 
+export interface PermissionRecord {
+  id: string
+  role_id: string
+  resource: string
+  action: string
+  granted?: boolean
+  created?: string
+  updated?: string
+}
+
 export interface SlaConfigRecord {
   id: string
   tenant_id: string

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
-import { TenantRecord, UserRecord } from '@/types/platform'
+import { TenantRecord, UserRecord, PermissionRecord } from '@/types/platform'
 import { TenantService } from '@/services/tenant'
 import { metaPixel } from '@/lib/metaPixel'
 import pb from '@/lib/pocketbase/client'

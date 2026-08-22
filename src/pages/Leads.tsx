@@ -571,12 +571,14 @@ export function LeadsPage() {
                           <DropdownMenuItem onClick={() => navigate(`/leads/${lead.id}`)}>
                             <Eye className="h-3.5 w-3.5 mr-2" /> Visão 360º Lead
                           </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => handleSoftDelete(lead.id)}
-                            className="text-rose-600 focus:text-rose-600"
-                          >
-                            <Trash2 className="h-3.5 w-3.5 mr-2" /> Arquivar Lead
-                          </DropdownMenuItem>
+                          {isAdmin && (
+                            <DropdownMenuItem
+                              onClick={() => handleSoftDelete(lead.id)}
+                              className="text-rose-600 focus:text-rose-600"
+                            >
+                              <Trash2 className="h-3.5 w-3.5 mr-2" /> Arquivar Lead
+                            </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </td>

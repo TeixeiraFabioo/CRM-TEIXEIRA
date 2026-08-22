@@ -128,6 +128,28 @@ export default function Layout() {
     },
   ]
 
+  // Role-based menu filtering.
+  // - admin: sees everything.
+  // - manager: sees everything EXCEPT the "SISTEMA & INTEGRAÇÕES" group.
+  // - user (advogado/consultor): sees PRINCIPAL + CADASTROS & CONTATOS +
+  //   a restricted DOCUMENTOS & HONORÁRIOS group (Propostas + Contratos
+  //   only). Does NOT see MARKETING nor SISTEMA.
+  const role = (user?.role as 'admin' | 'manager' | 'user' | undefined) || 'user'
+
+  const filteredNavGroups = navGroups
+    .map((group) => {
+      if (group.title === 'SISTEMA & INTEGRAÇÕES' && role !== 'admin') return null
+      if (group.title === 'MARKETING & INTELIGÊNCIA' && role === 'user') return null
+      if (group.title === 'DOCUMENTOS & HONORÁRIOS' && role === 'user') {
+        return {
+          ...group,
+          items: group.items.filter((item) => ['/propostas', '/contratos'].includes(item.path)),
+        }
+      }
+      return group
+    })
+    .filter((g): g is (typeof navGroups)[number] => g !== null)
+
   const currentUser = pb.authStore.record
 
   return (
@@ -348,7 +370,7 @@ export default function Layout() {
               </div>
 
               <div className="flex-1 overflow-y-auto py-4 space-y-4 custom-scrollbar">
-                {navGroups.map((group) => (
+                {filteredNavGroups.map((group) => (
                   <div key={group.title}>
                     <div className="text-[10px] font-bold text-slate-400 mb-1 px-2">
                       {group.title}

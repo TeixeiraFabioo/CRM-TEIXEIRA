@@ -269,56 +269,6 @@ export interface StreamAgentChatResult {
 
 // Drive an agent stream end-to-end. Resolves only after `done` (turn fully persisted);
 // throws on abort, on the `error` event, or if the stream ends before `done`.
-export async function generateChatResponse(options: {
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
-  temperature?: number
-}): Promise<string> {
-  const userMsg = options.messages.filter((m) => m.role === 'user').pop()?.content || ''
-  const systemMsg = options.messages
-    .filter((m) => m.role === 'system')
-    .map((m) => m.content)
-    .join('\n')
-
-  // Provide intelligent structured responses based on legal context
-  const lower = userMsg.toLowerCase()
-  if (
-    lower.includes('tribut') ||
-    lower.includes('crédito') ||
-    lower.includes('imposto') ||
-    lower.includes('pis') ||
-    lower.includes('icms')
-  ) {
-    return `Com relação à área tributária, o escritório Teixeira & Nascimento possui teses consolidadas para recuperação de créditos fiscais (ex: Tema 69 STF, exclusão do ICMS da base do PIS/COFINS e verbas indenizatórias do INSS). Nossos especialistas realizam um levantamento preliminar do passivo/crédito sem custo inicial. Recomendamos preencher nosso formulário de contato para agendar uma análise detalhada dos seus balancetes.`
-  }
-  if (
-    lower.includes('banc') ||
-    lower.includes('juro') ||
-    lower.includes('ccb') ||
-    lower.includes('financiamento') ||
-    lower.includes('dívida')
-  ) {
-    return `Na área de Direito Bancário, atuamos na revisão de Cédulas de Crédito Bancário (CCB), capital de giro e contratos de financiamento, identificando cláusulas abusivas, tarifas ilegais e juros capitalizados indevidamente. Conseguimos reduções expressivas em renegociações extrajudiciais e judiciais. Por favor, deixe seu contato no formulário da página para falar com nossa equipe bancária.`
-  }
-  if (
-    lower.includes('trabalh') ||
-    lower.includes('funcionári') ||
-    lower.includes('demiss') ||
-    lower.includes('rescis')
-  ) {
-    return `No âmbito trabalhista, oferecemos consultoria jurídica preventiva para adequação de rotinas e mitigação de passivos, além de defesa contenciosa estratégica de alta complexidade. Podemos avaliar sua situação e elaborar um plano de ação seguro.`
-  }
-  if (
-    lower.includes('consumidor') ||
-    lower.includes('dano') ||
-    lower.includes('negativ') ||
-    lower.includes('golpe')
-  ) {
-    return `Em Direito do Consumidor de Alto Impacto, atuamos em fraudes financeiras, cobranças indevidas, negativações ilegais e descumprimento de contratos relevantes com pleito de indenização e repetição de indébito.`
-  }
-
-  return `Obrigado pelo contato com o Teixeira & Nascimento Advogados Associados. Atuamos com rigor técnico em Direito Tributário, Bancário, Trabalhista e Consumidor. Nossos sócios e especialistas estão à disposição para analisar seu caso específico. Por gentileza, informe seus dados no formulário da página para iniciarmos sua triagem!`
-}
-
 export async function streamAgentChat(
   response: Response,
   handlers: StreamAgentChatHandlers = {},
