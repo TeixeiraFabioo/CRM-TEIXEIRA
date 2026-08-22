@@ -15,6 +15,9 @@ import {
   History,
   ShieldCheck,
   Zap,
+  Edit,
+  Trash2,
+  Ban,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -26,7 +29,18 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -38,19 +52,30 @@ import { useToast } from '@/hooks/use-toast'
 import { useTenant } from '@/contexts/TenantContext'
 import { CrmService } from '@/services/crm'
 import pb from '@/lib/pocketbase/client'
-import { ContractRecord, CustomerRecord } from '@/types/platform'
+import { ContractRecord, CustomerRecord, OpportunityRecord, ServiceRecord } from '@/types/platform'
 
 export function ContratosPage() {
-  const { tenant } = useTenant()
+  const { tenant, userRole, user } = useTenant()
+  const isAdmin = userRole === 'admin' || user?.role === 'admin'
   const { toast } = useToast()
 
   const [contracts, setContracts] = useState<ContractRecord[]>([])
   const [customers, setCustomers] = useState<CustomerRecord[]>([])
+  const [opportunities, setOpportunities] = useState<OpportunityRecord[]>([])
+  const [services, setServices] = useState<ServiceRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [createModalOpen, setCreateModalOpen] = useState(false)
+  const [editModalOpen, setEditModalOpen] = useState(false)
+  const [cancelModalOpen, setCancelModalOpen] = useState(false)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [detailModalOpen, setDetailModalOpen] = useState(false)
   const [selectedContract, setSelectedContract] = useState<ContractRecord | null>(null)
+  const [contractToEdit, setContractToEdit] = useState<ContractRecord | null>(null)
+  const [contractToCancel, setContractToCancel] = useState<ContractRecord | null>(null)
+  const [contractToDelete, setContractToDelete] = useState<ContractRecord | null>(null)
+  const [cancelReason, setCancelReason] = useState('')
   const [sendingId, setSendingId] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
 
   const [formData, setFormData] = useState<Partial<ContractRecord>>({
     titulo: 'Contrato de Prestação de Serviços Advocatícios',
@@ -61,16 +86,38 @@ export function ContratosPage() {
     status: 'aguardando',
   })
 
+  const [editFormData, setEditFormData] = useState<{
+    titulo: string
+    cliente_id: string
+    oportunidade_id: string
+    valor: number
+    status: string
+    data_envio: string
+    sign_provider: string
+  }>({
+    titulo: '',
+    cliente_id: '',
+    oportunidade_id: '',
+    valor: 0,
+    status: 'aguardando',
+    data_envio: '',
+    sign_provider: 'zapsign',
+  })
+
   const loadData = async () => {
     if (!tenant?.id) return
     setLoading(true)
     try {
-      const [cList, custList] = await Promise.all([
+      const [cList, custList, oppList, sList] = await Promise.all([
         CrmService.getContracts(tenant.id),
         CrmService.getCustomers(tenant.id),
+        CrmService.getOpportunities(tenant.id),
+        CrmService.getServices(tenant.id),
       ])
       setContracts(cList)
       setCustomers(custList)
+      setOpportunities(oppList)
+      setServices(sList)
       if (selectedContract) {
         const refreshed = cList.find((c) => c.id === selectedContract.id)
         if (refreshed) setSelectedContract(refreshed)
@@ -87,6 +134,7 @@ export function ContratosPage() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!tenant?.id || !formData.titulo) return
+    setSubmitting(true)
     try {
       await CrmService.createContract(tenant.id, {
         ...formData,
@@ -99,6 +147,105 @@ export function ContratosPage() {
       loadData()
     } catch (e) {
       toast({ title: 'Erro ao criar contrato', variant: 'destructive' })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleOpenEdit = (c: ContractRecord) => {
+    setContractToEdit(c)
+    setEditFormData({
+      titulo: c.titulo || '',
+      cliente_id: c.cliente_id || '',
+      oportunidade_id: c.oportunidade_id || '',
+      valor: Number(c.valor || 0),
+      status: c.status || 'aguardando',
+      data_envio: c.data_envio ? c.data_envio.slice(0, 10) : '',
+      sign_provider: c.sign_provider || c.plataforma || 'zapsign',
+    })
+    setEditModalOpen(true)
+  }
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!contractToEdit?.id || !editFormData.titulo) return
+    setSubmitting(true)
+    try {
+      await pb.collection('contracts').update(contractToEdit.id, {
+        titulo: editFormData.titulo,
+        cliente_id: editFormData.cliente_id || null,
+        oportunidade_id: editFormData.oportunidade_id || null,
+        valor: Number(editFormData.valor) || 0,
+        status: editFormData.status,
+        plataforma: editFormData.sign_provider,
+        sign_provider: editFormData.sign_provider,
+        ...(editFormData.data_envio ? { data_envio: editFormData.data_envio } : {}),
+      })
+      toast({ title: 'Contrato atualizado com sucesso!' })
+      setEditModalOpen(false)
+      setContractToEdit(null)
+      loadData()
+    } catch (e: any) {
+      toast({ title: 'Erro ao atualizar contrato', variant: 'destructive' })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleOpenCancel = (c: ContractRecord) => {
+    setContractToCancel(c)
+    setCancelReason('')
+    setCancelModalOpen(true)
+  }
+
+  const handleConfirmCancel = async () => {
+    if (!contractToCancel?.id) return
+    setSubmitting(true)
+    try {
+      const existingHistory = contractToCancel.historico || []
+      const updatedHistory = [
+        ...existingHistory,
+        {
+          data: new Date().toISOString(),
+          evento: `Contrato cancelado pelo admin. Motivo: ${cancelReason.trim() || 'Não informado'}`,
+          usuario: user?.name || user?.email || 'Admin',
+        },
+      ]
+
+      await pb.collection('contracts').update(contractToCancel.id, {
+        status: 'cancelado',
+        sign_status: 'declined',
+        historico: updatedHistory,
+      })
+      toast({ title: 'Contrato cancelado com sucesso!' })
+      setCancelModalOpen(false)
+      setContractToCancel(null)
+      loadData()
+    } catch (e: any) {
+      toast({ title: 'Erro ao cancelar contrato', variant: 'destructive' })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleOpenDelete = (c: ContractRecord) => {
+    setContractToDelete(c)
+    setDeleteConfirmOpen(true)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!contractToDelete?.id) return
+    setSubmitting(true)
+    try {
+      await pb.collection('contracts').delete(contractToDelete.id)
+      toast({ title: 'Contrato excluído com sucesso!' })
+      setDeleteConfirmOpen(false)
+      setContractToDelete(null)
+      loadData()
+    } catch (e: any) {
+      toast({ title: 'Erro ao excluir contrato', variant: 'destructive' })
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -178,6 +325,16 @@ export function ContratosPage() {
   }
 
   const getStatusBadge = (c: ContractRecord) => {
+    if (c.status === 'cancelado') {
+      return (
+        <Badge
+          variant="destructive"
+          className="gap-1 text-[11px] bg-red-500/10 text-red-600 border-red-500/30"
+        >
+          <XCircle className="h-3 w-3" /> Cancelado
+        </Badge>
+      )
+    }
     const st = getNormalizedStatus(c)
     switch (st) {
       case 'signed':
@@ -388,6 +545,43 @@ export function ContratosPage() {
                         >
                           Ver Detalhes →
                         </Button>
+
+                        {/* ADMIN ACTIONS: EDIT, CANCEL, DELETE */}
+                        {isAdmin && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleOpenEdit(c)}
+                              className="h-7 text-xs gap-1"
+                              title="Editar Contrato (Admin)"
+                            >
+                              <Edit className="h-3.5 w-3.5" />
+                              <span className="hidden sm:inline">Editar</span>
+                            </Button>
+                            {c.status !== 'cancelado' && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleOpenCancel(c)}
+                                className="h-7 text-xs text-amber-600 hover:bg-amber-500/10 gap-1"
+                                title="Cancelar Contrato (Admin)"
+                              >
+                                <Ban className="h-3.5 w-3.5" />
+                                <span className="hidden sm:inline">Cancelar</span>
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleOpenDelete(c)}
+                              className="h-7 text-xs text-destructive hover:bg-destructive/10"
+                              title="Excluir Contrato (Admin)"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -677,6 +871,209 @@ export function ContratosPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* MODAL DE EDIÇÃO (ADMIN ONLY) */}
+      <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-legal-serif">
+              Editar Contrato de Honorários (Admin)
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleUpdate} className="space-y-3 pt-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Título do Instrumento *</Label>
+              <Input
+                required
+                value={editFormData.titulo}
+                onChange={(e) => setEditFormData({ ...editFormData, titulo: e.target.value })}
+                className="h-9 text-xs"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Cliente Contratante</Label>
+                <Select
+                  value={editFormData.cliente_id || 'none'}
+                  onValueChange={(val) =>
+                    setEditFormData({ ...editFormData, cliente_id: val === 'none' ? '' : val })
+                  }
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Selecione o cliente..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Nenhum / Cliente Geral</SelectItem>
+                    {customers.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Oportunidade Vinculada</Label>
+                <Select
+                  value={editFormData.oportunidade_id || 'none'}
+                  onValueChange={(val) =>
+                    setEditFormData({ ...editFormData, oportunidade_id: val === 'none' ? '' : val })
+                  }
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Selecione..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Nenhuma</SelectItem>
+                    {opportunities.map((opp) => (
+                      <SelectItem key={opp.id} value={opp.id}>
+                        {opp.title}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Valor dos Honorários (R$)</Label>
+                <Input
+                  type="number"
+                  value={editFormData.valor}
+                  onChange={(e) =>
+                    setEditFormData({ ...editFormData, valor: Number(e.target.value) })
+                  }
+                  className="h-9 text-xs font-bold"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Status do Contrato</Label>
+                <Select
+                  value={editFormData.status}
+                  onValueChange={(val) => setEditFormData({ ...editFormData, status: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="aguardando">Aguardando Envio</SelectItem>
+                    <SelectItem value="enviado">Enviado</SelectItem>
+                    <SelectItem value="visualizado">Visualizado</SelectItem>
+                    <SelectItem value="assinado">Assinado</SelectItem>
+                    <SelectItem value="recusado">Recusado</SelectItem>
+                    <SelectItem value="expirado">Expirado</SelectItem>
+                    <SelectItem value="cancelado">Cancelado</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Plataforma</Label>
+                <Select
+                  value={editFormData.sign_provider}
+                  onValueChange={(val) => setEditFormData({ ...editFormData, sign_provider: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="zapsign">ZapSign</SelectItem>
+                    <SelectItem value="clicksign">Clicksign</SelectItem>
+                    <SelectItem value="manual">Manual / Física</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Data de Envio / Vigência</Label>
+                <Input
+                  type="date"
+                  value={editFormData.data_envio}
+                  onChange={(e) => setEditFormData({ ...editFormData, data_envio: e.target.value })}
+                  className="h-9 text-xs"
+                />
+              </div>
+            </div>
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={submitting}
+                onClick={() => setEditModalOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={submitting}
+                className="bg-[#0A1F3F] text-white"
+              >
+                {submitting ? 'Salvando...' : 'Salvar Alterações'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL DE CANCELAMENTO COM MOTIVO (ADMIN ONLY) */}
+      <AlertDialog open={cancelModalOpen} onOpenChange={setCancelModalOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-amber-600 flex items-center gap-2">
+              <Ban className="h-5 w-5" /> Cancelar Contrato
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja cancelar o contrato <strong>{contractToCancel?.titulo}</strong>
+              ? O status será alterado para <em>cancelado</em> e o histórico será preservado.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-1.5 py-2">
+            <Label className="text-xs font-semibold">Motivo do Cancelamento (opcional)</Label>
+            <Textarea
+              rows={2}
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              placeholder="Ex: Desistência do cliente antes da assinatura..."
+              className="text-xs"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={submitting}>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={submitting}
+              onClick={handleConfirmCancel}
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              {submitting ? 'Cancelando...' : 'Confirmar Cancelamento'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* MODAL DE EXCLUSÃO (ADMIN ONLY) */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir Contrato de Honorários</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir o contrato <strong>{contractToDelete?.titulo}</strong>?
+              Esta ação removerá o registro permanentemente e não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={submitting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={submitting}
+              onClick={handleConfirmDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {submitting ? 'Excluindo...' : 'Sim, Excluir'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

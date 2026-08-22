@@ -174,7 +174,27 @@ export const CrmService = {
   },
 
   async updatePessoa(id: string, data: Partial<PessoaRecord>): Promise<PessoaRecord> {
-    return await pb.collection('pessoas').update<PessoaRecord>(id, data)
+    const old = await pb
+      .collection('pessoas')
+      .getOne<PessoaRecord>(id)
+      .catch(() => null)
+    const rec = await pb.collection('pessoas').update<PessoaRecord>(id, data)
+    if (old) {
+      await this.logAudit(rec.tenant_id, 'update', 'pessoa', id, old, rec)
+    }
+    return rec
+  },
+
+  async deletePessoa(id: string): Promise<boolean> {
+    const rec = await pb
+      .collection('pessoas')
+      .getOne<PessoaRecord>(id)
+      .catch(() => null)
+    const res = await pb.collection('pessoas').delete(id)
+    if (rec) {
+      await this.logAudit(rec.tenant_id, 'delete', 'pessoa', id, rec, null)
+    }
+    return res
   },
 
   async getEmpresas(tenantId: string): Promise<EmpresaRecord[]> {
@@ -199,7 +219,27 @@ export const CrmService = {
   },
 
   async updateEmpresa(id: string, data: Partial<EmpresaRecord>): Promise<EmpresaRecord> {
-    return await pb.collection('empresas').update<EmpresaRecord>(id, data)
+    const old = await pb
+      .collection('empresas')
+      .getOne<EmpresaRecord>(id)
+      .catch(() => null)
+    const rec = await pb.collection('empresas').update<EmpresaRecord>(id, data)
+    if (old) {
+      await this.logAudit(rec.tenant_id, 'update', 'empresa', id, old, rec)
+    }
+    return rec
+  },
+
+  async deleteEmpresa(id: string): Promise<boolean> {
+    const rec = await pb
+      .collection('empresas')
+      .getOne<EmpresaRecord>(id)
+      .catch(() => null)
+    const res = await pb.collection('empresas').delete(id)
+    if (rec) {
+      await this.logAudit(rec.tenant_id, 'delete', 'empresa', id, rec, null)
+    }
+    return res
   },
 
   // --- CUSTOMERS (CLIENTES) ---
@@ -569,7 +609,27 @@ export const CrmService = {
   },
 
   async updateProposal(id: string, data: Partial<ProposalRecord>): Promise<ProposalRecord> {
-    return await pb.collection('proposals').update<ProposalRecord>(id, data)
+    const old = await pb
+      .collection('proposals')
+      .getOne<ProposalRecord>(id)
+      .catch(() => null)
+    const rec = await pb.collection('proposals').update<ProposalRecord>(id, data)
+    if (old) {
+      await this.logAudit(rec.tenant_id, 'update', 'proposal', id, old, rec)
+    }
+    return rec
+  },
+
+  async deleteProposal(id: string): Promise<boolean> {
+    const rec = await pb
+      .collection('proposals')
+      .getOne<ProposalRecord>(id)
+      .catch(() => null)
+    const res = await pb.collection('proposals').delete(id)
+    if (rec) {
+      await this.logAudit(rec.tenant_id, 'delete', 'proposal', id, rec, null)
+    }
+    return res
   },
 
   // --- CONTRACTS (CONTRATOS) ---
@@ -627,7 +687,27 @@ export const CrmService = {
   },
 
   async updateContract(id: string, data: Partial<ContractRecord>): Promise<ContractRecord> {
-    return await pb.collection('contracts').update<ContractRecord>(id, data)
+    const old = await pb
+      .collection('contracts')
+      .getOne<ContractRecord>(id)
+      .catch(() => null)
+    const rec = await pb.collection('contracts').update<ContractRecord>(id, data)
+    if (old) {
+      await this.logAudit(rec.tenant_id, 'update', 'contract', id, old, rec)
+    }
+    return rec
+  },
+
+  async deleteContract(id: string): Promise<boolean> {
+    const rec = await pb
+      .collection('contracts')
+      .getOne<ContractRecord>(id)
+      .catch(() => null)
+    const res = await pb.collection('contracts').delete(id)
+    if (rec) {
+      await this.logAudit(rec.tenant_id, 'delete', 'contract', id, rec, null)
+    }
+    return res
   },
 
   async sendContractForSignature(contractId: string): Promise<ContractRecord> {
@@ -844,7 +924,27 @@ export const CrmService = {
   },
 
   async updateService(id: string, data: Partial<ServiceRecord>): Promise<ServiceRecord> {
-    return await pb.collection('services').update<ServiceRecord>(id, data)
+    const old = await pb
+      .collection('services')
+      .getOne<ServiceRecord>(id)
+      .catch(() => null)
+    const rec = await pb.collection('services').update<ServiceRecord>(id, data)
+    if (old) {
+      await this.logAudit(rec.tenant_id, 'update', 'service', id, old, rec)
+    }
+    return rec
+  },
+
+  async deleteService(id: string): Promise<boolean> {
+    const rec = await pb
+      .collection('services')
+      .getOne<ServiceRecord>(id)
+      .catch(() => null)
+    const res = await pb.collection('services').delete(id)
+    if (rec) {
+      await this.logAudit(rec.tenant_id, 'delete', 'service', id, rec, null)
+    }
+    return res
   },
 
   // --- TAGS ---

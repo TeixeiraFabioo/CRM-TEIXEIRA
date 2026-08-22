@@ -1,6 +1,17 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { UserCheck, Search, Plus, Phone, Mail, Building2, Tag, Eye, Trash2 } from 'lucide-react'
+import {
+  UserCheck,
+  Search,
+  Plus,
+  Phone,
+  Mail,
+  Building2,
+  Tag,
+  Eye,
+  Trash2,
+  Edit,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -11,6 +22,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -23,10 +44,12 @@ import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
 import { useTenant } from '@/contexts/TenantContext'
 import { CrmService } from '@/services/crm'
+import pb from '@/lib/pocketbase/client'
 import { PessoaRecord, EmpresaRecord } from '@/types/platform'
 
 export function PessoasPage() {
-  const { tenant } = useTenant()
+  const { tenant, userRole, user } = useTenant()
+  const isAdmin = userRole === 'admin' || user?.role === 'admin'
   const { toast } = useToast()
   const navigate = useNavigate()
 
@@ -35,8 +58,24 @@ export function PessoasPage() {
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
   const [createModalOpen, setCreateModalOpen] = useState(false)
+  const [editModalOpen, setEditModalOpen] = useState(false)
+  const [editingPessoa, setEditingPessoa] = useState<PessoaRecord | null>(null)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [pessoaToDelete, setPessoaToDelete] = useState<PessoaRecord | null>(null)
+  const [submitting, setSubmitting] = useState(false)
 
   const [formData, setFormData] = useState<Partial<PessoaRecord>>({
+    nome: '',
+    email: '',
+    telefone: '',
+    whatsapp: '',
+    cpf: '',
+    cargo: '',
+    empresa_id: '',
+    observacoes: '',
+  })
+
+  const [editFormData, setEditFormData] = useState<Partial<PessoaRecord>>({
     nome: '',
     email: '',
     telefone: '',
@@ -72,6 +111,7 @@ export function PessoasPage() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!tenant?.id || !formData.nome) return
+    setSubmitting(true)
     try {
       await CrmService.createPessoa(tenant.id, formData)
       toast({ title: 'Pessoa/Contato cadastrado com sucesso!' })
@@ -89,6 +129,56 @@ export function PessoasPage() {
       loadData()
     } catch (e: any) {
       toast({ title: 'Erro ao cadastrar', variant: 'destructive' })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleOpenEdit = (pessoa: PessoaRecord) => {
+    setEditingPessoa(pessoa)
+    setEditFormData({
+      nome: pessoa.nome || '',
+      email: pessoa.email || '',
+      telefone: pessoa.telefone || '',
+      whatsapp: pessoa.whatsapp || '',
+      cpf: pessoa.cpf || '',
+      cargo: pessoa.cargo || '',
+      empresa_id: pessoa.empresa_id || '',
+      observacoes: pessoa.observacoes || '',
+    })
+    setEditModalOpen(true)
+  }
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingPessoa?.id || !editFormData.nome) return
+    setSubmitting(true)
+    try {
+      await pb.collection('pessoas').update(editingPessoa.id, editFormData)
+      toast({ title: 'Contato atualizado com sucesso!' })
+      setEditModalOpen(false)
+      setEditingPessoa(null)
+      loadData()
+    } catch (e: any) {
+      toast({ title: 'Erro ao atualizar contato', variant: 'destructive' })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!pessoaToDelete?.id) return
+    setSubmitting(true)
+    try {
+      await pb.collection('pessoas').delete(pessoaToDelete.id)
+      toast({ title: 'Contato excluído com sucesso!' })
+      setDeleteConfirmOpen(false)
+      setPessoaToDelete(null)
+      loadData()
+    } catch (e: any) {
+      toast({ title: 'Erro ao excluir contato', variant: 'destructive' })
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -186,14 +276,40 @@ export function PessoasPage() {
                       {p.cpf || '—'}
                     </td>
                     <td className="p-3.5 pr-4 text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => navigate(`/pessoas/${p.id}`)}
-                        className="h-7 text-xs"
-                      >
-                        Ver Perfil
-                      </Button>
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleOpenEdit(p)}
+                          className="h-7 text-xs gap-1"
+                          title="Editar Contato"
+                        >
+                          <Edit className="h-3.5 w-3.5" />
+                          <span>Editar</span>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => navigate(`/pessoas/${p.id}`)}
+                          className="h-7 text-xs"
+                        >
+                          Ver Perfil
+                        </Button>
+                        {isAdmin && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setPessoaToDelete(p)
+                              setDeleteConfirmOpen(true)
+                            }}
+                            className="h-7 text-xs text-destructive hover:bg-destructive/10"
+                            title="Excluir Contato (Admin)"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -265,13 +381,16 @@ export function PessoasPage() {
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold">Empresa Vinculada</Label>
               <Select
-                value={formData.empresa_id}
-                onValueChange={(val) => setFormData({ ...formData, empresa_id: val })}
+                value={formData.empresa_id || 'none'}
+                onValueChange={(val) =>
+                  setFormData({ ...formData, empresa_id: val === 'none' ? '' : val })
+                }
               >
                 <SelectTrigger className="h-9 text-xs">
                   <SelectValue placeholder="Selecione a empresa..." />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="none">Nenhuma (Autônomo / Direto)</SelectItem>
                   {empresas.map((emp) => (
                     <SelectItem key={emp.id} value={emp.id}>
                       {emp.razao_social}
@@ -280,22 +399,178 @@ export function PessoasPage() {
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Notas / Observações</Label>
+              <Textarea
+                rows={2}
+                value={formData.observacoes || ''}
+                onChange={(e) => setFormData({ ...formData, observacoes: e.target.value })}
+                className="text-xs"
+                placeholder="Observações adicionais..."
+              />
+            </div>
             <DialogFooter className="pt-2">
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
+                disabled={submitting}
                 onClick={() => setCreateModalOpen(false)}
               >
                 Cancelar
               </Button>
-              <Button type="submit" size="sm" className="bg-[#0A1F3F] text-white">
-                Salvar Contato
+              <Button
+                type="submit"
+                size="sm"
+                disabled={submitting}
+                className="bg-[#0A1F3F] text-white"
+              >
+                {submitting ? 'Salvando...' : 'Salvar Contato'}
               </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* EDIT MODAL */}
+      <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-legal-serif">
+              Editar Pessoa / Decisor
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleUpdate} className="space-y-3 pt-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Nome Completo *</Label>
+              <Input
+                required
+                value={editFormData.nome || ''}
+                onChange={(e) => setEditFormData({ ...editFormData, nome: e.target.value })}
+                className="h-9 text-xs"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Cargo / Função</Label>
+                <Input
+                  value={editFormData.cargo || ''}
+                  onChange={(e) => setEditFormData({ ...editFormData, cargo: e.target.value })}
+                  placeholder="Ex: Diretor Financeiro"
+                  className="h-9 text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">CPF</Label>
+                <Input
+                  value={editFormData.cpf || ''}
+                  onChange={(e) => setEditFormData({ ...editFormData, cpf: e.target.value })}
+                  placeholder="000.000.000-00"
+                  className="h-9 text-xs"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">WhatsApp / Telefone</Label>
+                <Input
+                  value={editFormData.whatsapp || editFormData.telefone || ''}
+                  onChange={(e) =>
+                    setEditFormData({
+                      ...editFormData,
+                      whatsapp: e.target.value,
+                      telefone: e.target.value,
+                    })
+                  }
+                  className="h-9 text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">E-mail</Label>
+                <Input
+                  type="email"
+                  value={editFormData.email || ''}
+                  onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+                  className="h-9 text-xs"
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Empresa Vinculada</Label>
+              <Select
+                value={editFormData.empresa_id || 'none'}
+                onValueChange={(val) =>
+                  setEditFormData({ ...editFormData, empresa_id: val === 'none' ? '' : val })
+                }
+              >
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue placeholder="Selecione a empresa..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Nenhuma (Autônomo / Direto)</SelectItem>
+                  {empresas.map((emp) => (
+                    <SelectItem key={emp.id} value={emp.id}>
+                      {emp.razao_social}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Notas / Observações</Label>
+              <Textarea
+                rows={2}
+                value={editFormData.observacoes || ''}
+                onChange={(e) => setEditFormData({ ...editFormData, observacoes: e.target.value })}
+                className="text-xs"
+                placeholder="Observações adicionais..."
+              />
+            </div>
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={submitting}
+                onClick={() => setEditModalOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={submitting}
+                className="bg-[#0A1F3F] text-white"
+              >
+                {submitting ? 'Salvando...' : 'Salvar Alterações'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* DELETE CONFIRMATION ALERT DIALOG */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir Contato / Pessoa</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir o contato <strong>{pessoaToDelete?.nome}</strong>? Esta
+              ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={submitting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={submitting}
+              onClick={handleConfirmDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {submitting ? 'Excluindo...' : 'Sim, Excluir'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

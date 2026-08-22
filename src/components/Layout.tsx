@@ -33,6 +33,7 @@ import {
   UserCheck,
   UserCircle,
   BookOpen,
+  FolderKanban,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -94,6 +95,7 @@ export default function Layout() {
       items: [
         { name: 'Contatos-chave', path: '/pessoas', icon: UserCheck },
         { name: 'Empresas', path: '/empresas', icon: Building2 },
+        { name: 'Catálogo de Serviços', path: '/servicos', icon: FolderKanban },
         { name: 'Oportunidades', path: '/opportunities', icon: Target },
         { name: 'Tarefas & Reuniões', path: '/tarefas', icon: CheckSquare },
       ],
@@ -156,6 +158,7 @@ export default function Layout() {
     '/clientes',
     '/pessoas',
     '/empresas',
+    '/servicos',
     '/opportunities',
     '/tarefas',
     '/propostas',
@@ -177,11 +180,11 @@ export default function Layout() {
     '/leads',
     '/pipeline',
     '/clientes',
+    '/servicos',
     '/tarefas',
     '/base-conhecimento',
     '/meu-perfil',
   ])
-
   const allowedPaths =
     role === 'admin'
       ? null // null = no filtering

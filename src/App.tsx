@@ -25,6 +25,7 @@ import PessoaDetailPage from '@/pages/PessoaDetail'
 import EmpresasPage from '@/pages/Empresas'
 import EmpresaDetailPage from '@/pages/EmpresaDetail'
 import TarefasPage from '@/pages/Tarefas'
+import ServicosPage from '@/pages/Servicos'
 import PropostasPage from '@/pages/Propostas'
 import ContratosPage from '@/pages/Contratos'
 import ComissoesPage from '@/pages/Comissoes'
@@ -62,7 +63,6 @@ export default function App() {
             }
           >
             {/* Dashboard — everyone */}
-
             {/* Leads — admin+gestor see all; advogado sees only their own (enforced by API rules) */}
             <Route
               index
@@ -88,7 +88,6 @@ export default function App() {
                 </RequireRole>
               }
             />
-
             {/* Clientes — advogado sees only records under their responsibility */}
             <Route
               path="clientes"
@@ -106,7 +105,6 @@ export default function App() {
                 </RequireRole>
               }
             />
-
             {/* Pessoas & Empresas — admin + gestor only */}
             <Route
               path="pessoas"
@@ -116,6 +114,14 @@ export default function App() {
                 </RequireRole>
               }
             />
+            <Route
+              path="servicos"
+              element={
+                <RequireRole allowedRoles={['admin', 'gestor', 'advogado']}>
+                  <ServicosPage />
+                </RequireRole>
+              }
+            />{' '}
             <Route
               path="pessoas/:id"
               element={
@@ -140,7 +146,6 @@ export default function App() {
                 </RequireRole>
               }
             />
-
             {/* Pipeline & Opportunities */}
             <Route
               path="pipeline"
@@ -166,7 +171,6 @@ export default function App() {
                 </RequireRole>
               }
             />
-
             {/* Sales & Documents */}
             <Route
               path="tarefas"
@@ -216,7 +220,6 @@ export default function App() {
                 </RequireRole>
               }
             />
-
             {/* Marketing & Intelligence */}
             <Route
               path="campanhas"
@@ -258,7 +261,6 @@ export default function App() {
                 </RequireRole>
               }
             />
-
             {/* System — admin only */}
             <Route
               path="integrations"
@@ -300,7 +302,6 @@ export default function App() {
                 </RequireRole>
               }
             />
-
             {/* Fallback */}
             <Route path="*" element={<NotFound />} />
           </Route>
