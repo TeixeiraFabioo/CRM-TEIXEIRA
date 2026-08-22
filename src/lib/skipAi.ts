@@ -72,10 +72,7 @@ interface SseBlock {
   data: string
 }
 
-async function* readSseBlocks(
-  response: Response,
-  signal?: AbortSignal,
-): AsyncGenerator<SseBlock> {
+async function* readSseBlocks(response: Response, signal?: AbortSignal): AsyncGenerator<SseBlock> {
   if (!response.body) return
   const reader = response.body.getReader()
   // Wire abort directly into the reader. reader.cancel(reason) makes
@@ -351,4 +348,36 @@ export async function streamAgentChat(
   }
 
   return { content, conversation_id: conversationId, message_id: messageId, citations, toolCalls }
+}
+
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+export interface GenerateChatParams {
+  messages: ChatMessage[]
+  temperature?: number
+  /**
+   * Route through the public (unauthenticated) endpoint instead of the
+   * auth-required one. Use this for the landing-page chat widget, which
+   * is shown to anonymous visitors. The public endpoint enforces a fixed
+   * server-side system prompt, so any client `system` message is ignored.
+   */
+  public?: boolean
+}
+
+// Non-streaming chat completion. Proxies the `/backend/v1/ai/chat` hook
+// (which calls `$ai.chat` server-side) and returns the assistant text.
+// Throws on a non-OK response so callers can fall back gracefully.
+export async function generateChatResponse(params: GenerateChatParams): Promise<string> {
+  const endpoint = params.public ? '/backend/v1/ai/landing-chat' : '/backend/v1/ai/chat'
+  const res = (await pb.send(endpoint, {
+    method: 'POST',
+    body: {
+      messages: params.messages,
+      temperature: typeof params.temperature === 'number' ? params.temperature : 0.7,
+    },
+  })) as { text?: unknown } | null
+  return res && typeof res.text === 'string' ? res.text : ''
 }

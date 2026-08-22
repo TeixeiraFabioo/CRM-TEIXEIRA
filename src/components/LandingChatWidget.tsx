@@ -94,6 +94,7 @@ Diretrizes:
       const reply = await generateChatResponse({
         messages: conversation,
         temperature: 0.6,
+        public: true,
       })
 
       const assistantMsg: ChatMessage = {
