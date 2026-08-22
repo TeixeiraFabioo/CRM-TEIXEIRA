@@ -8,6 +8,57 @@ onRecordCreate((e) => {
     const tenantId = lead.getString('tenant_id')
     if (!tenantId) return
 
+    // Disparar evento CAPI (Meta Conversions API) para o lead criado.
+    // Dispara para todo lead novo, independentemente da distribuição, e
+    // nunca deixa falhas aqui quebrarem a criação do lead.
+    try {
+      const capiCol = $app.findCollectionByNameOrId('capi_events')
+      const capiRec = new Record(capiCol)
+      capiRec.set('tenant_id', tenantId)
+      capiRec.set('event_name', 'Lead')
+
+      const leadEmail = (lead.getString('email') || '').trim().toLowerCase()
+      const leadPhoneRaw = lead.getString('phone') || lead.getString('whatsapp') || ''
+      let leadPhoneDigits = leadPhoneRaw.replace(/\D/g, '')
+      if (leadPhoneDigits && !leadPhoneDigits.startsWith('55')) {
+        leadPhoneDigits = '55' + leadPhoneDigits
+      }
+      const leadFbc = lead.getString('fbc') || ''
+      const leadFbp = lead.getString('fbp') || ''
+
+      // Meta CAPI exige em/ph como arrays de hashes SHA-256 (normalizados).
+      const capiUserData = {}
+      if (leadEmail) capiUserData.em = [$security.sha256(leadEmail)]
+      if (leadPhoneDigits) capiUserData.ph = [$security.sha256(leadPhoneDigits)]
+      if (leadFbc) capiUserData.fbc = leadFbc
+      if (leadFbp) capiUserData.fbp = leadFbp
+      capiRec.set('user_data', capiUserData)
+
+      capiRec.set('event_data', {
+        event_source_url: lead.getString('landing_page') || lead.getString('url_origem') || '',
+        custom_data: {
+          source: lead.getString('source') || '',
+          channel: lead.getString('channel') || '',
+          campaign: lead.getString('campaign') || '',
+          ad_set: lead.getString('ad_set') || '',
+          ad: lead.getString('ad') || '',
+          utm_source: lead.getString('utm_source') || '',
+          utm_medium: lead.getString('utm_medium') || '',
+          utm_campaign: lead.getString('utm_campaign') || '',
+          product: lead.getString('product') || '',
+          service: lead.getString('service') || '',
+          area: lead.getString('area') || '',
+        },
+      })
+
+      capiRec.set('status', 'pending')
+      capiRec.set('attempts', 0)
+      $app.save(capiRec)
+      // O hook onRecordAfterCreateSuccess de capi.js processa o envio para a Meta.
+    } catch (capiErr) {
+      console.log('Erro ao disparar evento CAPI para lead:', capiErr)
+    }
+
     // Se o lead já possui responsável atribuído (assigned_to ou responsavel_id), não distribui
     const existingAssigned = lead.getString('assigned_to') || lead.getString('responsavel_id')
     if (existingAssigned && existingAssigned.trim() !== '') {
