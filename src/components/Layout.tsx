@@ -84,14 +84,14 @@ export default function Layout() {
         { name: 'Dashboard Executivo', path: '/', icon: LayoutDashboard },
         { name: 'Leads Jurídicos', path: '/leads', icon: Users, badge: 'Novos' },
         { name: 'Funil & Kanban', path: '/pipeline', icon: Kanban },
-        { name: 'Clientes Contratados', path: '/clientes', icon: Briefcase },
+        { name: 'Clientes', path: '/clientes', icon: Briefcase },
       ],
     },
     {
       title: 'CADASTROS & CONTATOS',
       items: [
-        { name: 'Pessoas & Decisores', path: '/pessoas', icon: UserCheck },
-        { name: 'Empresas & Contas', path: '/empresas', icon: Building2 },
+        { name: 'Contatos-chave', path: '/pessoas', icon: UserCheck },
+        { name: 'Empresas', path: '/empresas', icon: Building2 },
         { name: 'Oportunidades', path: '/opportunities', icon: Target },
         { name: 'Tarefas & Reuniões', path: '/tarefas', icon: CheckSquare },
       ],

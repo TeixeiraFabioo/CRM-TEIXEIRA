@@ -2,6 +2,37 @@
 // $ai.agent(slug).chat (Skip-shape). Don't hand-roll the SSE reader —
 // past attempts shipped "undefinedundefined…" and "[object Object]…".
 
+import pb from '@/lib/pocketbase/client'
+
+/**
+ * Non-streaming chat completion proxied through the backend hooks
+ * (`/backend/v1/ai/chat` for authenticated CRM use,
+ * `/backend/v1/ai/landing-chat` for the public landing widget).
+ * The hooks own the call to `$ai.chat` — the frontend never holds keys
+ * or talks to the LLM gateway directly. Returns the assistant text.
+ *
+ * Pass `public: true` to hit the anonymous landing endpoint (which fixes
+ * the system prompt server-side and discards any client `system` turn).
+ */
+export interface GenerateChatResponseOptions {
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  temperature?: number
+  public?: boolean
+}
+
+export async function generateChatResponse(opts: GenerateChatResponseOptions): Promise<string> {
+  const endpoint = opts.public ? '/backend/v1/ai/landing-chat' : '/backend/v1/ai/chat'
+  const res = (await pb.send(endpoint, {
+    method: 'POST',
+    body: {
+      messages: opts.messages,
+      temperature: opts.temperature,
+    },
+  })) as { text?: unknown } | undefined
+
+  return typeof res?.text === 'string' ? res.text : ''
+}
+
 export interface OpenAIChatResult {
   id: string
   model: string
@@ -72,10 +103,7 @@ interface SseBlock {
   data: string
 }
 
-async function* readSseBlocks(
-  response: Response,
-  signal?: AbortSignal,
-): AsyncGenerator<SseBlock> {
+async function* readSseBlocks(response: Response, signal?: AbortSignal): AsyncGenerator<SseBlock> {
   if (!response.body) return
   const reader = response.body.getReader()
   // Wire abort directly into the reader. reader.cancel(reason) makes

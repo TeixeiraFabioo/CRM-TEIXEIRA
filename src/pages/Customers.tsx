@@ -13,19 +13,21 @@ import {
   FileCheck,
   Eye,
   FileDown,
+  Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/hooks/use-toast'
-import { useTenant } from '@/contexts/TenantContext'
+import { useTenant, useUserRole } from '@/contexts/TenantContext'
 import { CrmService } from '@/services/crm'
 import pb from '@/lib/pocketbase/client'
 import { CustomerRecord } from '@/types/platform'
 
 export function CustomersPage() {
   const { tenant } = useTenant()
+  const { role: userRole } = useUserRole()
   const { toast } = useToast()
   const navigate = useNavigate()
 
@@ -97,6 +99,28 @@ export function CustomersPage() {
       })
     } finally {
       setTogglingCustomerId(null)
+    }
+  }
+
+  const handleDeleteCustomer = async (e: React.MouseEvent, cust: CustomerRecord) => {
+    e.stopPropagation()
+    const confirmed = window.confirm('Tem certeza que deseja excluir este cliente?')
+    if (!confirmed) return
+
+    try {
+      await pb.collection('customers').delete(cust.id)
+      toast({
+        title: 'Cliente excluído',
+        description: `${cust.name} foi removido da carteira.`,
+      })
+      await loadCustomers()
+    } catch (err: any) {
+      console.error('Error deleting customer:', err)
+      toast({
+        title: 'Erro ao excluir cliente',
+        description: err?.message || 'Falha ao excluir no banco de dados.',
+        variant: 'destructive',
+      })
     }
   }
 
@@ -314,14 +338,26 @@ export function CustomersPage() {
 
                     {/* Action */}
                     <td className="p-3.5 pr-4 text-right" onClick={(e) => e.stopPropagation()}>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => navigate(`/clientes/${cust.id}`)}
-                        className="h-7 text-xs gap-1"
-                      >
-                        <Eye className="h-3.5 w-3.5" /> Visão 360º
-                      </Button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => navigate(`/clientes/${cust.id}`)}
+                          className="h-7 text-xs gap-1"
+                        >
+                          <Eye className="h-3.5 w-3.5" /> Visão 360º
+                        </Button>
+                        {userRole === 'admin' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => handleDeleteCustomer(e, cust)}
+                            className="h-7 text-xs gap-1 text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-950/40"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" /> Excluir
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
