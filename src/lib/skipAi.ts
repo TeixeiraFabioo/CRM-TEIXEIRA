@@ -72,7 +72,10 @@ interface SseBlock {
   data: string
 }
 
-async function* readSseBlocks(response: Response, signal?: AbortSignal): AsyncGenerator<SseBlock> {
+async function* readSseBlocks(
+  response: Response,
+  signal?: AbortSignal,
+): AsyncGenerator<SseBlock> {
   if (!response.body) return
   const reader = response.body.getReader()
   // Wire abort directly into the reader. reader.cancel(reason) makes
@@ -348,65 +351,4 @@ export async function streamAgentChat(
   }
 
   return { content, conversation_id: conversationId, message_id: messageId, citations, toolCalls }
-}
-
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant'
-  content: string
-}
-
-export interface GenerateChatResponseParams {
-  messages: ChatMessage[]
-  temperature?: number
-}
-
-// Non-streaming chat completion against the backend hook at
-// POST /backend/v1/ai/chat (pocketbase/hooks/ai_chat.js), which wraps
-// $ai.chat() and returns { text, result }. Sends credentials so the
-// PocketBase auth cookie travels with the request.
-export async function generateChatResponse(params: GenerateChatResponseParams): Promise<string> {
-  const baseUrl = (import.meta.env.VITE_POCKETBASE_URL as string) || ''
-  const url = `${baseUrl.replace(/\/+$/, '')}/backend/v1/ai/chat`
-
-  let res: Response
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: params.messages,
-        temperature: typeof params.temperature === 'number' ? params.temperature : 0.7,
-      }),
-    })
-  } catch (err) {
-    throw new Error(
-      `Falha ao conectar com o assistente de IA: ${
-        err instanceof Error ? err.message : 'erro de rede'
-      }`,
-    )
-  }
-
-  let data: unknown
-  try {
-    data = await res.json()
-  } catch {
-    const text = await res.text().catch(() => '')
-    throw new Error(text.trim() || `Resposta inválida do servidor (HTTP ${res.status})`)
-  }
-
-  if (!res.ok) {
-    const body = data as { message?: unknown; error?: unknown }
-    const message =
-      typeof body?.message === 'string'
-        ? body.message
-        : typeof body?.error === 'string'
-          ? body.error
-          : `Falha ao processar solicitação com a IA (HTTP ${res.status})`
-    throw new Error(message)
-  }
-
-  const body = data as { text?: unknown }
-  if (typeof body?.text === 'string') return body.text
-  return ''
 }
