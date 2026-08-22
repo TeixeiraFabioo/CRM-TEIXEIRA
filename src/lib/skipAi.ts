@@ -2,8 +2,6 @@
 // $ai.agent(slug).chat (Skip-shape). Don't hand-roll the SSE reader —
 // past attempts shipped "undefinedundefined…" and "[object Object]…".
 
-import pb from '@/lib/pocketbase/client'
-
 export interface OpenAIChatResult {
   id: string
   model: string
@@ -74,7 +72,10 @@ interface SseBlock {
   data: string
 }
 
-async function* readSseBlocks(response: Response, signal?: AbortSignal): AsyncGenerator<SseBlock> {
+async function* readSseBlocks(
+  response: Response,
+  signal?: AbortSignal,
+): AsyncGenerator<SseBlock> {
   if (!response.body) return
   const reader = response.body.getReader()
   // Wire abort directly into the reader. reader.cancel(reason) makes
@@ -271,33 +272,6 @@ export interface StreamAgentChatResult {
 
 // Drive an agent stream end-to-end. Resolves only after `done` (turn fully persisted);
 // throws on abort, on the `error` event, or if the stream ends before `done`.
-// Non-streaming chat completion. Proxies the authenticated PocketBase route
-// `/backend/v1/ai/chat` (defined in pocketbase/hooks/ai_chat.js, which calls
-// `$ai.chat`). Returns the assistant text directly so callers don't have to
-// know the route or shape. Pass `public: true` to hit the public landing-page
-// route `/backend/v1/ai/landing-chat` instead (system prompt is fixed
-// server-side for that route).
-export interface GenerateChatResponseOptions {
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
-  temperature?: number
-  public?: boolean
-}
-
-export async function generateChatResponse(opts: GenerateChatResponseOptions): Promise<string> {
-  const endpoint = opts.public ? '/backend/v1/ai/landing-chat' : '/backend/v1/ai/chat'
-
-  const res: { text?: string; error?: string } = await pb.send(endpoint, {
-    method: 'POST',
-    body: {
-      messages: opts.messages,
-      temperature: typeof opts.temperature === 'number' ? opts.temperature : 0.7,
-    },
-  })
-
-  if (res && typeof res.text === 'string') return res.text
-  throw new Error(res?.error || 'A IA não retornou uma resposta válida.')
-}
-
 export async function streamAgentChat(
   response: Response,
   handlers: StreamAgentChatHandlers = {},
