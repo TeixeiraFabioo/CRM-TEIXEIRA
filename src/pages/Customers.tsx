@@ -163,22 +163,85 @@ export function CustomersPage() {
 
   const handleDeleteCustomer = async (e: React.MouseEvent, cust: CustomerRecord) => {
     e.stopPropagation()
-    const confirmed = window.confirm('Tem certeza que deseja excluir este cliente?')
+    const confirmed = window.confirm(
+      `Tem certeza que deseja arquivar/enviar para a lixeira o cliente ${cust.name}?`,
+    )
     if (!confirmed) return
 
     try {
-      await pb.collection('customers').delete(cust.id)
+      await CrmService.softDeleteCustomer(cust.id)
       toast({
-        title: 'Cliente excluído',
-        description: `${cust.name} foi removido da carteira.`,
+        title: 'Cliente enviado para a lixeira',
+        description: `${cust.name} foi arquivado com sucesso.`,
       })
       await loadCustomers()
     } catch (err: any) {
       console.error('Error deleting customer:', err)
       toast({
-        title: 'Erro ao excluir cliente',
-        description: err?.message || 'Falha ao excluir no banco de dados.',
+        title: 'Erro ao arquivar cliente',
+        description: err?.message || 'Falha ao arquivar no banco de dados.',
         variant: 'destructive',
+      })
+    }
+  }
+
+  const handleExportCSV = () => {
+    if (filteredCustomers.length === 0) {
+      toast({ title: 'Nenhum cliente para exportar' })
+      return
+    }
+
+    // Colunas especificadas: Nome, Documento (CPF/CNPJ), Email, Telefone, Cidade, Estado, Status, Data de Cadastro
+    const headers = [
+      'Nome',
+      'Documento (CPF/CNPJ)',
+      'Email',
+      'Telefone',
+      'Cidade',
+      'Estado',
+      'Status',
+      'Data de Cadastro',
+    ]
+
+    const escapeCsv = (str: string | number | undefined | null) => {
+      if (str === undefined || str === null) return '""'
+      const val = String(str).replace(/"/g, '""')
+      return `"${val}"`
+    }
+
+    const rows = filteredCustomers.map((c) => {
+      const createdDate = c.created
+        ? new Date(c.created).toLocaleDateString('pt-BR') +
+          ' ' +
+          new Date(c.created).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+        : ''
+
+      return [
+        escapeCsv(c.name),
+        escapeCsv(c.document),
+        escapeCsv(c.email),
+        escapeCsv(c.phone),
+        escapeCsv(c.city),
+        escapeCsv(c.state),
+        escapeCsv(c.status || (c.active !== false ? 'Ativo' : 'Inativo')),
+        escapeCsv(createdDate),
+      ].join(';')
+    })
+
+    const csvContent = '\uFEFF' + headers.join(';') + '\n' + rows.join('\n')
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.setAttribute('href', url)
+    link.setAttribute('download', `clientes_${new Date().toISOString().slice(0, 10)}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+
+    if (tenant?.id) {
+      CrmService.logAudit(tenant.id, 'export', 'customers', undefined, null, {
+        count: filteredCustomers.length,
       })
     }
   }
@@ -268,6 +331,15 @@ export function CustomersPage() {
         </div>
 
         <div className="flex items-center gap-2.5">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportCSV}
+            className="h-9 gap-1.5 text-xs"
+          >
+            <FileDown className="h-4 w-4" /> Exportar CSV
+          </Button>
+
           <div className="bg-emerald-500/10 border border-emerald-500/30 px-3.5 py-1.5 rounded-xl text-right">
             <span className="text-[10px] text-emerald-600 dark:text-emerald-400 block font-semibold uppercase">
               Receita Total em Carteira

@@ -12,10 +12,14 @@ import {
   FileSpreadsheet,
   RefreshCw,
   Info,
+  Laptop,
+  Globe,
+  Key,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Select,
   SelectContent,
@@ -27,17 +31,20 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useToast } from '@/hooks/use-toast'
 import { useTenant } from '@/contexts/TenantContext'
 import { CrmService } from '@/services/crm'
-import { AuditLogRecord } from '@/types/platform'
+import { AuditLogRecord, SessionLogRecord } from '@/types/platform'
 
 export function AuditLogPage() {
   const { tenant, user } = useTenant()
   const { toast } = useToast()
 
   const [logs, setLogs] = useState<AuditLogRecord[]>([])
+  const [sessionLogs, setSessionLogs] = useState<SessionLogRecord[]>([])
   const [loading, setLoading] = useState(true)
+  const [sessionLoading, setSessionLoading] = useState(false)
   const [actionFilter, setActionFilter] = useState('all')
   const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | '7d' | '30d'>('all')
   const [searchTerm, setSearchTerm] = useState('')
+  const [sessionSearchTerm, setSessionSearchTerm] = useState('')
   const [selectedLog, setSelectedLog] = useState<AuditLogRecord | null>(null)
   const [detailModalOpen, setDetailModalOpen] = useState(false)
 
@@ -47,15 +54,19 @@ export function AuditLogPage() {
     if (!tenant?.id) return
     setLoading(true)
     try {
-      const res = await CrmService.getAuditLogs(tenant.id, {
-        limit: 100,
-        action: actionFilter,
-        period: periodFilter,
-      })
-      setLogs(res.items)
+      const [auditRes, sessRes] = await Promise.all([
+        CrmService.getAuditLogs(tenant.id, {
+          limit: 100,
+          action: actionFilter,
+          period: periodFilter,
+        }),
+        CrmService.getSessionLogs(tenant.id, 100),
+      ])
+      setLogs(auditRes.items)
+      setSessionLogs(sessRes.items || [])
     } catch (e: any) {
       toast({
-        title: 'Erro ao carregar registros de auditoria',
+        title: 'Erro ao carregar registros de auditoria e sessões',
         description: e?.message,
         variant: 'destructive',
       })
@@ -67,6 +78,27 @@ export function AuditLogPage() {
   useEffect(() => {
     loadLogs()
   }, [tenant?.id, actionFilter, periodFilter])
+
+  // Helper to summarize user agent
+  const formatUserAgent = (ua?: string) => {
+    if (!ua) return 'Navegador Padrão'
+    if (ua.includes('Windows')) {
+      if (ua.includes('Chrome')) return 'Chrome / Windows'
+      if (ua.includes('Firefox')) return 'Firefox / Windows'
+      if (ua.includes('Edg')) return 'Edge / Windows'
+      return 'Windows'
+    }
+    if (ua.includes('Macintosh') || ua.includes('Mac OS')) {
+      if (ua.includes('Chrome')) return 'Chrome / macOS'
+      if (ua.includes('Safari')) return 'Safari / macOS'
+      if (ua.includes('Firefox')) return 'Firefox / macOS'
+      return 'macOS'
+    }
+    if (ua.includes('iPhone') || ua.includes('iPad')) return 'Safari / iOS'
+    if (ua.includes('Android')) return 'Chrome / Android'
+    if (ua.includes('Linux')) return 'Linux'
+    return ua.slice(0, 45) + (ua.length > 45 ? '...' : '')
+  }
 
   // Filtragem local por busca
   const filteredLogs = logs.filter((log) => {
@@ -185,197 +217,330 @@ export function AuditLogPage() {
         </div>
       </div>
 
-      {/* Filters Bar */}
-      <div className="bg-card border border-border/80 rounded-xl p-4 shadow-xs space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {/* Search */}
-          <div className="relative">
-            <Search className="h-4 w-4 absolute left-3 top-2.5 text-muted-foreground" />
-            <Input
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Buscar por usuário, ação ou recurso..."
-              className="pl-9 h-9 text-xs"
-            />
+      <Tabs defaultValue="audit" className="w-full space-y-4">
+        <TabsList className="bg-card border p-1 rounded-xl">
+          <TabsTrigger value="audit" className="text-xs font-semibold gap-1.5">
+            <Activity className="h-3.5 w-3.5" /> Trilha de Ações ({logs.length})
+          </TabsTrigger>
+          <TabsTrigger value="sessions" className="text-xs font-semibold gap-1.5">
+            <Key className="h-3.5 w-3.5" /> Sessões &amp; Logins ({sessionLogs.length})
+          </TabsTrigger>
+        </TabsList>
+
+        {/* TAB 1: AUDITORIA DE AÇÕES */}
+        <TabsContent value="audit" className="space-y-4">
+          {/* Filters Bar */}
+          <div className="bg-card border border-border/80 rounded-xl p-4 shadow-xs space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Search */}
+              <div className="relative">
+                <Search className="h-4 w-4 absolute left-3 top-2.5 text-muted-foreground" />
+                <Input
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Buscar por usuário, ação ou recurso..."
+                  className="pl-9 h-9 text-xs"
+                />
+              </div>
+
+              {/* Action Filter */}
+              <div>
+                <Select value={actionFilter} onValueChange={setActionFilter}>
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Tipo de Ação" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas as Ações</SelectItem>
+                    <SelectItem value="create">Criação (create / distribute)</SelectItem>
+                    <SelectItem value="update">Atualização / Edição</SelectItem>
+                    <SelectItem value="delete">Exclusão</SelectItem>
+                    <SelectItem value="export">Exportação</SelectItem>
+                    <SelectItem value="lead">Ações de Leads</SelectItem>
+                    <SelectItem value="user">Ações de Usuários</SelectItem>
+                    <SelectItem value="settings">Configurações</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Period Filter */}
+              <div>
+                <Select value={periodFilter} onValueChange={(val: any) => setPeriodFilter(val)}>
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Período" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todo o Histórico</SelectItem>
+                    <SelectItem value="today">Hoje</SelectItem>
+                    <SelectItem value="7d">Últimos 7 dias</SelectItem>
+                    <SelectItem value="30d">Últimos 30 dias</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
           </div>
 
-          {/* Action Filter */}
-          <div>
-            <Select value={actionFilter} onValueChange={setActionFilter}>
-              <SelectTrigger className="h-9 text-xs">
-                <SelectValue placeholder="Tipo de Ação" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todas as Ações</SelectItem>
-                <SelectItem value="create">Criação (create / distribute)</SelectItem>
-                <SelectItem value="update">Atualização / Edição</SelectItem>
-                <SelectItem value="delete">Exclusão</SelectItem>
-                <SelectItem value="export">Exportação</SelectItem>
-                <SelectItem value="lead">Ações de Leads</SelectItem>
-                <SelectItem value="user">Ações de Usuários</SelectItem>
-                <SelectItem value="settings">Configurações</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Period Filter */}
-          <div>
-            <Select value={periodFilter} onValueChange={(val: any) => setPeriodFilter(val)}>
-              <SelectTrigger className="h-9 text-xs">
-                <SelectValue placeholder="Período" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todo o Histórico</SelectItem>
-                <SelectItem value="today">Hoje</SelectItem>
-                <SelectItem value="7d">Últimos 7 dias</SelectItem>
-                <SelectItem value="30d">Últimos 30 dias</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-      </div>
-
-      {/* Logs Table */}
-      <div className="bg-card border border-border/80 rounded-xl overflow-hidden shadow-xs">
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left">
-            <thead className="bg-muted/50 text-muted-foreground uppercase font-semibold border-b text-[11px] tracking-wider">
-              <tr>
-                <th className="p-3.5 pl-4">Data / Hora</th>
-                <th className="p-3.5">Usuário Responsável</th>
-                <th className="p-3.5">Ação Executada</th>
-                <th className="p-3.5">Registro Afetado</th>
-                <th className="p-3.5">Detalhes da Alteração</th>
-                <th className="p-3.5 pr-4 text-right">Ver</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/60">
-              {loading ? (
-                <tr>
-                  <td colSpan={6} className="p-8 text-center text-muted-foreground">
-                    Carregando trilha de auditoria...
-                  </td>
-                </tr>
-              ) : filteredLogs.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="p-12 text-center text-muted-foreground">
-                    Nenhum registro de auditoria encontrado.
-                  </td>
-                </tr>
-              ) : (
-                filteredLogs.map((log) => {
-                  const hasValues = Boolean(log.old_value || log.new_value)
-                  return (
-                    <tr
-                      key={log.id}
-                      className="hover:bg-muted/40 transition-colors group cursor-pointer"
-                      onClick={() => {
-                        setSelectedLog(log)
-                        setDetailModalOpen(true)
-                      }}
-                    >
-                      {/* Data / Hora */}
-                      <td className="p-3.5 pl-4 whitespace-nowrap font-mono text-[11px] text-muted-foreground">
-                        <div className="flex items-center gap-1.5">
-                          <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                          <span>
-                            {log.created
-                              ? new Date(log.created).toLocaleString('pt-BR', {
-                                  day: '2-digit',
-                                  month: '2-digit',
-                                  year: 'numeric',
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                  second: '2-digit',
-                                })
-                              : '—'}
-                          </span>
-                        </div>
-                      </td>
-
-                      {/* Usuário */}
-                      <td className="p-3.5">
-                        <div className="flex items-center gap-2">
-                          <div className="h-6 w-6 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold shrink-0">
-                            {log.expand?.user_id?.name
-                              ? log.expand.user_id.name.charAt(0).toUpperCase()
-                              : 'U'}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-foreground">
-                              {log.expand?.user_id?.name || 'Sistema / Automático'}
-                            </div>
-                            {log.expand?.user_id?.email && (
-                              <div className="text-[10px] text-muted-foreground font-mono">
-                                {log.expand.user_id.email}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-
-                      {/* Ação */}
-                      <td className="p-3.5">{getActionBadge(log.action)}</td>
-
-                      {/* Registro Afetado */}
-                      <td className="p-3.5">
-                        <div className="font-medium text-foreground capitalize">
-                          {log.resource_type || 'Geral'}
-                        </div>
-                        {log.resource_id && (
-                          <div className="text-[10px] text-muted-foreground font-mono truncate max-w-[140px]">
-                            ID: {log.resource_id}
-                          </div>
-                        )}
-                      </td>
-
-                      {/* Detalhes (Antes -> Depois) */}
-                      <td className="p-3.5 max-w-xs">
-                        {log.old_value && log.new_value ? (
-                          <div className="flex items-center gap-1.5 text-[11px]">
-                            <span className="truncate max-w-[120px] text-muted-foreground line-through">
-                              {typeof log.old_value === 'object'
-                                ? JSON.stringify(log.old_value)
-                                : String(log.old_value)}
-                            </span>
-                            <ArrowRight className="h-3 w-3 text-primary shrink-0" />
-                            <span className="truncate max-w-[140px] font-medium text-foreground">
-                              {typeof log.new_value === 'object'
-                                ? JSON.stringify(log.new_value)
-                                : String(log.new_value)}
-                            </span>
-                          </div>
-                        ) : log.new_value ? (
-                          <div className="truncate max-w-[200px] text-foreground text-[11px] font-mono">
-                            {typeof log.new_value === 'object'
-                              ? JSON.stringify(log.new_value)
-                              : String(log.new_value)}
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground text-[11px]">
-                            Sem payload registrado
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Botão Ver Detalhes */}
-                      <td className="p-3.5 pr-4 text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 text-xs text-primary group-hover:underline"
-                        >
-                          Detalhes
-                        </Button>
+          {/* Logs Table */}
+          <div className="bg-card border border-border/80 rounded-xl overflow-hidden shadow-xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-muted/50 text-muted-foreground uppercase font-semibold border-b text-[11px] tracking-wider">
+                  <tr>
+                    <th className="p-3.5 pl-4">Data / Hora</th>
+                    <th className="p-3.5">Usuário Responsável</th>
+                    <th className="p-3.5">Ação Executada</th>
+                    <th className="p-3.5">Registro Afetado</th>
+                    <th className="p-3.5">Detalhes da Alteração</th>
+                    <th className="p-3.5 pr-4 text-right">Ver</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/60">
+                  {loading ? (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-muted-foreground">
+                        Carregando trilha de auditoria...
                       </td>
                     </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                  ) : filteredLogs.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="p-12 text-center text-muted-foreground">
+                        Nenhum registro de auditoria encontrado.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredLogs.map((log) => {
+                      return (
+                        <tr
+                          key={log.id}
+                          className="hover:bg-muted/40 transition-colors group cursor-pointer"
+                          onClick={() => {
+                            setSelectedLog(log)
+                            setDetailModalOpen(true)
+                          }}
+                        >
+                          {/* Data / Hora */}
+                          <td className="p-3.5 pl-4 whitespace-nowrap font-mono text-[11px] text-muted-foreground">
+                            <div className="flex items-center gap-1.5">
+                              <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                              <span>
+                                {log.created
+                                  ? new Date(log.created).toLocaleString('pt-BR', {
+                                      day: '2-digit',
+                                      month: '2-digit',
+                                      year: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                      second: '2-digit',
+                                    })
+                                  : '—'}
+                              </span>
+                            </div>
+                          </td>
+
+                          {/* Usuário */}
+                          <td className="p-3.5">
+                            <div className="flex items-center gap-2">
+                              <div className="h-6 w-6 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold shrink-0">
+                                {log.expand?.user_id?.name
+                                  ? log.expand.user_id.name.charAt(0).toUpperCase()
+                                  : 'U'}
+                              </div>
+                              <div>
+                                <div className="font-semibold text-foreground">
+                                  {log.expand?.user_id?.name || 'Sistema / Automático'}
+                                </div>
+                                {log.expand?.user_id?.email && (
+                                  <div className="text-[10px] text-muted-foreground font-mono">
+                                    {log.expand.user_id.email}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Ação */}
+                          <td className="p-3.5">{getActionBadge(log.action)}</td>
+
+                          {/* Registro Afetado */}
+                          <td className="p-3.5">
+                            <div className="font-medium text-foreground capitalize">
+                              {log.resource_type || 'Geral'}
+                            </div>
+                            {log.resource_id && (
+                              <div className="text-[10px] text-muted-foreground font-mono truncate max-w-[140px]">
+                                ID: {log.resource_id}
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Detalhes (Antes -> Depois) */}
+                          <td className="p-3.5 max-w-xs">
+                            {log.old_value && log.new_value ? (
+                              <div className="flex items-center gap-1.5 text-[11px]">
+                                <span className="truncate max-w-[120px] text-muted-foreground line-through">
+                                  {typeof log.old_value === 'object'
+                                    ? JSON.stringify(log.old_value)
+                                    : String(log.old_value)}
+                                </span>
+                                <ArrowRight className="h-3 w-3 text-primary shrink-0" />
+                                <span className="truncate max-w-[140px] font-medium text-foreground">
+                                  {typeof log.new_value === 'object'
+                                    ? JSON.stringify(log.new_value)
+                                    : String(log.new_value)}
+                                </span>
+                              </div>
+                            ) : log.new_value ? (
+                              <div className="truncate max-w-[200px] text-foreground text-[11px] font-mono">
+                                {typeof log.new_value === 'object'
+                                  ? JSON.stringify(log.new_value)
+                                  : String(log.new_value)}
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground text-[11px]">
+                                Sem payload registrado
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Botão Ver Detalhes */}
+                          <td className="p-3.5 pr-4 text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs text-primary group-hover:underline"
+                            >
+                              Detalhes
+                            </Button>
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* TAB 2: SESSÕES & LOGINS */}
+        <TabsContent value="sessions" className="space-y-4">
+          <div className="bg-card border border-border/80 rounded-xl p-4 shadow-xs">
+            <div className="relative">
+              <Search className="h-4 w-4 absolute left-3 top-2.5 text-muted-foreground" />
+              <Input
+                value={sessionSearchTerm}
+                onChange={(e) => setSessionSearchTerm(e.target.value)}
+                placeholder="Buscar sessões por usuário, IP ou dispositivo..."
+                className="pl-9 h-9 text-xs"
+              />
+            </div>
+          </div>
+
+          <div className="bg-card border border-border/80 rounded-xl overflow-hidden shadow-xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-muted/50 text-muted-foreground uppercase font-semibold border-b text-[11px] tracking-wider">
+                  <tr>
+                    <th className="p-3.5 pl-4">Usuário</th>
+                    <th className="p-3.5">Endereço IP</th>
+                    <th className="p-3.5">Dispositivo / Navegador</th>
+                    <th className="p-3.5">User Agent Completo</th>
+                    <th className="p-3.5 pr-4 text-right">Data / Hora do Login</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/60">
+                  {loading ? (
+                    <tr>
+                      <td colSpan={5} className="p-8 text-center text-muted-foreground">
+                        Carregando histórico de sessões...
+                      </td>
+                    </tr>
+                  ) : sessionLogs.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-12 text-center text-muted-foreground">
+                        Nenhuma sessão ou login registrado recentemente.
+                      </td>
+                    </tr>
+                  ) : (
+                    sessionLogs
+                      .filter((s) => {
+                        if (!sessionSearchTerm) return true
+                        const term = sessionSearchTerm.toLowerCase()
+                        const userName = (s.expand?.user_id?.name || '').toLowerCase()
+                        const userEmail = (s.expand?.user_id?.email || '').toLowerCase()
+                        const ip = (s.ip || '').toLowerCase()
+                        const ua = (s.user_agent || '').toLowerCase()
+                        return (
+                          userName.includes(term) ||
+                          userEmail.includes(term) ||
+                          ip.includes(term) ||
+                          ua.includes(term)
+                        )
+                      })
+                      .map((s) => (
+                        <tr key={s.id} className="hover:bg-muted/40 transition-colors">
+                          {/* Usuário */}
+                          <td className="p-3.5 pl-4">
+                            <div className="flex items-center gap-2">
+                              <div className="h-6 w-6 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 flex items-center justify-center text-[10px] font-bold shrink-0">
+                                {s.expand?.user_id?.name
+                                  ? s.expand.user_id.name.charAt(0).toUpperCase()
+                                  : 'U'}
+                              </div>
+                              <div>
+                                <div className="font-semibold text-foreground">
+                                  {s.expand?.user_id?.name || 'Usuário Autenticado'}
+                                </div>
+                                {s.expand?.user_id?.email && (
+                                  <div className="text-[10px] text-muted-foreground font-mono">
+                                    {s.expand.user_id.email}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* IP */}
+                          <td className="p-3.5 font-mono text-[11px]">
+                            {s.ip ? (
+                              <span className="px-2 py-0.5 rounded bg-muted text-foreground border border-border/60">
+                                {s.ip}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground italic">
+                                Direto (Frontend Web)
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Dispositivo / Navegador */}
+                          <td className="p-3.5">
+                            <div className="flex items-center gap-1.5 font-medium text-foreground">
+                              <Laptop className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                              <span>{formatUserAgent(s.user_agent)}</span>
+                            </div>
+                          </td>
+
+                          {/* User Agent Completo */}
+                          <td
+                            className="p-3.5 text-muted-foreground max-w-xs truncate text-[10px] font-mono"
+                            title={s.user_agent || ''}
+                          >
+                            {s.user_agent || '—'}
+                          </td>
+
+                          {/* Data/Hora */}
+                          <td className="p-3.5 pr-4 text-right whitespace-nowrap font-mono text-[11px] text-muted-foreground">
+                            {s.created ? new Date(s.created).toLocaleString('pt-BR') : '—'}
+                          </td>
+                        </tr>
+                      ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </TabsContent>
+      </Tabs>
 
       {/* DETALHE AUDITORIA MODAL */}
       <Dialog open={detailModalOpen} onOpenChange={setDetailModalOpen}>

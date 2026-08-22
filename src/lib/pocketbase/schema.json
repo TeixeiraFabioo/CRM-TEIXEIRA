@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-22T20:25:22.290Z",
+  "generatedAt": "2026-08-22T20:31:41.929Z",
   "collections": [
     {
       "name": "users",
@@ -3763,6 +3763,19 @@
         "CREATE INDEX idx_capi_events_status ON capi_events (status)",
         "CREATE INDEX idx_capi_events_status_created ON capi_events (status, created DESC)"
       ]
+    },
+    {
+      "name": "session_logs",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != \"\"",
+        "view": "@request.auth.id != \"\"",
+        "create": "@request.auth.id != \"\"",
+        "update": null,
+        "delete": null
+      },
+      "fields": [],
+      "indexes": []
     }
   ]
 }

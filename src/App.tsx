@@ -41,6 +41,7 @@ import SettingsPage from '@/pages/Settings'
 import MeuPerfilPage from '@/pages/MeuPerfil'
 import KnowledgeBasePage from '@/pages/KnowledgeBase'
 import AuditLogPage from '@/pages/AuditLog'
+import TrashPage from '@/pages/Trash'
 import NotFound from '@/pages/NotFound'
 
 export default function App() {
@@ -63,15 +64,7 @@ export default function App() {
             }
           >
             {/* Dashboard — everyone */}
-            {/* Leads — admin+gestor see all; advogado sees only their own (enforced by API rules) */}
-            <Route
-              index
-              element={
-                <RequireRole allowedRoles={['admin', 'gestor', 'advogado']}>
-                  <DashboardPage />
-                </RequireRole>
-              }
-            />
+            <Route index element={<DashboardPage />} />
             <Route
               path="leads"
               element={
@@ -291,6 +284,14 @@ export default function App() {
               element={
                 <RequireRole allowedRoles={['admin']}>
                   <AuditLogPage />
+                </RequireRole>
+              }
+            />
+            <Route
+              path="lixeira"
+              element={
+                <RequireRole allowedRoles={['admin']}>
+                  <TrashPage />
                 </RequireRole>
               }
             />

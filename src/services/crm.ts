@@ -26,6 +26,7 @@ import {
   PipelineStageRecord,
   UserRecord,
   LeadDistributionRecord,
+  SessionLogRecord,
 } from '@/types/platform'
 
 export const CrmService = {
@@ -72,7 +73,7 @@ export const CrmService = {
   // --- LEADS ---
   async getLeads(tenantId: string, filterStr?: string): Promise<LeadRecord[]> {
     try {
-      let filter = `tenant_id = "${tenantId}" && (soft_delete = false || soft_delete = null)`
+      let filter = `tenant_id = "${tenantId}" && (soft_delete = false || soft_delete = null) && (deleted = false || deleted = null)`
       if (filterStr) filter += ` && (${filterStr})`
       const list = await pb.collection('leads').getFullList<LeadRecord>({
         filter,
@@ -137,17 +138,40 @@ export const CrmService = {
 
   async softDeleteLead(id: string): Promise<void> {
     const record = await pb.collection('leads').getOne<LeadRecord>(id)
-    await pb
-      .collection('leads')
-      .update(id, { soft_delete: true, deleted: new Date().toISOString() })
+    await pb.collection('leads').update(id, { soft_delete: true, deleted: true })
     await this.logAudit(
       record.tenant_id,
       'archive',
       'lead',
       id,
-      { soft_delete: false },
-      { soft_delete: true },
+      { soft_delete: false, deleted: false },
+      { soft_delete: true, deleted: true },
     )
+  },
+
+  async restoreLead(id: string): Promise<void> {
+    const record = await pb.collection('leads').getOne<LeadRecord>(id)
+    await pb.collection('leads').update(id, { soft_delete: false, deleted: false })
+    await this.logAudit(
+      record.tenant_id,
+      'restore',
+      'lead',
+      id,
+      { soft_delete: true, deleted: true },
+      { soft_delete: false, deleted: false },
+    )
+  },
+
+  async deleteLeadPermanent(id: string): Promise<boolean> {
+    const record = await pb
+      .collection('leads')
+      .getOne<LeadRecord>(id)
+      .catch(() => null)
+    const res = await pb.collection('leads').delete(id)
+    if (record) {
+      await this.logAudit(record.tenant_id, 'delete_permanent', 'lead', id, record, null)
+    }
+    return res
   },
 
   // --- PESSOAS & EMPRESAS ---
@@ -246,7 +270,7 @@ export const CrmService = {
   async getCustomers(tenantId: string): Promise<CustomerRecord[]> {
     try {
       return await pb.collection('customers').getFullList<CustomerRecord>({
-        filter: `tenant_id = "${tenantId}"`,
+        filter: `tenant_id = "${tenantId}" && (deleted = false || deleted = null)`,
         sort: '-created',
         expand: 'lead_id,lead_origem_id,pessoa_id,empresa_id,responsavel_id',
       })
@@ -254,6 +278,44 @@ export const CrmService = {
       console.warn('Failed to load customers', e)
       return []
     }
+  },
+
+  async softDeleteCustomer(id: string): Promise<void> {
+    const record = await pb.collection('customers').getOne<CustomerRecord>(id)
+    await pb.collection('customers').update(id, { deleted: true })
+    await this.logAudit(
+      record.tenant_id,
+      'archive',
+      'customer',
+      id,
+      { deleted: false },
+      { deleted: true },
+    )
+  },
+
+  async restoreCustomer(id: string): Promise<void> {
+    const record = await pb.collection('customers').getOne<CustomerRecord>(id)
+    await pb.collection('customers').update(id, { deleted: false })
+    await this.logAudit(
+      record.tenant_id,
+      'restore',
+      'customer',
+      id,
+      { deleted: true },
+      { deleted: false },
+    )
+  },
+
+  async deleteCustomerPermanent(id: string): Promise<boolean> {
+    const record = await pb
+      .collection('customers')
+      .getOne<CustomerRecord>(id)
+      .catch(() => null)
+    const res = await pb.collection('customers').delete(id)
+    if (record) {
+      await this.logAudit(record.tenant_id, 'delete_permanent', 'customer', id, record, null)
+    }
+    return res
   },
 
   async getCustomerById(id: string): Promise<CustomerRecord | null> {
@@ -333,13 +395,101 @@ export const CrmService = {
   async getOpportunities(tenantId: string): Promise<OpportunityRecord[]> {
     try {
       return await pb.collection('opportunities').getFullList<OpportunityRecord>({
-        filter: `tenant_id = "${tenantId}" && (soft_delete = false || soft_delete = null)`,
+        filter: `tenant_id = "${tenantId}" && (soft_delete = false || soft_delete = null) && (deleted = false || deleted = null)`,
         sort: '-created',
         expand: 'lead_id,customer_id,cliente_id,assigned_to,responsavel_id,stage_id,etapa_id',
       })
     } catch (e) {
       console.warn('Failed to load opportunities', e)
       return []
+    }
+  },
+
+  async softDeleteOpportunity(id: string): Promise<void> {
+    const record = await pb.collection('opportunities').getOne<OpportunityRecord>(id)
+    await pb.collection('opportunities').update(id, { deleted: true, soft_delete: true })
+    await this.logAudit(
+      record.tenant_id,
+      'archive',
+      'opportunity',
+      id,
+      { deleted: false },
+      { deleted: true },
+    )
+  },
+
+  async restoreOpportunity(id: string): Promise<void> {
+    const record = await pb.collection('opportunities').getOne<OpportunityRecord>(id)
+    await pb.collection('opportunities').update(id, { deleted: false, soft_delete: false })
+    await this.logAudit(
+      record.tenant_id,
+      'restore',
+      'opportunity',
+      id,
+      { deleted: true },
+      { deleted: false },
+    )
+  },
+
+  async deleteOpportunityPermanent(id: string): Promise<boolean> {
+    const record = await pb
+      .collection('opportunities')
+      .getOne<OpportunityRecord>(id)
+      .catch(() => null)
+    const res = await pb.collection('opportunities').delete(id)
+    if (record) {
+      await this.logAudit(record.tenant_id, 'delete_permanent', 'opportunity', id, record, null)
+    }
+    return res
+  },
+
+  async getTrashRecords(tenantId: string) {
+    try {
+      const [leads, customers, opportunities] = await Promise.all([
+        pb
+          .collection('leads')
+          .getFullList<LeadRecord>({
+            filter: `tenant_id = "${tenantId}" && (deleted = true || soft_delete = true)`,
+            sort: '-updated',
+            expand: 'assigned_to,responsavel_id,empresa_id',
+          })
+          .catch(() => []),
+        pb
+          .collection('customers')
+          .getFullList<CustomerRecord>({
+            filter: `tenant_id = "${tenantId}" && deleted = true`,
+            sort: '-updated',
+            expand: 'responsavel_id,empresa_id',
+          })
+          .catch(() => []),
+        pb
+          .collection('opportunities')
+          .getFullList<OpportunityRecord>({
+            filter: `tenant_id = "${tenantId}" && (deleted = true || soft_delete = true)`,
+            sort: '-updated',
+            expand: 'lead_id,customer_id,assigned_to,responsavel_id',
+          })
+          .catch(() => []),
+      ])
+
+      return { leads, customers, opportunities }
+    } catch (e) {
+      console.warn('Failed to fetch trash records', e)
+      return { leads: [], customers: [], opportunities: [] }
+    }
+  },
+
+  async getSessionLogs(tenantId: string, limit = 100) {
+    try {
+      const filter = tenantId ? `tenant_id = "${tenantId}"` : undefined
+      return await pb.collection('session_logs').getList<SessionLogRecord>(1, limit, {
+        filter,
+        sort: '-created',
+        expand: 'user_id',
+      })
+    } catch (e) {
+      console.warn('Failed to fetch session logs', e)
+      return { items: [], totalItems: 0, totalPages: 0, page: 1, perPage: limit }
     }
   },
 

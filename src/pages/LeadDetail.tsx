@@ -1021,13 +1021,13 @@ ${formattedHistory}
     const isWa = m.channel === 'whatsapp' || m.type === 'mensagem' || m.type === 'whatsapp'
     timelineItems.push({
       id: `msg_${m.id}`,
-      type: m.type === 'sistema' ? 'task' : isWa ? 'message' : 'note',
+      type: 'message',
       title:
         m.type === 'sistema'
-          ? 'Transferência / Sistema'
+          ? '💬 Mensagem do Sistema'
           : isWa
-            ? `WhatsApp (${m.direction === 'inbound' ? 'Recebida' : 'Enviada'})`
-            : `Nota Interna (${getTeamBadge(m.team || 'comercial').label})`,
+            ? `💬 WhatsApp (${m.direction === 'inbound' ? 'Recebida' : 'Enviada'})`
+            : `💬 Mensagem (${getTeamBadge(m.team || 'comercial').label})`,
       description: m.content,
       date: m.created || '',
       author:
@@ -1041,10 +1041,10 @@ ${formattedHistory}
     timelineItems.push({
       id: n.id,
       type: 'note',
-      title: n.fixada ? '📌 Nota Fixada de Atendimento' : 'Nota Interna Registrada',
-      description: n.conteudo,
+      title: n.fixada ? '📝 Nota Fixada de Atendimento' : '📝 Nota Interna Registrada',
+      description: n.conteudo || (n as any).content,
       date: n.created || '',
-      author: n.expand?.autor_id?.name || 'Advogado',
+      author: n.expand?.autor_id?.name || (n as any).expand?.author_id?.name || 'Advogado',
     })
   })
 
@@ -1052,9 +1052,10 @@ ${formattedHistory}
     timelineItems.push({
       id: t.id,
       type: 'task',
-      title: `Tarefa: ${t.titulo}`,
-      description: `Tipo: ${t.tipo} • Status: ${t.status} • Agendado para ${t.data || ''} ${t.horario || ''}`,
+      title: `✅ Tarefa: ${t.titulo || (t as any).title}`,
+      description: `Status: ${t.status || 'pendente'} • ${t.tipo ? `Tipo: ${t.tipo} • ` : ''}Agendado: ${t.data || (t as any).due_date || 'Data não definida'} ${t.horario || ''}`,
       date: t.created || '',
+      author: (t as any).expand?.assigned_to?.name || (t as any).expand?.responsavel_id?.name,
     })
   })
 
@@ -1713,6 +1714,12 @@ ${formattedHistory}
           <Tabs defaultValue="timeline" className="w-full">
             <TabsList className="w-full justify-start border-b rounded-none p-0 h-10 bg-transparent gap-4">
               <TabsTrigger
+                value="timeline"
+                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2"
+              >
+                Linha do Tempo ({timelineItems.length})
+              </TabsTrigger>
+              <TabsTrigger
                 value="chat"
                 className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 flex items-center gap-1.5"
               >
@@ -1720,12 +1727,6 @@ ${formattedHistory}
                   <div className="h-2 w-2 rounded-full bg-[#25D366]" />
                   <span>WhatsApp &amp; Chat ({messages.length})</span>
                 </div>
-              </TabsTrigger>
-              <TabsTrigger
-                value="timeline"
-                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2"
-              >
-                Linha do Tempo 360º ({timelineItems.length})
               </TabsTrigger>
               <TabsTrigger
                 value="tasks"

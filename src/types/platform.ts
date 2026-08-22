@@ -27,6 +27,19 @@ export interface TenantRecord {
   updated?: string
 }
 
+export interface SessionLogRecord {
+  id: string
+  user_id?: string
+  tenant_id?: string
+  ip?: string
+  user_agent?: string
+  created?: string
+  updated?: string
+  expand?: {
+    user_id?: UserRecord
+  }
+}
+
 export interface UserRecord {
   id: string
   name: string

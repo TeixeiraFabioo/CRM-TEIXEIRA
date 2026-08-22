@@ -124,6 +124,22 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setIsAuthenticated(true)
         loadRoleAndPermissions(authUser)
 
+        // Record session log if not recorded in this browser session
+        const sessionLogKey = `pb_sess_${authUser.id}`
+        if (!sessionStorage.getItem(sessionLogKey)) {
+          sessionStorage.setItem(sessionLogKey, Date.now().toString())
+          pb.collection('session_logs')
+            .create({
+              user_id: authUser.id,
+              tenant_id: authUser.tenant_id || '',
+              user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+              ip: '',
+            })
+            .catch((logErr) => {
+              console.warn('[TenantContext] Falha ao registrar log de sessão frontend:', logErr)
+            })
+        }
+
         // If user has a tenant_id, load it. Otherwise load default tenant or first tenant
         if (authUser.tenant_id) {
           try {

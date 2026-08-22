@@ -130,6 +130,7 @@ export default function Layout() {
       items: [
         { name: 'Central de Integrações', path: '/integrations', icon: Layers },
         { name: 'Trilha de Auditoria', path: '/auditoria', icon: ShieldCheck },
+        { name: 'Lixeira do Sistema', path: '/lixeira', icon: Trash2 },
       ],
     },
   ]
