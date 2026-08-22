@@ -400,24 +400,24 @@ export function IntegrationsPage() {
       name: 'Meta Ads & Conversions API (CAPI)',
       desc: 'Sincronização de leads do Instagram e Facebook Ads + disparo automático do evento Purchase na conversão de contratos.',
       icon: Share2,
-      status: 'connected',
-      details: `Pixel Ativo: ${tenant?.meta_pixel_id || '948271038592014'}`,
+      status: 'development',
+      details: `Pixel ID: ${tenant?.meta_pixel_id || '948271038592014'}`,
     },
     {
       id: 'google_ads',
       name: 'Google Ads & Enhanced Conversions',
       desc: 'Rastreamento de conversões offline de pesquisas jurídicas fundo de funil.',
       icon: Search,
-      status: 'connected',
-      details: 'Conta: 842-109-3820',
+      status: 'development',
+      details: null,
     },
     {
       id: 'calendly',
       name: 'Calendly & Google Meet',
       desc: 'Agendamento de reuniões com clientes e sincronização instantânea na aba Tarefas do Lead.',
       icon: Calendar,
-      status: 'connected',
-      details: 'Sincronizado com agenda dos sócios',
+      status: 'development',
+      details: null,
     },
   ]
 
@@ -765,6 +765,7 @@ export function IntegrationsPage() {
         {/* OUTROS CARDS DE INTEGRAÇÃO */}
         {otherIntegrations.map((item) => {
           const Icon = item.icon
+          const isDevelopment = item.status === 'development'
           return (
             <div
               key={item.id}
@@ -775,26 +776,54 @@ export function IntegrationsPage() {
                   <div className="h-10 w-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
                     <Icon className="h-5 w-5" />
                   </div>
-                  <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px] gap-1">
-                    <CheckCircle2 className="h-3 w-3" /> Conectado
-                  </Badge>
+                  {isDevelopment ? (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] text-amber-600 border-amber-500/30 gap-1"
+                    >
+                      <AlertCircle className="h-3 w-3" /> Não conectado
+                    </Badge>
+                  ) : (
+                    <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px] gap-1">
+                      <CheckCircle2 className="h-3 w-3" /> Conectado
+                    </Badge>
+                  )}
                 </div>
 
                 <h3 className="font-bold text-sm">{item.name}</h3>
                 <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{item.desc}</p>
               </div>
 
-              <div className="pt-3 border-t flex items-center justify-between text-xs">
-                <span className="font-mono text-[11px] text-muted-foreground">{item.details}</span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => toast({ title: 'Integração sincronizada com sucesso!' })}
-                  className="h-7 text-xs"
-                >
-                  Sincronizar
-                </Button>
-              </div>
+              {isDevelopment ? (
+                <div className="pt-3 border-t space-y-1.5">
+                  {item.details && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground text-[11px]">Identificador</span>
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {item.details}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-400 font-medium">
+                    <Info className="h-3 w-3" />
+                    <span>Integração em desenvolvimento</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="pt-3 border-t flex items-center justify-between text-xs">
+                  <span className="font-mono text-[11px] text-muted-foreground">
+                    {item.details}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => toast({ title: 'Integração sincronizada com sucesso!' })}
+                    className="h-7 text-xs"
+                  >
+                    Sincronizar
+                  </Button>
+                </div>
+              )}
             </div>
           )
         })}
