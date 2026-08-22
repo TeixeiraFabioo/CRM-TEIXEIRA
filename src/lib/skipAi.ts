@@ -2,6 +2,26 @@
 // $ai.agent(slug).chat (Skip-shape). Don't hand-roll the SSE reader —
 // past attempts shipped "undefinedundefined…" and "[object Object]…".
 
+import { pb } from './pocketbase/client'
+
+export interface GenerateChatOptions {
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  temperature?: number
+  public?: boolean
+}
+
+export async function generateChatResponse(options: GenerateChatOptions): Promise<string> {
+  const endpoint = options.public ? '/backend/v1/ai/landing-chat' : '/backend/v1/ai/chat'
+  const res = await pb.send<{ text?: string }>(endpoint, {
+    method: 'POST',
+    body: JSON.stringify({
+      messages: options.messages,
+      temperature: options.temperature,
+    }),
+  })
+  return res.text || ''
+}
+
 export interface OpenAIChatResult {
   id: string
   model: string
@@ -348,63 +368,4 @@ export async function streamAgentChat(
   }
 
   return { content, conversation_id: conversationId, message_id: messageId, citations, toolCalls }
-}
-
-export interface GenerateChatOptions {
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
-  model?: string
-  temperature?: number
-  public?: boolean
-}
-
-/**
- * Generate a chat completion using the connected PocketBase AI hook or backend fallback.
- */
-export async function generateChatResponse(opts: GenerateChatOptions): Promise<string> {
-  const systemMsg = opts.messages.find((m) => m.role === 'system')?.content || ''
-  const userMessages = opts.messages.filter((m) => m.role !== 'system')
-  const lastUserMsg = userMessages[userMessages.length - 1]?.content || ''
-
-  try {
-    const response = await fetch('/api/ai/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: opts.messages,
-        model: opts.model,
-        temperature: opts.temperature ?? 0.7,
-      }),
-    })
-
-    if (response.ok) {
-      const data = await response.json()
-      if (typeof data.content === 'string') return data.content
-      if (typeof data.reply === 'string') return data.reply
-      if (data.choices?.[0]?.message?.content) return data.choices[0].message.content
-    }
-  } catch {
-    // Fallback if local/mock endpoint is not running
-  }
-
-  // Fallback intelligent response simulator based on legal context
-  const q = lastUserMsg.toLowerCase()
-  if (q.includes('pis') || q.includes('cofins') || q.includes('tribut')) {
-    return 'Com base na jurisprudência consolidada (Tema 69 do STF / Exclusão do ICMS da base do PIS/COFINS), a empresa possui elevado potencial de recuperação dos valores recolhidos indevidamente nos últimos 5 anos. Recomendamos a auditoria das notas fiscais e levantamento contábil.'
-  }
-  if (q.includes('banc') || q.includes('juros') || q.includes('empréstimo') || q.includes('taxa')) {
-    return 'Identificamos oportunidade de revisão contratual bancária para verificação de juros abusivos acima da taxa média de mercado divulgada pelo Banco Central, além de tarifas e comissões de permanência indevidas.'
-  }
-  if (q.includes('trabalh') || q.includes('rescis') || q.includes('hora extra')) {
-    return 'Na esfera trabalhista empresarial, recomendamos análise preventiva de compliance e auditoria dos passivos, visando mitigar riscos de reclamatórias e avaliar a segurança jurídica dos acordos coletivos.'
-  }
-  if (
-    q.includes('proposta') ||
-    q.includes('honorários') ||
-    q.includes('preço') ||
-    q.includes('custo')
-  ) {
-    return 'Os honorários advocatícios para este escopo seguem o padrão de alçada do escritório: honorários iniciais reduzidos (pró-labore) combinados com cláusula de êxito (success fee) sobre o benefício econômico auferido.'
-  }
-
-  return 'Analisamos as diretrizes do seu caso. Nossos advogados especialistas estruturaram os precedentes aplicáveis e sugerem o agendamento de um alinhamento técnico para detalhamento da tese e elaboração da minuta de honorários.'
 }
