@@ -1,44 +1,6 @@
-import pb from '@/lib/pocketbase/client'
-
 // Typed helpers for hooks proxying $ai.chat (OpenAI-shape) and
 // $ai.agent(slug).chat (Skip-shape). Don't hand-roll the SSE reader —
 // past attempts shipped "undefinedundefined…" and "[object Object]…".
-
-export interface GenerateChatParams {
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
-  temperature?: number
-  /**
-   * When true, routes to the public landing-page triage endpoint
-   * (POST /backend/v1/ai/landing-chat) which enforces a fixed system
-   * prompt. When false/omitted, routes to the authenticated in-app
-   * endpoint (POST /backend/v1/ai/chat).
-   */
-  public?: boolean
-}
-
-/**
- * Non-streaming chat completion against the Skip AI gateway via the
- * backend proxy hooks. Returns the assistant message text.
- *
- * `public: true` → POST /backend/v1/ai/landing-chat (anonymous, fixed prompt)
- * otherwise      → POST /backend/v1/ai/chat (requires auth)
- */
-export async function generateChatResponse(params: GenerateChatParams): Promise<string> {
-  const endpoint = params.public ? '/backend/v1/ai/landing-chat' : '/backend/v1/ai/chat'
-
-  const res = await pb.send(endpoint, {
-    method: 'POST',
-    body: {
-      messages: params.messages,
-      temperature:
-        typeof params.temperature === 'number' ? params.temperature : params.public ? 0.6 : 0.7,
-    },
-  })
-
-  if (res && typeof res.text === 'string') return res.text
-  if (res && typeof res.error === 'string') throw new Error(res.error)
-  return ''
-}
 
 export interface OpenAIChatResult {
   id: string
@@ -110,7 +72,10 @@ interface SseBlock {
   data: string
 }
 
-async function* readSseBlocks(response: Response, signal?: AbortSignal): AsyncGenerator<SseBlock> {
+async function* readSseBlocks(
+  response: Response,
+  signal?: AbortSignal,
+): AsyncGenerator<SseBlock> {
   if (!response.body) return
   const reader = response.body.getReader()
   // Wire abort directly into the reader. reader.cancel(reason) makes
