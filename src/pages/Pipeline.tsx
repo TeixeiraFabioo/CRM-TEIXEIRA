@@ -20,6 +20,9 @@ import {
   ExternalLink,
   Copy,
   Check,
+  Calendar,
+  RotateCcw,
+  Sparkles,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -70,6 +73,11 @@ export function PipelinePage() {
   const [viewMode, setViewMode] = useState<'kanban' | 'list'>('kanban')
   const [searchTerm, setSearchTerm] = useState('')
   const [userFilter, setUserFilter] = useState('all')
+  const [temperatureFilter, setTemperatureFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [sourceFilter, setSourceFilter] = useState('all')
+  const [startDateFilter, setStartDateFilter] = useState('')
+  const [endDateFilter, setEndDateFilter] = useState('')
 
   // Modals
   const [createModalOpen, setCreateModalOpen] = useState(false)
@@ -289,13 +297,93 @@ export function PipelinePage() {
     }
   }
 
-  const filteredOpps = opportunities.filter((o) => {
+  const activeFiltersCount = [
+    searchTerm ? 1 : 0,
+    userFilter !== 'all' ? 1 : 0,
+    temperatureFilter !== 'all' ? 1 : 0,
+    statusFilter !== 'all' ? 1 : 0,
+    sourceFilter !== 'all' ? 1 : 0,
+    startDateFilter ? 1 : 0,
+    endDateFilter ? 1 : 0,
+  ].reduce((a, b) => a + b, 0)
+
+  const clearAllFilters = () => {
+    setSearchTerm('')
+    setUserFilter('all')
+    setTemperatureFilter('all')
+    setStatusFilter('all')
+    setSourceFilter('all')
+    setStartDateFilter('')
+    setEndDateFilter('')
+  }
+
+  // Filtragem no frontend aplicando os filtros de busca, temperatura, status, origem, responsável e intervalo de data de criação
+  const filteredOpps = opportunities.filter((opp) => {
     const q = searchTerm.toLowerCase()
     const matchesSearch =
-      (o.title || '').toLowerCase().includes(q) || (o.servico || '').toLowerCase().includes(q)
+      !searchTerm ||
+      (opp.title || '').toLowerCase().includes(q) ||
+      (opp.servico || '').toLowerCase().includes(q) ||
+      (opp.expand?.lead_id?.name || '').toLowerCase().includes(q) ||
+      (opp.expand?.lead_id?.email || '').toLowerCase().includes(q) ||
+      (opp.expand?.lead_id?.phone || '').includes(searchTerm) ||
+      (opp.expand?.lead_id?.company || '').toLowerCase().includes(q) ||
+      (opp.expand?.cliente_id?.name || '').toLowerCase().includes(q) ||
+      (opp.expand?.customer_id?.name || '').toLowerCase().includes(q)
+
     const matchesUser =
-      userFilter === 'all' || o.assigned_to === userFilter || o.responsavel_id === userFilter
-    return matchesSearch && matchesUser
+      userFilter === 'all' ||
+      opp.assigned_to === userFilter ||
+      opp.responsavel_id === userFilter ||
+      opp.expand?.lead_id?.assigned_to === userFilter ||
+      opp.expand?.lead_id?.responsavel_id === userFilter
+
+    // Filtro de temperatura (copiado/adaptado de Leads.tsx)
+    const oppTemp = opp.expand?.lead_id?.temperature
+    const matchesTemp =
+      temperatureFilter === 'all' ||
+      oppTemp === temperatureFilter ||
+      (temperatureFilter === 'hot' && (oppTemp === 'quente' || oppTemp === 'muito_quente')) ||
+      (temperatureFilter === 'warm' && oppTemp === 'morno') ||
+      (temperatureFilter === 'cold' && oppTemp === 'frio')
+
+    // Filtro de status (copiado/adaptado de Leads.tsx)
+    const leadStatus = opp.expand?.lead_id?.status
+    const oppStatus = opp.status
+    const matchesStatus =
+      statusFilter === 'all' ||
+      leadStatus === statusFilter ||
+      (statusFilter === 'Novo Lead' && (!leadStatus || leadStatus === 'Novo Lead')) ||
+      (statusFilter === 'Convertido / Ganho' && (oppStatus === 'won' || oppStatus === 'ganha')) ||
+      (statusFilter === 'Perdido' && (oppStatus === 'lost' || oppStatus === 'perdida'))
+
+    // Filtro de origem (copiado/adaptado de Leads.tsx)
+    const leadSource = opp.expand?.lead_id?.source || opp.expand?.lead_id?.origem || opp.origem
+    const matchesSource =
+      sourceFilter === 'all' ||
+      leadSource === sourceFilter ||
+      (sourceFilter === 'landing_page' && (leadSource === 'landing_page' || leadSource === 'Site'))
+
+    // Filtro de intervalo de data de criação (de / até) pelo campo created
+    const createdDateStr = opp.expand?.lead_id?.created || opp.created
+    let matchesDate = true
+    if (createdDateStr) {
+      const createdDate = new Date(createdDateStr)
+      if (startDateFilter) {
+        const start = new Date(`${startDateFilter}T00:00:00`)
+        if (createdDate < start) matchesDate = false
+      }
+      if (endDateFilter) {
+        const end = new Date(`${endDateFilter}T23:59:59.999`)
+        if (createdDate > end) matchesDate = false
+      }
+    } else if (startDateFilter || endDateFilter) {
+      matchesDate = false
+    }
+
+    return (
+      matchesSearch && matchesUser && matchesTemp && matchesStatus && matchesSource && matchesDate
+    )
   })
 
   const totalPipelineValue = filteredOpps.reduce((sum, o) => sum + (o.value || 0), 0)
@@ -360,31 +448,136 @@ export function PipelinePage() {
       </div>
 
       {/* Filter Toolbar */}
-      <div className="bg-card border border-border/80 rounded-xl p-3 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
-        <div className="relative w-full sm:w-72">
-          <Search className="h-4 w-4 absolute left-3 top-2.5 text-muted-foreground" />
-          <Input
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Filtrar oportunidades..."
-            className="pl-9 h-9 text-xs"
-          />
+      <div className="bg-card border border-border/80 rounded-xl p-4 shadow-xs space-y-3">
+        {/* Row 1: Search, Temperatura, Origem, Status, Responsável */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          {/* Search */}
+          <div className="relative lg:col-span-1">
+            <Search className="h-4 w-4 absolute left-3 top-2.5 text-muted-foreground" />
+            <Input
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Buscar título, lead, serviço..."
+              className="pl-9 h-9 text-xs"
+            />
+          </div>
+
+          {/* Temperatura */}
+          <div>
+            <Select value={temperatureFilter} onValueChange={setTemperatureFilter}>
+              <SelectTrigger className="h-9 text-xs">
+                <SelectValue placeholder="Temperatura" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas as Temperaturas</SelectItem>
+                <SelectItem value="hot">🔥 Quente / Muito Quente</SelectItem>
+                <SelectItem value="warm">⚡ Morno</SelectItem>
+                <SelectItem value="cold">❄️ Frio</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Origem */}
+          <div>
+            <Select value={sourceFilter} onValueChange={setSourceFilter}>
+              <SelectTrigger className="h-9 text-xs">
+                <SelectValue placeholder="Origem" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas as Origens</SelectItem>
+                <SelectItem value="Meta Ads">Meta Ads (Instagram/FB)</SelectItem>
+                <SelectItem value="Google Ads">Google Ads</SelectItem>
+                <SelectItem value="landing_page">Landing Page Institucional</SelectItem>
+                <SelectItem value="Indicação">Indicação</SelectItem>
+                <SelectItem value="Site">Site / Formulário</SelectItem>
+                <SelectItem value="WhatsApp">WhatsApp Direto</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Status */}
+          <div>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="h-9 text-xs">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos os Status</SelectItem>
+                <SelectItem value="Novo Lead">Novo Lead</SelectItem>
+                <SelectItem value="Em Atendimento">Em Atendimento</SelectItem>
+                <SelectItem value="Qualificado">Qualificado</SelectItem>
+                <SelectItem value="Oportunidade Criada">Oportunidade Criada</SelectItem>
+                <SelectItem value="Convertido / Ganho">Convertido / Ganho</SelectItem>
+                <SelectItem value="Perdido">Perdido</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Responsável */}
+          <div>
+            <Select value={userFilter} onValueChange={setUserFilter}>
+              <SelectTrigger className="h-9 text-xs">
+                <SelectValue placeholder="Responsável" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos os Advogados</SelectItem>
+                {users.map((u) => (
+                  <SelectItem key={u.id} value={u.id}>
+                    {u.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <Select value={userFilter} onValueChange={setUserFilter}>
-            <SelectTrigger className="h-9 text-xs w-48">
-              <SelectValue placeholder="Responsável" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos os Advogados</SelectItem>
-              {users.map((u) => (
-                <SelectItem key={u.id} value={u.id}>
-                  {u.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        {/* Row 2: Date Range Filter (Data inicial e Data final) & Active Filter Badges / Reset */}
+        <div className="pt-2 border-t border-border/60 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-muted-foreground font-semibold flex items-center gap-1.5 shrink-0">
+              <Calendar className="h-3.5 w-3.5 text-muted-foreground" /> Data de Criação:
+            </span>
+            <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] text-muted-foreground">De:</span>
+                <Input
+                  type="date"
+                  value={startDateFilter}
+                  onChange={(e) => setStartDateFilter(e.target.value)}
+                  className="h-8 text-xs font-mono w-36 px-2"
+                />
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] text-muted-foreground">Até:</span>
+                <Input
+                  type="date"
+                  value={endDateFilter}
+                  onChange={(e) => setEndDateFilter(e.target.value)}
+                  className="h-8 text-xs font-mono w-36 px-2"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end md:self-auto">
+            {activeFiltersCount > 0 && (
+              <Badge variant="secondary" className="gap-1 font-mono text-[11px]">
+                <Filter className="h-3 w-3" />
+                {activeFiltersCount} {activeFiltersCount === 1 ? 'filtro ativo' : 'filtros ativos'}
+              </Badge>
+            )}
+
+            {activeFiltersCount > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearAllFilters}
+                className="h-8 text-xs text-muted-foreground hover:text-foreground gap-1 px-2.5"
+              >
+                <RotateCcw className="h-3 w-3" /> Limpar Filtros
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
