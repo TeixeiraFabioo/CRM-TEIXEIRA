@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-22T16:04:31.348Z",
+  "generatedAt": "2026-08-22T18:18:22.393Z",
   "collections": [
     {
       "name": "users",
@@ -8,8 +8,8 @@
         "list": "@request.auth.id != '' && (id = @request.auth.id || @request.auth.role = 'admin' || @request.auth.role = 'manager') && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
         "view": "@request.auth.id != '' && (id = @request.auth.id || @request.auth.role = 'admin' || @request.auth.role = 'manager') && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
         "create": "",
-        "update": "@request.auth.id != '' && (id = @request.auth.id || (@request.auth.role = 'admin' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')))",
-        "delete": "@request.auth.id != '' && (id = @request.auth.id || (@request.auth.role = 'admin' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')))"
+        "update": "@request.auth.id != '' && (id = @request.auth.id || (@request.auth.role = 'admin' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')) || (@request.auth.role = 'manager' && role != 'admin' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')))",
+        "delete": "@request.auth.id != '' && (id = @request.auth.id || (@request.auth.role = 'admin' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')) || (@request.auth.role = 'manager' && role != 'admin' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')))"
       },
       "fields": [
         {
@@ -81,6 +81,12 @@
         {
           "name": "active",
           "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "team",
+          "type": "text",
           "required": false,
           "system": false
         }

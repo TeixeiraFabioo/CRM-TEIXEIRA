@@ -37,6 +37,7 @@ import RelatoriosPage from '@/pages/Relatorios'
 import AutomacoesPage from '@/pages/Automacoes'
 import IntegrationsPage from '@/pages/Integrations'
 import SettingsPage from '@/pages/Settings'
+import MeuPerfilPage from '@/pages/MeuPerfil'
 import KnowledgeBasePage from '@/pages/KnowledgeBase'
 import AuditLogPage from '@/pages/AuditLog'
 import NotFound from '@/pages/NotFound'
@@ -270,8 +271,16 @@ export default function App() {
             <Route
               path="settings"
               element={
-                <RequireRole allowedRoles={['admin']}>
+                <RequireRole allowedRoles={['admin', 'gestor']}>
                   <SettingsPage />
+                </RequireRole>
+              }
+            />
+            <Route
+              path="meu-perfil"
+              element={
+                <RequireRole allowedRoles={['admin', 'gestor', 'advogado']}>
+                  <MeuPerfilPage />
                 </RequireRole>
               }
             />

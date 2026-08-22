@@ -2,27 +2,6 @@
 // $ai.agent(slug).chat (Skip-shape). Don't hand-roll the SSE reader —
 // past attempts shipped "undefinedundefined…" and "[object Object]…".
 
-import pb from '@/lib/pocketbase/client'
-
-export interface GenerateChatParams {
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
-  temperature?: number
-  public?: boolean
-}
-
-// Thin wrapper around the server-side $ai.chat endpoints exposed in
-// pocketbase/hooks/ai_chat.js. Returns the assistant text (or '' on failure).
-// `public: true` routes to the anonymous landing-page endpoint; otherwise the
-// authenticated CRM endpoint is used.
-export async function generateChatResponse(params: GenerateChatParams): Promise<string> {
-  const path = params.public ? '/backend/v1/ai/landing-chat' : '/backend/v1/ai/chat'
-  const res = await pb.send(path, {
-    method: 'POST',
-    body: { messages: params.messages, temperature: params.temperature ?? 0.7 },
-  })
-  return typeof res?.text === 'string' ? res.text : ''
-}
-
 export interface OpenAIChatResult {
   id: string
   model: string

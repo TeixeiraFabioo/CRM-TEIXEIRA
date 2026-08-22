@@ -31,6 +31,7 @@ import {
   Moon,
   LogOut,
   UserCheck,
+  UserCircle,
   BookOpen,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -85,6 +86,7 @@ export default function Layout() {
         { name: 'Leads Jurídicos', path: '/leads', icon: Users, badge: 'Novos' },
         { name: 'Funil & Kanban', path: '/pipeline', icon: Kanban },
         { name: 'Clientes', path: '/clientes', icon: Briefcase },
+        { name: 'Meu Perfil', path: '/meu-perfil', icon: UserCircle },
       ],
     },
     {
@@ -118,11 +120,14 @@ export default function Layout() {
       ],
     },
     {
+      title: 'ADMINISTRAÇÃO',
+      items: [{ name: 'Configurações do Escritório', path: '/settings', icon: Settings }],
+    },
+    {
       title: 'SISTEMA & INTEGRAÇÕES',
       items: [
         { name: 'Central de Integrações', path: '/integrations', icon: Layers },
         { name: 'Trilha de Auditoria', path: '/auditoria', icon: ShieldCheck },
-        { name: 'Configurações do Escritório', path: '/settings', icon: Settings },
       ],
     },
   ]
@@ -164,6 +169,8 @@ export default function Layout() {
     '/comissoes',
     '/automacoes',
     '/base-conhecimento',
+    '/settings',
+    '/meu-perfil',
   ])
   const ADVOGADO_PATHS = new Set([
     '/',
@@ -172,6 +179,7 @@ export default function Layout() {
     '/clientes',
     '/tarefas',
     '/base-conhecimento',
+    '/meu-perfil',
   ])
 
   const allowedPaths =
@@ -282,7 +290,16 @@ export default function Layout() {
             </div>
           </div>
           <div className="flex items-center gap-0.5 shrink-0">
-            {role === 'admin' && (
+            <Link to="/meu-perfil" title="Meu Perfil">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-slate-400 hover:text-white"
+              >
+                <UserCircle className="h-4 w-4" />
+              </Button>
+            </Link>
+            {(role === 'admin' || role === 'gestor') && (
               <Link to="/settings" title="Configurações">
                 <Button
                   variant="ghost"

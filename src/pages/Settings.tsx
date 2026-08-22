@@ -80,7 +80,7 @@ import {
 import { MessageSquareText, SlidersHorizontal, Edit2, Check } from 'lucide-react'
 
 export function SettingsPage() {
-  const { tenant, user, refreshTenant, logout } = useTenant()
+  const { tenant, user, refreshTenant, logout, userRole } = useTenant()
   const { toast } = useToast()
 
   const [services, setServices] = useState<ServiceRecord[]>([])
@@ -182,11 +182,321 @@ export function SettingsPage() {
   const [resetPasswordModalOpen, setResetPasswordModalOpen] = useState(false)
   const [userToReset, setUserToReset] = useState<UserRecord | null>(null)
   const [isResettingPassword, setIsResettingPassword] = useState(false)
+  // Reset password mode: 'random' (default) or 'custom'
+  const [resetPasswordMode, setResetPasswordMode] = useState<'random' | 'custom'>('random')
+  const [resetNewPassword, setResetNewPassword] = useState('')
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('')
 
   // Toggle User Active Status state
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
 
-  const isAdmin = user?.role === 'admin'
+  // Edit User modal state
+  const [editUserModalOpen, setEditUserModalOpen] = useState(false)
+  const [editingUser, setEditingUser] = useState<UserRecord | null>(null)
+  const [editUserData, setEditUserData] = useState({
+    name: '',
+    email: '',
+    role: 'user' as 'admin' | 'manager' | 'user',
+    team: '',
+  })
+  const isAdmin = userRole === 'admin'
+
+  /**
+=======
+=======
+=======
+=======
+  const isAdmin = userRole === 'admin'
+
+  /**
+=======
+  // Reset Password Confirmation
+  const [resetPasswordModalOpen, setResetPasswordModalOpen] = useState(false)
+  const [userToReset, setUserToReset] = useState<UserRecord | null>(null)
+  const [isResettingPassword, setIsResettingPassword] = useState(false)
+  // Reset password mode: 'random' (default) or 'custom'
+  const [resetPasswordMode, setResetPasswordMode] = useState<'random' | 'custom'>('random')
+  const [resetNewPassword, setResetNewPassword] = useState('')
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('')
+
+  // Toggle User Active Status state
+  const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
+
+  // Edit User modal state
+  const [editUserModalOpen, setEditUserModalOpen] = useState(false)
+  const [editingUser, setEditingUser] = useState<UserRecord | null>(null)
+  const [editUserData, setEditUserData] = useState({
+    name: '',
+    email: '',
+    role: 'user' as 'admin' | 'manager' | 'user',
+    team: '',
+  })
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
+
+  // Role-based hierarchy:
+  //   admin  → can manage any user (incl. other admins), except self
+  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
+  //            and user/advogado), except self
+  //   advogado → never reaches this page (RequireRole blocks it), but keep
+  //            a safe fallback.
+  const isAdmin = userRole === 'admin'
+
+  /**
+   * Whether the current user is allowed to perform management actions
+   * (reset password / delete / toggle active / edit) on `target`.
+   * Admins: anyone but self. Gestor: only non-admin users (and not self,
+   * but self-handling stays in each handler for a clearer toast).
+   */
+  const canManageUser = (target: UserRecord): boolean => {
+    if (!target) return false
+    if (isAdmin) return true
+    if (userRole === 'gestor') return target.role !== 'admin'
+    return false
+  }
+
+  const generateSecurePassword = (length = 12) => {
+=======
+  // Role-based hierarchy:
+  //   admin  → can manage any user (incl. other admins), except self
+  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
+  //            and user/advogado), except self
+  //   advogado → never reaches this page (RequireRole blocks it), but keep
+  //            a safe fallback.
+  const isAdmin = userRole === 'admin'
+
+  /**
+   * Whether the current user is allowed to perform management actions
+   * (reset password / delete / toggle active / edit) on `target`.
+   * Admins: anyone but self. Gestor: only non-admin users (and not self,
+   * but self-handling stays in each handler for a clearer toast).
+   */
+  const canManageUser = (target: UserRecord): boolean => {
+    if (!target) return false
+    if (isAdmin) return true
+    if (userRole === 'gestor') return target.role !== 'admin'
+    return false
+  }
+
+  const generateSecurePassword = (length = 12) => {
+=======
+=======
+  const isAdmin = userRole === 'admin'
+
+  /**
+=======
+=======
+=======
+=======
+  const isAdmin = userRole === 'admin'
+
+  /**
+=======
+  // Reset Password Confirmation
+  const [resetPasswordModalOpen, setResetPasswordModalOpen] = useState(false)
+  const [userToReset, setUserToReset] = useState<UserRecord | null>(null)
+  const [isResettingPassword, setIsResettingPassword] = useState(false)
+  // Reset password mode: 'random' (default) or 'custom'
+  const [resetPasswordMode, setResetPasswordMode] = useState<'random' | 'custom'>('random')
+  const [resetNewPassword, setResetNewPassword] = useState('')
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('')
+
+  // Toggle User Active Status state
+  const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
+
+  // Edit User modal state
+  const [editUserModalOpen, setEditUserModalOpen] = useState(false)
+  const [editingUser, setEditingUser] = useState<UserRecord | null>(null)
+  const [editUserData, setEditUserData] = useState({
+    name: '',
+    email: '',
+    role: 'user' as 'admin' | 'manager' | 'user',
+    team: '',
+  })
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
+
+  // Role-based hierarchy:
+  //   admin  → can manage any user (incl. other admins), except self
+  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
+  //            and user/advogado), except self
+  //   advogado → never reaches this page (RequireRole blocks it), but keep
+  //            a safe fallback.
+  const isAdmin = userRole === 'admin'
+
+  /**
+   * Whether the current user is allowed to perform management actions
+   * (reset password / delete / toggle active / edit) on `target`.
+   * Admins: anyone but self. Gestor: only non-admin users (and not self,
+   * but self-handling stays in each handler for a clearer toast).
+   */
+  const canManageUser = (target: UserRecord): boolean => {
+    if (!target) return false
+    if (isAdmin) return true
+    if (userRole === 'gestor') return target.role !== 'admin'
+    return false
+  }
+
+  const generateSecurePassword = (length = 12) => {
+=======
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
+
+  // Role-based hierarchy:
+  //   admin  → can manage any user (incl. other admins), except self
+  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
+  //            and user/advogado), except self
+  //   advogado → never reaches this page (RequireRole blocks it), but keep
+  //            a safe fallback.
+  const isAdmin = userRole === 'admin'
+
+  /**
+   * Whether the current user is allowed to perform management actions
+   * (reset password / delete / toggle active / edit) on `target`.
+   * Admins: anyone but self. Gestor: only non-admin users (and not self,
+   * but self-handling stays in each handler for a clearer toast).
+   */
+  const canManageUser = (target: UserRecord): boolean => {
+    if (!target) return false
+    if (isAdmin) return true
+    if (userRole === 'gestor') return target.role !== 'admin'
+    return false
+  }
+
+  const generateSecurePassword = (length = 12) => {
+=======
+  const isAdmin = userRole === 'admin'
+
+  /**
+=======
+=======
+=======
+=======
+  const isAdmin = userRole === 'admin'
+
+  /**
+=======
+  // Reset Password Confirmation
+  const [resetPasswordModalOpen, setResetPasswordModalOpen] = useState(false)
+  const [userToReset, setUserToReset] = useState<UserRecord | null>(null)
+  const [isResettingPassword, setIsResettingPassword] = useState(false)
+  // Reset password mode: 'random' (default) or 'custom'
+  const [resetPasswordMode, setResetPasswordMode] = useState<'random' | 'custom'>('random')
+  const [resetNewPassword, setResetNewPassword] = useState('')
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('')
+
+  // Toggle User Active Status state
+  const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
+
+  // Edit User modal state
+  const [editUserModalOpen, setEditUserModalOpen] = useState(false)
+  const [editingUser, setEditingUser] = useState<UserRecord | null>(null)
+  const [editUserData, setEditUserData] = useState({
+    name: '',
+    email: '',
+    role: 'user' as 'admin' | 'manager' | 'user',
+    team: '',
+  })
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
+
+  // Role-based hierarchy:
+  //   admin  → can manage any user (incl. other admins), except self
+  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
+  //            and user/advogado), except self
+  //   advogado → never reaches this page (RequireRole blocks it), but keep
+  //            a safe fallback.
+  const isAdmin = userRole === 'admin'
+
+  /**
+   * Whether the current user is allowed to perform management actions
+   * (reset password / delete / toggle active / edit) on `target`.
+   * Admins: anyone but self. Gestor: only non-admin users (and not self,
+   * but self-handling stays in each handler for a clearer toast).
+   */
+  const canManageUser = (target: UserRecord): boolean => {
+    if (!target) return false
+    if (isAdmin) return true
+    if (userRole === 'gestor') return target.role !== 'admin'
+    return false
+  }
+
+  const generateSecurePassword = (length = 12) => {
+=======
+  // Role-based hierarchy:
+  //   admin  → can manage any user (incl. other admins), except self
+  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
+  //            and user/advogado), except self
+  //   advogado → never reaches this page (RequireRole blocks it), but keep
+  //            a safe fallback.
+  const isAdmin = userRole === 'admin'
+
+  /**
+   * Whether the current user is allowed to perform management actions
+   * (reset password / delete / toggle active / edit) on `target`.
+   * Admins: anyone but self. Gestor: only non-admin users (and not self,
+   * but self-handling stays in each handler for a clearer toast).
+   */
+  const canManageUser = (target: UserRecord): boolean => {
+    if (!target) return false
+    if (isAdmin) return true
+    if (userRole === 'gestor') return target.role !== 'admin'
+    return false
+  }
+
+  const generateSecurePassword = (length = 12) => {
+=======
+=======
+  const isAdmin = userRole === 'admin'
+
+  /**
+=======
+=======
+=======
+=======
+  const isAdmin = userRole === 'admin'
+
+  /**
+=======
+  // Reset Password Confirmation
+  const [resetPasswordModalOpen, setResetPasswordModalOpen] = useState(false)
+  const [userToReset, setUserToReset] = useState<UserRecord | null>(null)
+  const [isResettingPassword, setIsResettingPassword] = useState(false)
+  // Reset password mode: 'random' (default) or 'custom'
+  const [resetPasswordMode, setResetPasswordMode] = useState<'random' | 'custom'>('random')
+  const [resetNewPassword, setResetNewPassword] = useState('')
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('')
+
+  // Toggle User Active Status state
+  const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
+
+  // Edit User modal state
+  const [editUserModalOpen, setEditUserModalOpen] = useState(false)
+  const [editingUser, setEditingUser] = useState<UserRecord | null>(null)
+  const [editUserData, setEditUserData] = useState({
+    name: '',
+    email: '',
+    role: 'user' as 'admin' | 'manager' | 'user',
+    team: '',
+  })
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
+
+  // Role-based hierarchy:
+  //   admin  → can manage any user (incl. other admins), except self
+  //   gestor → can only manage users whose role is NOT 'admin' (i.e. manager
+  //            and user/advogado), except self
+  //   advogado → never reaches this page (RequireRole blocks it), but keep
+  //            a safe fallback.
+  const isAdmin = userRole === 'admin'
+
+  /**
+   * Whether the current user is allowed to perform management actions
+   * (reset password / delete / toggle active / edit) on `target`.
+   * Admins: anyone but self. Gestor: only non-admin users (and not self,
+   * but self-handling stays in each handler for a clearer toast).
+   */
+  const canManageUser = (target: UserRecord): boolean => {
+    if (!target) return false
+    if (isAdmin) return true
+    if (userRole === 'gestor') return target.role !== 'admin'
+    return false
+  }
 
   const generateSecurePassword = (length = 12) => {
     const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*+='
@@ -556,8 +866,44 @@ export function SettingsPage() {
   const handleResetPassword = async () => {
     if (!tenant?.id || !userToReset) return
 
+    // Defense-in-depth: never allow resetting an admin's password from a
+    // gestor session, even if the dialog was somehow opened.
+    if (!canManageUser(userToReset)) {
+      toast({
+        title: 'Ação não permitida',
+        description: 'Você não pode redefinir a senha de um administrador.',
+        variant: 'destructive',
+      })
+      setResetPasswordModalOpen(false)
+      setUserToReset(null)
+      return
+    }
+
+    let newPassword = ''
+
+    if (resetPasswordMode === 'custom') {
+      if (!resetNewPassword || resetNewPassword.length < 8) {
+        toast({
+          title: 'Senha muito curta',
+          description: 'A nova senha deve ter no mínimo 8 caracteres.',
+          variant: 'destructive',
+        })
+        return
+      }
+      if (resetNewPassword !== resetConfirmPassword) {
+        toast({
+          title: 'As senhas não conferem',
+          description: 'Confirme a nova senha digitando-a novamente.',
+          variant: 'destructive',
+        })
+        return
+      }
+      newPassword = resetNewPassword
+    } else {
+      newPassword = generateSecurePassword(12)
+    }
+
     setIsResettingPassword(true)
-    const newPassword = generateSecurePassword(12)
 
     try {
       await pb.collection('users').update(userToReset.id, {
@@ -567,25 +913,35 @@ export function SettingsPage() {
 
       await CrmService.logAudit(tenant.id, 'reset_password_user', 'user', userToReset.id, null, {
         userEmail: userToReset.email,
+        mode: resetPasswordMode,
       })
 
       toast({
         title: 'Senha redefinida com sucesso!',
-        description: `Nova senha gerada para ${userToReset.name}.`,
+        description:
+          resetPasswordMode === 'custom'
+            ? `Senha personalizada definida para ${userToReset.name}.`
+            : `Nova senha aleatória gerada para ${userToReset.name}.`,
       })
 
       setResetPasswordModalOpen(false)
 
-      // Show temporary password modal
-      setPasswordModalData({
-        userEmail: userToReset.email,
-        userName: userToReset.name,
-        password: newPassword,
-        isReset: true,
-      })
-      setCopiedPassword(false)
-      setPasswordModalOpen(true)
+      // Only reveal the generated password when it was randomly generated;
+      // a custom password is already known to the gestor/admin.
+      if (resetPasswordMode === 'random') {
+        setPasswordModalData({
+          userEmail: userToReset.email,
+          userName: userToReset.name,
+          password: newPassword,
+          isReset: true,
+        })
+        setCopiedPassword(false)
+        setPasswordModalOpen(true)
+      }
       setUserToReset(null)
+      setResetPasswordMode('random')
+      setResetNewPassword('')
+      setResetConfirmPassword('')
     } catch (err: any) {
       console.error('Error resetting password:', err)
       toast({
@@ -595,6 +951,69 @@ export function SettingsPage() {
       })
     } finally {
       setIsResettingPassword(false)
+    }
+  }
+
+  const handleSaveEditUser = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!tenant?.id || !editingUser) return
+
+    // Defense-in-depth: gestor cannot edit an admin.
+    if (!canManageUser(editingUser)) {
+      toast({
+        title: 'Ação não permitida',
+        description: 'Você não pode editar um administrador.',
+        variant: 'destructive',
+      })
+      setEditUserModalOpen(false)
+      return
+    }
+
+    if (!editUserData.name.trim() || !editUserData.email.trim()) {
+      toast({ title: 'Preencha nome e e-mail', variant: 'destructive' })
+      return
+    }
+
+    setIsSavingEdit(true)
+    try {
+      const updated = await pb.collection('users').update<UserRecord>(editingUser.id, {
+        name: editUserData.name.trim(),
+        email: editUserData.email.trim().toLowerCase(),
+        role: editUserData.role,
+        team: editUserData.team || '',
+      })
+
+      await CrmService.logAudit(tenant.id, 'update_user', 'user', editingUser.id, null, {
+        name: updated.name,
+        email: updated.email,
+        role: updated.role,
+        team: updated.team,
+      })
+
+      toast({
+        title: 'Usuário atualizado com sucesso!',
+        description: `Dados de ${updated.name} foram salvos.`,
+      })
+
+      setUsers((prev) =>
+        prev.map((u) => (u.id === editingUser.id ? { ...u, ...updated } : u)),
+      )
+
+      setEditUserModalOpen(false)
+      setEditingUser(null)
+    } catch (err: any) {
+      console.error('Error editing user:', err)
+      const errorMsg =
+        err?.data?.data?.email?.message ||
+        err?.message ||
+        'Não foi possível atualizar o usuário.'
+      toast({
+        title: 'Erro ao atualizar usuário',
+        description: errorMsg,
+        variant: 'destructive',
+      })
+    } finally {
+      setIsSavingEdit(false)
     }
   }
 
@@ -925,6 +1344,13 @@ export function SettingsPage() {
               </h3>
               <p className="text-xs text-muted-foreground">
                 Administre os membros do escritório, papéis, senhas e ativação de acessos ao CRM.
+                {!isAdmin && (
+                  <span className="mt-1 block text-amber-600 dark:text-amber-400">
+                    Como Gestor, você gerencia apenas usuários não-administradores (Gestores e
+                    Advogados). Administradores não podem ser editados, desativados ou removidos por
+                    você.
+                  </span>
+                )}
               </p>
             </div>
             {isAdmin && (
@@ -1024,17 +1450,18 @@ export function SettingsPage() {
                     <th className="p-3 pl-4">Nome do Advogado/Usuário</th>
                     <th className="p-3">E-mail</th>
                     <th className="p-3">Papel / Perfil</th>
+                    <th className="p-3">Equipe</th>
                     <th className="p-3">Data de Criação</th>
                     <th className="p-3">Último Acesso</th>
                     <th className="p-3 text-center">Status (Ativo)</th>
-                    {isAdmin && <th className="p-3 pr-4 text-right">Ações</th>}
+                    <th className="p-3 pr-4 text-right">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {loading ? (
                     <tr>
                       <td
-                        colSpan={isAdmin ? 7 : 6}
+                        colSpan={8}
                         className="p-6 text-center text-muted-foreground"
                       >
                         Carregando usuários do escritório...
@@ -1043,7 +1470,7 @@ export function SettingsPage() {
                   ) : users.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={isAdmin ? 7 : 6}
+                        colSpan={8}
                         className="p-6 text-center text-muted-foreground"
                       >
                         Nenhum usuário cadastrado.
@@ -1053,6 +1480,7 @@ export function SettingsPage() {
                     users.map((u) => {
                       const isUserActive = u.active !== false && u.status !== 'inactive'
                       const isSelf = u.id === user?.id
+                      const canManage = canManageUser(u)
 
                       return (
                         <tr
@@ -1092,6 +1520,17 @@ export function SettingsPage() {
                                   : 'Usuário'}
                             </Badge>
                           </td>
+                          <td className="p-3 text-muted-foreground text-[11px]">
+                            {u.team
+                              ? u.team === 'comercial'
+                                ? 'Comercial'
+                                : u.team === 'juridico'
+                                  ? 'Jurídico'
+                                  : u.team === 'financeiro'
+                                    ? 'Financeiro'
+                                    : u.team
+                              : '—'}
+                          </td>
                           <td className="p-3 text-muted-foreground text-[11px] whitespace-nowrap">
                             {u.created ? new Date(u.created).toLocaleDateString('pt-BR') : '—'}
                           </td>
@@ -1104,7 +1543,7 @@ export function SettingsPage() {
                               : 'Nunca acessou'}
                           </td>
                           <td className="p-3 text-center">
-                            {isAdmin ? (
+                            {canManage ? (
                               <div className="flex items-center justify-center gap-2">
                                 <Switch
                                   checked={isUserActive}
@@ -1131,14 +1570,37 @@ export function SettingsPage() {
                             )}
                           </td>
 
-                          {isAdmin && (
-                            <td className="p-3 pr-4 text-right">
+                          <td className="p-3 pr-4 text-right">
+                            {canManage ? (
                               <div className="flex items-center justify-end gap-1.5">
                                 <Button
                                   variant="outline"
                                   size="sm"
                                   onClick={() => {
+                                    setEditingUser(u)
+                                    setEditUserData({
+                                      name: u.name,
+                                      email: u.email,
+                                      role: (u.role as 'admin' | 'manager' | 'user') || 'user',
+                                      team: (u.team as string) || '',
+                                    })
+                                    setEditUserModalOpen(true)
+                                  }}
+                                  title="Editar usuário"
+                                  className="h-7 text-xs px-2 gap-1"
+                                >
+                                  <Edit2 className="h-3 w-3" />
+                                  <span className="hidden sm:inline">Editar</span>
+                                </Button>
+
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
                                     setUserToReset(u)
+                                    setResetPasswordMode('random')
+                                    setResetNewPassword('')
+                                    setResetConfirmPassword('')
                                     setResetPasswordModalOpen(true)
                                   }}
                                   title="Resetar senha"
@@ -1164,8 +1626,12 @@ export function SettingsPage() {
                                   <Trash2 className="h-3.5 w-3.5" />
                                 </Button>
                               </div>
-                            </td>
-                          )}
+                            ) : (
+                              <span className="text-[10px] text-muted-foreground italic">
+                                Sem ação
+                              </span>
+                            )}
+                          </td>
                         </tr>
                       )
                     })
@@ -2248,7 +2714,7 @@ export function SettingsPage() {
 
       {/* CONFIRM RESET PASSWORD DIALOG */}
       <AlertDialog open={resetPasswordModalOpen} onOpenChange={setResetPasswordModalOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-w-md">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-base font-bold font-legal-serif flex items-center gap-2 text-amber-600 dark:text-amber-400">
               <KeyRound className="h-4 w-4" />
@@ -2256,22 +2722,203 @@ export function SettingsPage() {
             </AlertDialogTitle>
             <AlertDialogDescription className="text-xs">
               Tem certeza que deseja resetar a senha de <strong>{userToReset?.name}</strong> (
-              {userToReset?.email})? Uma nova senha aleatória será gerada imediatamente e a senha
-              anterior deixará de funcionar.
+              {userToReset?.email})? A senha anterior deixará de funcionar imediatamente. Por
+              segurança, não é possível ver a senha atual do usuário.
             </AlertDialogDescription>
           </AlertDialogHeader>
+
+          <div className="space-y-3 py-1">
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
+                <input
+                  type="radio"
+                  name="resetPasswordMode"
+                  value="random"
+                  checked={resetPasswordMode === 'random'}
+                  onChange={() => setResetPasswordMode('random')}
+                  className="h-4 w-4 accent-amber-600"
+                />
+                Gerar senha aleatória (padrão)
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
+                <input
+                  type="radio"
+                  name="resetPasswordMode"
+                  value="custom"
+                  checked={resetPasswordMode === 'custom'}
+                  onChange={() => setResetPasswordMode('custom')}
+                  className="h-4 w-4 accent-amber-600"
+                />
+                Definir senha personalizada
+              </label>
+            </div>
+
+            {resetPasswordMode === 'custom' && (
+              <div className="space-y-2.5 pl-6 border-l-2 border-amber-500/30">
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold">Nova Senha *</Label>
+                  <Input
+                    type="password"
+                    value={resetNewPassword}
+                    onChange={(e) => setResetNewPassword(e.target.value)}
+                    placeholder="Mínimo 8 caracteres"
+                    className="h-9 text-xs"
+                    autoComplete="new-password"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold">Confirmar Nova Senha *</Label>
+                  <Input
+                    type="password"
+                    value={resetConfirmPassword}
+                    onChange={(e) => setResetConfirmPassword(e.target.value)}
+                    placeholder="Repita a nova senha"
+                    className="h-9 text-xs"
+                    autoComplete="new-password"
+                  />
+                  {resetConfirmPassword &&
+                    resetNewPassword !== resetConfirmPassword && (
+                      <p className="text-[10px] text-red-600 dark:text-red-400">
+                        As senhas não conferem.
+                      </p>
+                    )}
+                </div>
+              </div>
+            )}
+          </div>
+
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isResettingPassword}>Cancelar</AlertDialogCancel>
             <AlertDialogAction
-              disabled={isResettingPassword}
+              disabled={
+                isResettingPassword ||
+                (resetPasswordMode === 'custom' &&
+                  (!resetNewPassword ||
+                    resetNewPassword.length < 8 ||
+                    resetNewPassword !== resetConfirmPassword))
+              }
               onClick={handleResetPassword}
               className="bg-amber-600 hover:bg-amber-700 text-white"
             >
-              {isResettingPassword ? 'Gerando...' : 'Gerar Nova Senha'}
+              {isResettingPassword
+                ? 'Redefinindo...'
+                : resetPasswordMode === 'custom'
+                  ? 'Definir Senha'
+                  : 'Gerar Nova Senha'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* EDIT USER DIALOG */}
+      <Dialog open={editUserModalOpen} onOpenChange={setEditUserModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-legal-serif flex items-center gap-2">
+              <Edit2 className="h-4 w-4 text-amber-500" />
+              Editar Usuário
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Atualize os dados de {editingUser?.name}. As alterações são salvas diretamente no
+              cadastro do usuário.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleSaveEditUser} className="space-y-3.5 pt-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Nome Completo *</Label>
+              <Input
+                required
+                value={editUserData.name}
+                onChange={(e) => setEditUserData({ ...editUserData, name: e.target.value })}
+                className="h-9 text-xs"
+                placeholder="Ex: Dra. Juliana Fernandes"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">E-mail Corporativo *</Label>
+              <Input
+                required
+                type="email"
+                value={editUserData.email}
+                onChange={(e) => setEditUserData({ ...editUserData, email: e.target.value })}
+                className="h-9 text-xs"
+                placeholder="exemplo@teixeiranascimento.adv.br"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Papel / Nível de Acesso *</Label>
+                <Select
+                  value={editUserData.role}
+                  onValueChange={(val: 'admin' | 'manager' | 'user') =>
+                    setEditUserData({ ...editUserData, role: val })
+                  }
+                  disabled={!isAdmin}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">Administrador</SelectItem>
+                    <SelectItem value="manager">Gestor</SelectItem>
+                    <SelectItem value="user">Advogado / Consultor</SelectItem>
+                  </SelectContent>
+                </Select>
+                {!isAdmin && (
+                  <p className="text-[10px] text-muted-foreground">
+                    Como Gestor, você não pode alterar o papel de um usuário.
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Equipe / Time</Label>
+                <Select
+                  value={editUserData.team || 'none'}
+                  onValueChange={(val) =>
+                    setEditUserData({
+                      ...editUserData,
+                      team: val === 'none' ? '' : val,
+                    })
+                  }
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sem equipe</SelectItem>
+                    <SelectItem value="comercial">Comercial</SelectItem>
+                    <SelectItem value="juridico">Jurídico</SelectItem>
+                    <SelectItem value="financeiro">Financeiro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isSavingEdit}
+                onClick={() => setEditUserModalOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isSavingEdit}
+                className="bg-[#0A1F3F] hover:bg-[#0A1F3F]/90 text-white gap-1.5"
+              >
+                {isSavingEdit ? 'Salvando...' : 'Salvar Alterações'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* CONFIRM DELETE USER DIALOG */}
       <AlertDialog open={deleteUserModalOpen} onOpenChange={setDeleteUserModalOpen}>
