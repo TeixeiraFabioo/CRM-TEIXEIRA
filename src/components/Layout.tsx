@@ -182,7 +182,6 @@ export default function Layout() {
     '/leads',
     '/pipeline',
     '/clientes',
-    '/servicos',
     '/tarefas',
     '/base-conhecimento',
     '/meu-perfil',
