@@ -41,6 +41,19 @@ export function IntegrationsPage() {
   const { tenant } = useTenant()
   const { toast } = useToast()
 
+  // Calendly state
+  const [calendlyConnected, setCalendlyConnected] = useState(false)
+  const [calendlyConfig, setCalendlyConfig] = useState<any>(null)
+  const [calendlySchedulingUrl, setCalendlySchedulingUrl] = useState('')
+  const [calendlyTokenInput, setCalendlyTokenInput] = useState('')
+  const [calendlyLoading, setCalendlyLoading] = useState(true)
+  const [calendlyActionLoading, setCalendlyActionLoading] = useState(false)
+  const [calendlyTestLoading, setCalendlyTestLoading] = useState(false)
+  const [calendlyTestResult, setCalendlyTestResult] = useState<{
+    success: boolean
+    message: string
+  } | null>(null)
+
   // ZapSign state
   const [zapConnected, setZapConnected] = useState(false)
   const [zapConfig, setZapConfig] = useState<any>(null)
@@ -84,6 +97,22 @@ export function IntegrationsPage() {
     'https://plataforma-skip-de-inteligencia-comercial-dc86f.shrd00.internal.goskip.dev'
   const waWebhookUrl = `${backendBaseUrl.replace(/\/$/, '')}/api/whatsapp/webhook`
 
+  const loadCalendlyState = async () => {
+    if (!tenant?.id) return
+    setCalendlyLoading(true)
+    try {
+      const res = await CrmService.getCalendlyConfig(tenant.id)
+      setCalendlyConnected(!!res.connected)
+      setCalendlyConfig(res.config || null)
+      setCalendlySchedulingUrl(res.scheduling_url || res.config?.scheduling_url || '')
+    } catch (err) {
+      console.error('Erro ao consultar Calendly:', err)
+      setCalendlyConnected(false)
+    } finally {
+      setCalendlyLoading(false)
+    }
+  }
+
   const loadZapSignState = async () => {
     if (!tenant?.id) return
     setZapLoading(true)
@@ -124,9 +153,132 @@ export function IntegrationsPage() {
   }
 
   useEffect(() => {
+    loadCalendlyState()
     loadZapSignState()
     loadWhatsAppState()
   }, [tenant?.id])
+
+  const handleConnectCalendly = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!tenant?.id) return
+    if (!calendlyTokenInput.trim()) {
+      toast({
+        title: 'Token obrigatório',
+        description: 'Informe o Token de API do Calendly para conectar.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setCalendlyActionLoading(true)
+    setCalendlyTestResult(null)
+    try {
+      const res = await CrmService.connectCalendly(tenant.id, calendlyTokenInput.trim())
+      if (res.success) {
+        toast({
+          title: 'Calendly Conectado!',
+          description: 'Integração salva e validada com sucesso via API.',
+        })
+        setCalendlyTokenInput('')
+        await loadCalendlyState()
+      } else {
+        toast({
+          title: 'Falha ao conectar Calendly',
+          description: res.error || 'Token inválido ou não autorizado.',
+          variant: 'destructive',
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Erro de conexão',
+        description: err?.message || 'Falha ao salvar configuração do Calendly.',
+        variant: 'destructive',
+      })
+    } finally {
+      setCalendlyActionLoading(false)
+    }
+  }
+
+  const handleDisconnectCalendly = async () => {
+    if (!tenant?.id) return
+    if (!confirm('Deseja realmente desconectar o Calendly? O token salvo será removido.')) {
+      return
+    }
+
+    setCalendlyActionLoading(true)
+    setCalendlyTestResult(null)
+    try {
+      const res = await CrmService.disconnectCalendly(tenant.id)
+      if (res.success) {
+        toast({
+          title: 'Calendly Desconectado',
+          description: 'A integração foi removida do sistema.',
+        })
+        setCalendlyConnected(false)
+        setCalendlyConfig(null)
+        setCalendlySchedulingUrl('')
+      } else {
+        toast({
+          title: 'Erro ao desconectar',
+          description: res.error || 'Não foi possível remover.',
+          variant: 'destructive',
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao desconectar',
+        description: err?.message || 'Falha na comunicação com o servidor.',
+        variant: 'destructive',
+      })
+    } finally {
+      setCalendlyActionLoading(false)
+    }
+  }
+
+  const handleTestCalendlyConnection = async () => {
+    if (!tenant?.id) return
+    setCalendlyTestLoading(true)
+    setCalendlyTestResult(null)
+    try {
+      const res = await CrmService.testCalendlyConnection(tenant.id)
+      if (res.success) {
+        setCalendlyTestResult({
+          success: true,
+          message: res.message || 'Comunicação com a API do Calendly testada com sucesso!',
+        })
+        if (res.scheduling_url) {
+          setCalendlySchedulingUrl(res.scheduling_url)
+        }
+        toast({
+          title: 'Conexão Calendly OK',
+          description: res.message || 'API respondeu com sucesso!',
+        })
+      } else {
+        setCalendlyTestResult({
+          success: false,
+          message: res.message || res.error || 'Falha ao validar credenciais no Calendly.',
+        })
+        toast({
+          title: 'Teste de Conexão falhou',
+          description: res.message || res.error,
+          variant: 'destructive',
+        })
+      }
+    } catch (err: any) {
+      const msg = err?.message || 'Erro ao realizar teste de conexão.'
+      setCalendlyTestResult({
+        success: false,
+        message: msg,
+      })
+      toast({
+        title: 'Erro no teste',
+        description: msg,
+        variant: 'destructive',
+      })
+    } finally {
+      setCalendlyTestLoading(false)
+    }
+  }
 
   const handleConnectZapSign = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -412,9 +564,9 @@ export function IntegrationsPage() {
       details: null,
     },
     {
-      id: 'calendly',
-      name: 'Calendly & Google Meet',
-      desc: 'Agendamento de reuniões com clientes e sincronização instantânea na aba Tarefas do Lead.',
+      id: 'google_meet',
+      name: 'Google Meet',
+      desc: 'Geração de salas de videoconferência para reuniões jurídicas e atendimento de clientes.',
       icon: Calendar,
       status: 'development',
       details: null,
@@ -598,6 +750,209 @@ export function IntegrationsPage() {
                 size="sm"
                 onClick={handleDisconnectWhatsApp}
                 disabled={waActionLoading}
+                className="h-7 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30 gap-1"
+              >
+                <Unplug className="h-3 w-3" /> Desconectar
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {/* CARD REAL DO CALENDLY */}
+        <div className="bg-card border-2 border-primary/20 rounded-xl p-5 shadow-xs flex flex-col justify-between space-y-4 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-bl-full pointer-events-none" />
+
+          <div className="space-y-3">
+            <div className="flex justify-between items-start">
+              <div className="h-10 w-10 rounded-xl bg-[#006BFF] text-white flex items-center justify-center shadow-xs">
+                <Calendar className="h-5 w-5 text-white" />
+              </div>
+              {calendlyLoading ? (
+                <Badge variant="outline" className="text-[10px] gap-1">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Verificando...
+                </Badge>
+              ) : calendlyConnected ? (
+                <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px] gap-1">
+                  <CheckCircle2 className="h-3 w-3" /> Conectado
+                </Badge>
+              ) : (
+                <Badge
+                  variant="outline"
+                  className="text-[10px] text-amber-600 border-amber-500/30 gap-1"
+                >
+                  <AlertCircle className="h-3 w-3" /> Não configurado
+                </Badge>
+              )}
+            </div>
+
+            <div>
+              <div className="flex items-center gap-1.5">
+                <h3 className="font-bold text-sm">Calendly</h3>
+                <span className="text-[10px] bg-blue-500/10 text-blue-700 dark:text-blue-300 px-1.5 py-0.2 rounded font-mono font-medium">
+                  Agendamento Real
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                Agendamento de reuniões jurídicas e sincronização automática do link de agendamento
+                na criação de tarefas do Lead.
+              </p>
+            </div>
+
+            {/* SE JÁ HOUVER CONFIGURAÇÃO DO CALENDLY */}
+            {calendlyConnected ? (
+              <div className="bg-muted/40 border rounded-lg p-3 space-y-2.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground flex items-center gap-1">
+                    <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> Token Seguro
+                  </span>
+                  <span className="font-mono text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
+                    •••••••• (Protegido no backend)
+                  </span>
+                </div>
+
+                {calendlySchedulingUrl && (
+                  <div className="space-y-1 pt-1 border-t">
+                    <span className="text-[11px] text-muted-foreground font-medium block">
+                      Link de Agendamento Oficial:
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <Input
+                        readOnly
+                        value={calendlySchedulingUrl}
+                        className="h-7 text-[11px] font-mono bg-background"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => copyToClipboard(calendlySchedulingUrl, 'Link do Calendly')}
+                        className="h-7 px-2 shrink-0"
+                        title="Copiar link"
+                      >
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                      <a
+                        href={calendlySchedulingUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center justify-center h-7 px-2 rounded-md border border-input bg-background hover:bg-accent text-xs shrink-0"
+                        title="Abrir página do Calendly"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </div>
+                  </div>
+                )}
+
+                {calendlyConfig?.user_name && (
+                  <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1 border-t">
+                    <span>Conta Vinculada:</span>
+                    <span className="font-medium text-foreground">
+                      {calendlyConfig.user_name}{' '}
+                      {calendlyConfig.user_email ? `(${calendlyConfig.user_email})` : ''}
+                    </span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1 border-t">
+                  <span>Última sincronização:</span>
+                  <span className="font-medium text-foreground">
+                    {formatSyncDate(calendlyConfig?.last_sync || calendlyConfig?.updated)}
+                  </span>
+                </div>
+
+                {calendlyTestResult && (
+                  <div
+                    className={`p-2 rounded text-[11px] flex items-start gap-1.5 ${
+                      calendlyTestResult.success
+                        ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20'
+                        : 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/20'
+                    }`}
+                  >
+                    {calendlyTestResult.success ? (
+                      <Check className="h-3.5 w-3.5 shrink-0 mt-0.5 text-emerald-600" />
+                    ) : (
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-rose-600" />
+                    )}
+                    <span className="leading-tight">{calendlyTestResult.message}</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* SE NÃO HOUVER TOKEN SALVO */
+              <form onSubmit={handleConnectCalendly} className="space-y-2.5 pt-1">
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-semibold flex items-center justify-between">
+                    <span className="flex items-center gap-1">
+                      <Key className="h-3 w-3 text-primary" /> Token de API Calendly
+                    </span>
+                    <a
+                      href="https://calendly.com/integrations/api_webhooks"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-primary hover:underline"
+                    >
+                      Obter token →
+                    </a>
+                  </Label>
+                  <Input
+                    type="password"
+                    value={calendlyTokenInput}
+                    onChange={(e) => setCalendlyTokenInput(e.target.value)}
+                    placeholder="Cole seu Personal Access Token do Calendly..."
+                    className="h-8 text-xs font-mono"
+                    required
+                  />
+                  <p className="text-[10px] text-muted-foreground leading-tight">
+                    O token é validado na API oficial do Calendly e salvo com segurança.
+                  </p>
+                </div>
+
+                <Button
+                  type="submit"
+                  disabled={calendlyActionLoading}
+                  size="sm"
+                  className="w-full h-8 text-xs bg-[#006BFF] hover:bg-[#0052cc] text-white font-semibold gap-1.5"
+                >
+                  {calendlyActionLoading ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Conectando...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-3.5 w-3.5" /> Conectar Calendly
+                    </>
+                  )}
+                </Button>
+              </form>
+            )}
+          </div>
+
+          {/* RODAPÉ DO CARD CALENDLY */}
+          {calendlyConnected && (
+            <div className="pt-3 border-t flex items-center justify-between gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleTestCalendlyConnection}
+                disabled={calendlyTestLoading || calendlyActionLoading}
+                className="h-7 text-xs gap-1 flex-1"
+              >
+                {calendlyTestLoading ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" /> Testando...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-3 w-3" /> Testar Conexão
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleDisconnectCalendly}
+                disabled={calendlyActionLoading}
                 className="h-7 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30 gap-1"
               >
                 <Unplug className="h-3 w-3" /> Desconectar

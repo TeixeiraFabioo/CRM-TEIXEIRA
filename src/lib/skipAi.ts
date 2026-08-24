@@ -2,53 +2,6 @@
 // $ai.agent(slug).chat (Skip-shape). Don't hand-roll the SSE reader —
 // past attempts shipped "undefinedundefined…" and "[object Object]…".
 
-export interface GenerateChatResponseOptions {
-  messages: Array<{ role: string; content: string }>
-  temperature?: number
-  public?: boolean
-}
-
-export async function generateChatResponse(options: GenerateChatResponseOptions): Promise<string> {
-  const endpoint = options.public ? '/backend/v1/ai/landing-chat' : '/backend/v1/ai/chat'
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  }
-
-  // If pocketbase client has an auth token and request is authenticated, attach Authorization header
-  try {
-    const { default: pb } = await import('@/lib/pocketbase/client')
-    if (pb.authStore.token && !options.public) {
-      headers['Authorization'] = pb.authStore.token
-    }
-  } catch {
-    // ignore
-  }
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      messages: options.messages,
-      temperature: options.temperature,
-    }),
-  })
-
-  if (!response.ok) {
-    let errorMsg = `AI request failed with status ${response.status}`
-    try {
-      const data = await response.json()
-      if (data?.error) errorMsg = data.error
-    } catch {
-      // ignore
-    }
-    throw new Error(errorMsg)
-  }
-
-  const data = await response.json()
-  return data?.text || ''
-}
-
 export interface OpenAIChatResult {
   id: string
   model: string

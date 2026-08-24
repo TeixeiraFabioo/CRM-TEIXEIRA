@@ -876,6 +876,85 @@ export const CrmService = {
     return updated
   },
 
+  // --- CALENDLY INTEGRATION HELPERS ---
+  async getCalendlyConfig(
+    tenantId: string,
+  ): Promise<{ connected: boolean; config: any; scheduling_url?: string }> {
+    try {
+      const res = await pb.send('/api/calendly/config?tenant_id=' + encodeURIComponent(tenantId), {
+        method: 'GET',
+      })
+      return res || { connected: false, config: null, scheduling_url: '' }
+    } catch (e) {
+      console.warn('Failed to get Calendly config', e)
+      try {
+        const list = await pb.collection('integration_configs').getList(1, 1, {
+          filter: `tenant_id = "${tenantId}" && provider = "calendly"`,
+        })
+        if (list.items.length > 0 && list.items[0].is_active !== false) {
+          const cfg = list.items[0].config_json || list.items[0].config || {}
+          return {
+            connected: true,
+            config: list.items[0],
+            scheduling_url: cfg.scheduling_url || '',
+          }
+        }
+      } catch {
+        /* intentionally ignored */
+      }
+      return { connected: false, config: null, scheduling_url: '' }
+    }
+  },
+
+  async connectCalendly(
+    tenantId: string,
+    token: string,
+  ): Promise<{
+    success: boolean
+    message?: string
+    error?: string
+    scheduling_url?: string
+    config?: any
+  }> {
+    return await pb.send('/api/calendly/connect', {
+      method: 'POST',
+      body: { tenant_id: tenantId, token },
+    })
+  },
+
+  async disconnectCalendly(
+    tenantId: string,
+  ): Promise<{ success: boolean; message?: string; error?: string }> {
+    return await pb.send('/api/calendly/disconnect', {
+      method: 'POST',
+      body: { tenant_id: tenantId },
+    })
+  },
+
+  async testCalendlyConnection(
+    tenantId: string,
+    token?: string,
+  ): Promise<{ success: boolean; message: string; scheduling_url?: string; error?: string }> {
+    return await pb.send('/api/calendly/test', {
+      method: 'POST',
+      body: { tenant_id: tenantId, token },
+    })
+  },
+
+  async getCalendlySchedulingLink(tenantId: string): Promise<string> {
+    try {
+      const res = await pb.send(
+        '/api/calendly/scheduling-link?tenant_id=' + encodeURIComponent(tenantId),
+        {
+          method: 'GET',
+        },
+      )
+      return res?.scheduling_url || ''
+    } catch {
+      return ''
+    }
+  },
+
   // --- ZAPSIGN INTEGRATION HELPERS ---
   async getZapSignConfig(tenantId: string): Promise<{ connected: boolean; config: any }> {
     try {

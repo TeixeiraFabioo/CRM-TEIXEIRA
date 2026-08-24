@@ -395,9 +395,20 @@ export function LeadDetailPage() {
     }
   }
 
+  const loadCalendlyLink = async () => {
+    if (!tenant?.id) return
+    try {
+      const link = await CrmService.getCalendlySchedulingLink(tenant.id)
+      setCalendlyLink(link || '')
+    } catch {
+      setCalendlyLink('')
+    }
+  }
+
   useEffect(() => {
     loadAll()
     checkWhatsAppStatus()
+    loadCalendlyLink()
   }, [id, tenant?.id])
 
   const handleSendMessage = async (
@@ -2610,6 +2621,36 @@ ${formattedHistory}
                 </Select>
               </div>
             </div>
+
+            {taskData.tipo === 'reuniao' && calendlyLink && (
+              <div className="p-2.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs space-y-1.5">
+                <div className="flex items-center justify-between font-semibold text-blue-700 dark:text-blue-300">
+                  <span className="flex items-center gap-1.5">
+                    <Calendar className="h-3.5 w-3.5" /> Link do Calendly Conectado
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-1.5 text-[10px] text-blue-600 dark:text-blue-400"
+                    onClick={() => {
+                      setTaskData((prev) => ({
+                        ...prev,
+                        descricao: prev.descricao
+                          ? `${prev.descricao}\nLink de Agendamento Calendly: ${calendlyLink}`
+                          : `Link de Agendamento Calendly: ${calendlyLink}`,
+                      }))
+                      toast({ title: 'Link do Calendly adicionado à descrição da tarefa!' })
+                    }}
+                  >
+                    + Inserir na Descrição
+                  </Button>
+                </div>
+                <div className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground truncate">
+                  <span className="truncate">{calendlyLink}</span>
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold">Data</Label>
