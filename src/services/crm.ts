@@ -1021,12 +1021,9 @@ export const CrmService = {
   // --- ZAPSIGN INTEGRATION HELPERS ---
   async getZapSignConfig(tenantId: string): Promise<{ connected: boolean; config: any }> {
     try {
-      const res = await pb.send(
-        '/api/signatures/zapsign/config?tenant_id=' + encodeURIComponent(tenantId),
-        {
-          method: 'GET',
-        },
-      )
+      const res = await pb.send('/api/zapsign/config?tenant_id=' + encodeURIComponent(tenantId), {
+        method: 'GET',
+      })
       return res || { connected: false, config: null }
     } catch (e) {
       console.warn('Failed to get ZapSign config', e)
@@ -1050,7 +1047,7 @@ export const CrmService = {
     token: string,
     sandbox = false,
   ): Promise<{ success: boolean; message?: string; error?: string }> {
-    return await pb.send('/api/signatures/zapsign/connect', {
+    return await pb.send('/api/zapsign/connect', {
       method: 'POST',
       body: { tenant_id: tenantId, token, sandbox },
     })
@@ -1059,7 +1056,7 @@ export const CrmService = {
   async disconnectZapSign(
     tenantId: string,
   ): Promise<{ success: boolean; message?: string; error?: string }> {
-    return await pb.send('/api/signatures/zapsign/disconnect', {
+    return await pb.send('/api/zapsign/disconnect', {
       method: 'POST',
       body: { tenant_id: tenantId },
     })
@@ -1070,7 +1067,7 @@ export const CrmService = {
     token?: string,
     sandbox = false,
   ): Promise<{ success: boolean; status: string; message: string }> {
-    return await pb.send('/api/signatures/test-connection', {
+    return await pb.send('/api/zapsign/test', {
       method: 'POST',
       body: { tenant_id: tenantId, token, sandbox },
     })

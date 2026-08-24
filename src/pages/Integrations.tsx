@@ -107,7 +107,7 @@ export function IntegrationsPage() {
   // Backend Webhook URL
   const backendBaseUrl =
     (import.meta as any).env?.VITE_POCKETBASE_URL ||
-    'https://plataforma-skip-de-inteligencia-comercial-dc86f.shrd00.internal.goskip.dev'
+    (typeof window !== 'undefined' ? window.location.origin : '')
   const waWebhookUrl = `${backendBaseUrl.replace(/\/$/, '')}/api/whatsapp/webhook`
 
   const loadCalendlyState = async () => {

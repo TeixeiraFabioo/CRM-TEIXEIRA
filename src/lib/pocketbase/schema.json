@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-24T14:17:40.906Z",
+  "generatedAt": "2026-08-24T15:11:38.672Z",
   "collections": [
     {
       "name": "users",
@@ -3624,6 +3624,12 @@
         {
           "name": "config_json",
           "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "api_key",
+          "type": "text",
           "required": false,
           "system": false
         }
