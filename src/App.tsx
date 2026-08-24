@@ -72,7 +72,8 @@ export default function App() {
                   <ServicosPage />
                 </RequireRole>
               }
-            />            <Route
+            />{' '}
+            <Route
               path="leads/:id"
               element={
                 <RequireRole allowedRoles={['admin', 'gestor', 'advogado']}>
