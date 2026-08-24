@@ -52,42 +52,34 @@ export class WhatsAppService {
     tenantId: string,
   ): Promise<{ connected: boolean; config: WhatsAppConfig | null }> {
     try {
-      const res = await pb.send('/api/whatsapp/config?tenant_id=' + encodeURIComponent(tenantId), {
-        method: 'GET',
+      const list = await pb.collection('integration_configs').getList(1, 1, {
+        filter: `tenant_id = "${tenantId}" && provider = "whatsapp"`,
       })
-      return res || { connected: false, config: null }
-    } catch (e) {
-      console.warn('Falha ao obter configuração do WhatsApp via endpoint:', e)
-      // Fallback: verificar coleção integration_configs
-      try {
-        const list = await pb.collection('integration_configs').getList(1, 1, {
-          filter: `tenant_id = "${tenantId}" && provider = "whatsapp"`,
-        })
-        if (list.items.length > 0 && list.items[0].is_active !== false) {
-          const item = list.items[0]
-          const cfg = (item.config_json || item.config || {}) as any
-          return {
-            connected: true,
-            config: {
-              id: item.id,
-              provider: 'whatsapp',
-              status: item.status as any,
-              is_active: item.is_active !== false,
-              phone_number_id: cfg.phone_number_id || '',
-              waba_id: cfg.waba_id || '',
-              phone_number: cfg.phone_number || '',
-              verified_name: cfg.verified_name || '',
-              quality_rating: cfg.quality_rating || 'UNKNOWN',
-              verify_token:
-                item.webhook_secret || cfg.verify_token || 'skip_hub_crm_whatsapp_verify_token',
-              updated: item.updated,
-              created: item.created,
-            },
-          }
+      if (list.items.length > 0 && list.items[0].is_active !== false) {
+        const item = list.items[0]
+        const cfg = (item.config_json || item.config || {}) as any
+        return {
+          connected: true,
+          config: {
+            id: item.id,
+            provider: 'whatsapp',
+            status: item.status as any,
+            is_active: item.is_active !== false,
+            phone_number_id: cfg.phone_number_id || '',
+            waba_id: cfg.waba_id || '',
+            phone_number: cfg.phone_number || '',
+            verified_name: cfg.verified_name || '',
+            quality_rating: cfg.quality_rating || 'UNKNOWN',
+            verify_token:
+              item.webhook_secret || cfg.verify_token || 'skip_hub_crm_whatsapp_verify_token',
+            updated: item.updated,
+            created: item.created,
+          },
         }
-      } catch {
-        /* fallback ignore */
       }
+      return { connected: false, config: null }
+    } catch (e) {
+      console.warn('Falha ao obter configuração do WhatsApp via integration_configs:', e)
       return { connected: false, config: null }
     }
   }

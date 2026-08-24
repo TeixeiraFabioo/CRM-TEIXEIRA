@@ -41,13 +41,12 @@ onRecordCreate((e) => {
         if (testRes.statusCode >= 400) {
           record.set('status', 'error')
           record.set('is_active', false)
-          const updatedCfg = {
-            ...cfg,
+          const updatedCfg = Object.assign({}, cfg, {
             provider: 'google_meet',
             calendar_id: calendarId,
             error_message:
               'Token OAuth do Google inválido ou expirado (HTTP ' + testRes.statusCode + ')',
-          }
+          })
           record.set('config_json', updatedCfg)
           record.set('config', updatedCfg)
           return e.next()
@@ -60,13 +59,12 @@ onRecordCreate((e) => {
     const nowIso = new Date().toISOString()
     record.set('status', 'active')
     record.set('is_active', true)
-    const updatedCfg = {
-      ...cfg,
+    const updatedCfg = Object.assign({}, cfg, {
       provider: 'google_meet',
       calendar_id: calendarId,
       last_validated: nowIso,
       error_message: '',
-    }
+    })
     record.set('config_json', updatedCfg)
     record.set('config', updatedCfg)
 
@@ -110,14 +108,13 @@ onRecordUpdate((e) => {
         if (testRes.statusCode >= 400) {
           record.set('status', 'error')
           record.set('is_active', false)
-          const updatedCfg = {
-            ...cfg,
+          const updatedCfg = Object.assign({}, cfg, {
             provider: 'google_meet',
             calendar_id: calendarId,
             error_message:
               'Token OAuth do Google inválido ou expirado (HTTP ' + testRes.statusCode + ')',
             test_requested: false,
-          }
+          })
           record.set('config_json', updatedCfg)
           record.set('config', updatedCfg)
           return e.next()
@@ -130,14 +127,13 @@ onRecordUpdate((e) => {
     const nowIso = new Date().toISOString()
     record.set('status', 'active')
     record.set('is_active', true)
-    const updatedCfg = {
-      ...cfg,
+    const updatedCfg = Object.assign({}, cfg, {
       provider: 'google_meet',
       calendar_id: calendarId,
       last_validated: nowIso,
       error_message: '',
       test_requested: false,
-    }
+    })
     record.set('config_json', updatedCfg)
     record.set('config', updatedCfg)
 

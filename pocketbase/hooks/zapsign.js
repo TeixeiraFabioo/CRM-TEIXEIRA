@@ -50,13 +50,12 @@ onRecordCreate((e) => {
         record.set('status', 'active')
         record.set('is_active', true)
         const nowIso = new Date().toISOString()
-        const updatedCfg = {
-          ...cfg,
+        const updatedCfg = Object.assign({}, cfg, {
           provider: 'zapsign',
           sandbox: sandbox,
           last_validated: nowIso,
           error_message: '',
-        }
+        })
         record.set('config_json', updatedCfg)
         record.set('config', updatedCfg)
       } else {
@@ -66,25 +65,23 @@ onRecordCreate((e) => {
           'Token inválido ou recusado pela API do ZapSign (HTTP ' + testRes.statusCode + ')'
         record.set('status', 'error')
         record.set('is_active', false)
-        const updatedCfg = {
-          ...cfg,
+        const updatedCfg = Object.assign({}, cfg, {
           provider: 'zapsign',
           sandbox: sandbox,
           error_message: String(errDetail),
-        }
+        })
         record.set('config_json', updatedCfg)
         record.set('config', updatedCfg)
       }
     } catch (httpErr) {
       record.set('status', 'error')
       record.set('is_active', false)
-      const updatedCfg = {
-        ...cfg,
+      const updatedCfg = Object.assign({}, cfg, {
         provider: 'zapsign',
         sandbox: sandbox,
         error_message:
           'Falha de conexão com a API do ZapSign: ' + (httpErr.message || String(httpErr)),
-      }
+      })
       record.set('config_json', updatedCfg)
       record.set('config', updatedCfg)
     }
@@ -135,14 +132,13 @@ onRecordUpdate((e) => {
         record.set('status', 'active')
         record.set('is_active', true)
         const nowIso = new Date().toISOString()
-        const updatedCfg = {
-          ...cfg,
+        const updatedCfg = Object.assign({}, cfg, {
           provider: 'zapsign',
           sandbox: sandbox,
           last_validated: nowIso,
           error_message: '',
           test_requested: false,
-        }
+        })
         record.set('config_json', updatedCfg)
         record.set('config', updatedCfg)
       } else {
@@ -152,27 +148,25 @@ onRecordUpdate((e) => {
           'Token inválido ou recusado pela API do ZapSign (HTTP ' + testRes.statusCode + ')'
         record.set('status', 'error')
         record.set('is_active', false)
-        const updatedCfg = {
-          ...cfg,
+        const updatedCfg = Object.assign({}, cfg, {
           provider: 'zapsign',
           sandbox: sandbox,
           error_message: String(errDetail),
           test_requested: false,
-        }
+        })
         record.set('config_json', updatedCfg)
         record.set('config', updatedCfg)
       }
     } catch (httpErr) {
       record.set('status', 'error')
       record.set('is_active', false)
-      const updatedCfg = {
-        ...cfg,
+      const updatedCfg = Object.assign({}, cfg, {
         provider: 'zapsign',
         sandbox: sandbox,
         error_message:
           'Falha de conexão com a API do ZapSign: ' + (httpErr.message || String(httpErr)),
         test_requested: false,
-      }
+      })
       record.set('config_json', updatedCfg)
       record.set('config', updatedCfg)
     }

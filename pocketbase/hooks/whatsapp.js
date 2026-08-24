@@ -58,8 +58,7 @@ onRecordCreate((e) => {
 
         record.set('status', 'active')
         record.set('is_active', true)
-        const updatedCfg = {
-          ...cfg,
+        const updatedCfg = Object.assign({}, cfg, {
           provider: 'whatsapp',
           phone_number_id: phoneNumberId,
           verified_name: verifiedName || cfg.verified_name || '',
@@ -67,7 +66,7 @@ onRecordCreate((e) => {
           quality_rating: qualityRating || cfg.quality_rating || 'UNKNOWN',
           last_validated: nowIso,
           error_message: '',
-        }
+        })
         record.set('config_json', updatedCfg)
         record.set('config', updatedCfg)
       } else {
@@ -77,25 +76,23 @@ onRecordCreate((e) => {
           'Credenciais inválidas na Meta Graph API (HTTP ' + testRes.statusCode + ')'
         record.set('status', 'error')
         record.set('is_active', false)
-        const updatedCfg = {
-          ...cfg,
+        const updatedCfg = Object.assign({}, cfg, {
           provider: 'whatsapp',
           phone_number_id: phoneNumberId,
           error_message: String(errDetail),
-        }
+        })
         record.set('config_json', updatedCfg)
         record.set('config', updatedCfg)
       }
     } catch (httpErr) {
       record.set('status', 'error')
       record.set('is_active', false)
-      const updatedCfg = {
-        ...cfg,
+      const updatedCfg = Object.assign({}, cfg, {
         provider: 'whatsapp',
         phone_number_id: phoneNumberId,
         error_message:
           'Falha de conexão com a API da Meta: ' + (httpErr.message || String(httpErr)),
-      }
+      })
       record.set('config_json', updatedCfg)
       record.set('config', updatedCfg)
     }
@@ -175,8 +172,7 @@ onRecordUpdate((e) => {
           const wamid = (sendJson.messages && sendJson.messages[0] && sendJson.messages[0].id) || ''
           const nowIso = new Date().toISOString()
 
-          const updatedCfg = {
-            ...cfg,
+          const updatedCfg = Object.assign({}, cfg, {
             send_message: null,
             last_send_result: {
               success: sendRes.statusCode >= 200 && sendRes.statusCode < 300,
@@ -188,7 +184,7 @@ onRecordUpdate((e) => {
                   ? sendJson.error?.message || JSON.stringify(sendJson)
                   : null,
             },
-          }
+          })
           record.set('config_json', updatedCfg)
           record.set('config', updatedCfg)
           return e.next()
@@ -224,8 +220,7 @@ onRecordUpdate((e) => {
 
         record.set('status', 'active')
         record.set('is_active', true)
-        const updatedCfg = {
-          ...cfg,
+        const updatedCfg = Object.assign({}, cfg, {
           provider: 'whatsapp',
           phone_number_id: phoneNumberId,
           verified_name: verifiedName || cfg.verified_name || '',
@@ -234,7 +229,7 @@ onRecordUpdate((e) => {
           last_validated: nowIso,
           error_message: '',
           test_requested: false,
-        }
+        })
         record.set('config_json', updatedCfg)
         record.set('config', updatedCfg)
       } else {
@@ -244,27 +239,25 @@ onRecordUpdate((e) => {
           'Credenciais inválidas na Meta Graph API (HTTP ' + testRes.statusCode + ')'
         record.set('status', 'error')
         record.set('is_active', false)
-        const updatedCfg = {
-          ...cfg,
+        const updatedCfg = Object.assign({}, cfg, {
           provider: 'whatsapp',
           phone_number_id: phoneNumberId,
           error_message: String(errDetail),
           test_requested: false,
-        }
+        })
         record.set('config_json', updatedCfg)
         record.set('config', updatedCfg)
       }
     } catch (httpErr) {
       record.set('status', 'error')
       record.set('is_active', false)
-      const updatedCfg = {
-        ...cfg,
+      const updatedCfg = Object.assign({}, cfg, {
         provider: 'whatsapp',
         phone_number_id: phoneNumberId,
         error_message:
           'Falha de conexão com a API da Meta: ' + (httpErr.message || String(httpErr)),
         test_requested: false,
-      }
+      })
       record.set('config_json', updatedCfg)
       record.set('config', updatedCfg)
     }

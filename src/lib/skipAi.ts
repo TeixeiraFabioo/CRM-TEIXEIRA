@@ -267,6 +267,41 @@ export interface StreamAgentChatResult {
   toolCalls: Array<{ id: string; name: string; ok: boolean }>
 }
 
+export interface GenerateChatOptions {
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  temperature?: number
+  public?: boolean
+  tenant_id?: string
+  lead_id?: string
+}
+
+export async function generateChatResponse(options: GenerateChatOptions): Promise<string> {
+  try {
+    const res = await fetch('/api/ai/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messages: options.messages,
+        tenant_id: options.tenant_id || 'public',
+        lead_id: options.lead_id,
+      }),
+    })
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}))
+      throw new Error(errJson.error || `HTTP ${res.status}`)
+    }
+
+    const data = await res.json()
+    return data.response || data.reply || data.content || ''
+  } catch (err: any) {
+    console.warn('generateChatResponse fallback:', err)
+    return ''
+  }
+}
+
 // Drive an agent stream end-to-end. Resolves only after `done` (turn fully persisted);
 // throws on abort, on the `error` event, or if the stream ends before `done`.
 export async function streamAgentChat(
@@ -348,79 +383,4 @@ export async function streamAgentChat(
   }
 
   return { content, conversation_id: conversationId, message_id: messageId, citations, toolCalls }
-}
-
-export interface GenerateChatOptions {
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
-  temperature?: number
-  public?: boolean
-}
-
-/**
- * Convenience non-streaming chat helper using PocketBase AI or standard fallback.
- */
-export async function generateChatResponse(options: GenerateChatOptions): Promise<string> {
-  const lastUserMsg = [...options.messages].reverse().find((m) => m.role === 'user')?.content || ''
-  const systemMsg = options.messages.find((m) => m.role === 'system')?.content || ''
-
-  try {
-    const response = await fetch('/api/ai/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: options.messages,
-        temperature: options.temperature ?? 0.7,
-      }),
-    })
-    if (response.ok) {
-      const data = await response.json()
-      if (data?.choices?.[0]?.message?.content) {
-        return data.choices[0].message.content
-      }
-      if (data?.content) return data.content
-      if (data?.reply) return data.reply
-    }
-  } catch {
-    /* fallback to deterministic contextual legal response */
-  }
-
-  const query = lastUserMsg.toLowerCase()
-  if (
-    query.includes('tribut') ||
-    query.includes('imposto') ||
-    query.includes('tema 69') ||
-    query.includes('crédito')
-  ) {
-    return 'Em relação às demandas de Direito Tributário (recuperação de créditos fiscais e teses como o Tema 69 do STF), nosso time realiza uma auditoria preliminar nas notas fiscais e obrigações acessórias dos últimos 5 anos para quantificar os valores recuperáveis com segurança jurídica. Recomendamos agendar uma análise técnica para avaliarmos a situação da sua empresa.'
-  }
-  if (
-    query.includes('banc') ||
-    query.includes('juro') ||
-    query.includes('ccb') ||
-    query.includes('empréstimo') ||
-    query.includes('financiamento')
-  ) {
-    return 'Para questões bancárias e contratos de crédito empresarial (CCB, capital de giro e cheque especial), avaliamos cláusulas abusivas, encargos moratórios e anatocismo para subsidiar uma renegociação amigável ou ação revisional fundamentada. Agende uma conversa com nossos especialistas para cálculo pericial do saldo devedor.'
-  }
-  if (
-    query.includes('trabalh') ||
-    query.includes('rescis') ||
-    query.includes('demiss') ||
-    query.includes('hora extra')
-  ) {
-    return 'Na esfera trabalhista, atuamos de forma preventiva e contenciosa, revisando contratos, cálculo de verbas rescisórias e conformidade com a CLT e súmulas dos tribunais. Para orientações específicas sobre o seu caso, nossos advogados trabalhistas estão à disposição.'
-  }
-  if (
-    query.includes('honorár') ||
-    query.includes('preço') ||
-    query.includes('custo') ||
-    query.includes('valor')
-  ) {
-    return 'Nossos honorários advocatícios são estruturados de forma transparente e aderente à tabela da OAB, contemplando modelos flexíveis entre pró-labore inicial e honorários de êxito conforme a complexidade da demanda. Recomendamos uma consulta inicial para apresentação de uma proposta sob medida.'
-  }
-
-  return (
-    'Com base nas informações apresentadas e nas políticas do escritório Teixeira & Nascimento Advogados, ' +
-    'recomendamos o agendamento de uma sessão de triagem com nossa equipe de especialistas para exame detalhado dos documentos e definição da melhor estratégia jurídica.'
-  )
 }
