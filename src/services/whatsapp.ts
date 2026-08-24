@@ -93,7 +93,7 @@ export class WhatsAppService {
   }
 
   /**
-   * Conecta credenciais da WhatsApp Business API de forma segura
+   * Conecta credenciais da WhatsApp Business API de forma nativa via integration_configs
    */
   static async connect(params: {
     tenant_id: string
@@ -103,10 +103,64 @@ export class WhatsAppService {
     phone_number?: string
     verify_token?: string
   }): Promise<{ success: boolean; message?: string; error?: string; config?: WhatsAppConfig }> {
-    return await pb.send('/api/whatsapp/connect', {
-      method: 'POST',
-      body: params,
-    })
+    try {
+      const list = await pb.collection('integration_configs').getList(1, 1, {
+        filter: `tenant_id = "${params.tenant_id}" && provider = "whatsapp"`,
+      })
+
+      const payload = {
+        tenant_id: params.tenant_id,
+        provider: 'whatsapp',
+        api_token: params.token.trim(),
+        api_key: params.token.trim(),
+        is_active: true,
+        webhook_secret: params.verify_token || 'skip_hub_crm_whatsapp_verify_token',
+        config_json: {
+          provider: 'whatsapp',
+          phone_number_id: params.phone_number_id.trim(),
+          waba_id: params.waba_id?.trim() || '',
+          phone_number: params.phone_number?.trim() || '',
+          verify_token: params.verify_token || 'skip_hub_crm_whatsapp_verify_token',
+          connected_at: new Date().toISOString(),
+        },
+      }
+
+      let record: any
+      if (list.items.length > 0) {
+        record = await pb.collection('integration_configs').update(list.items[0].id, payload)
+      } else {
+        record = await pb.collection('integration_configs').create(payload)
+      }
+
+      const cfg = record.config_json || record.config || {}
+      if (record.status === 'error') {
+        return {
+          success: false,
+          error: cfg.error_message || 'Credenciais da Meta inválidas ou rejeitadas pela Graph API.',
+        }
+      }
+
+      return {
+        success: true,
+        message: 'WhatsApp Business API conectado e validado com sucesso!',
+        config: {
+          id: record.id,
+          provider: 'whatsapp',
+          status: record.status,
+          is_active: record.is_active !== false,
+          phone_number_id: cfg.phone_number_id,
+          waba_id: cfg.waba_id,
+          phone_number: cfg.display_phone_number || cfg.phone_number,
+          verified_name: cfg.verified_name,
+          quality_rating: cfg.quality_rating,
+        },
+      }
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err?.message || 'Falha ao salvar configuração do WhatsApp.',
+      }
+    }
   }
 
   /**
@@ -115,10 +169,17 @@ export class WhatsAppService {
   static async disconnect(
     tenantId: string,
   ): Promise<{ success: boolean; message?: string; error?: string }> {
-    return await pb.send('/api/whatsapp/disconnect', {
-      method: 'POST',
-      body: { tenant_id: tenantId },
-    })
+    try {
+      const list = await pb.collection('integration_configs').getFullList({
+        filter: `tenant_id = "${tenantId}" && provider = "whatsapp"`,
+      })
+      for (const item of list) {
+        await pb.collection('integration_configs').delete(item.id)
+      }
+      return { success: true, message: 'WhatsApp desconectado com sucesso.' }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Erro ao desconectar WhatsApp.' }
+    }
   }
 
   /**
@@ -135,20 +196,178 @@ export class WhatsAppService {
     message: string
     data?: any
   }> {
-    return await pb.send('/api/whatsapp/test-connection', {
-      method: 'POST',
-      body: params,
-    })
+    try {
+      const list = await pb.collection('integration_configs').getList(1, 1, {
+        filter: `tenant_id = "${params.tenant_id}" && provider = "whatsapp"`,
+      })
+
+      if (list.items.length === 0 && (!params.token || !params.phone_number_id)) {
+        return {
+          success: false,
+          status: 'error',
+          message: 'WhatsApp não configurado no tenant.',
+        }
+      }
+
+      if (list.items.length > 0) {
+        const item = list.items[0]
+        const currentCfg = item.config_json || item.config || {}
+        const phoneId = params.phone_number_id || currentCfg.phone_number_id
+        const token = params.token || item.api_token || item.api_key
+
+        const updated = await pb.collection('integration_configs').update(item.id, {
+          api_token: token,
+          api_key: token,
+          config_json: {
+            ...currentCfg,
+            phone_number_id: phoneId,
+            test_requested: true,
+            tested_at: new Date().toISOString(),
+          },
+        })
+
+        const cfg = updated.config_json || updated.config || {}
+        if (updated.status === 'active') {
+          return {
+            success: true,
+            status: 'connected',
+            message: `Conexão válida com WhatsApp Cloud API! Conta: ${cfg.verified_name || cfg.display_phone_number || 'Verificada'}`,
+            data: cfg,
+          }
+        } else {
+          return {
+            success: false,
+            status: 'error',
+            message: cfg.error_message || 'Falha na validação com Meta Graph API.',
+            data: cfg,
+          }
+        }
+      }
+
+      // Se passou dados avulsos para teste
+      const tempRec = await pb.collection('integration_configs').create({
+        tenant_id: params.tenant_id,
+        provider: 'whatsapp',
+        api_token: params.token,
+        api_key: params.token,
+        config_json: {
+          phone_number_id: params.phone_number_id,
+        },
+      })
+      const cfg = tempRec.config_json || tempRec.config || {}
+      const success = tempRec.status === 'active'
+      return {
+        success,
+        status: success ? 'connected' : 'error',
+        message: success
+          ? `Conexão válida com WhatsApp Cloud API! (${cfg.verified_name || 'OK'})`
+          : cfg.error_message || 'Falha de validação.',
+        data: cfg,
+      }
+    } catch (err: any) {
+      return {
+        success: false,
+        status: 'error',
+        message: err?.message || 'Erro ao testar conexão do WhatsApp.',
+      }
+    }
   }
 
   /**
    * Envia mensagem de texto, template ou mídia via WhatsApp Business API
    */
   static async sendMessage(params: SendWhatsAppMessageParams): Promise<SendWhatsAppResponse> {
-    return await pb.send('/api/whatsapp/send', {
-      method: 'POST',
-      body: params,
-    })
+    try {
+      const tenantId = params.tenant_id
+      if (!tenantId) {
+        return { success: false, error: 'tenant_id é obrigatório para envio de WhatsApp' }
+      }
+
+      // 1. Grava no histórico de lead_messages
+      let messageRec: any = null
+      try {
+        messageRec = await pb.collection('lead_messages').create({
+          tenant_id: tenantId,
+          lead_id: params.lead_id || '',
+          channel: 'whatsapp',
+          direction: 'outbound',
+          sender_type: 'agent',
+          content: params.message || params.content || '',
+          status_delivery: 'sending',
+          metadata: {
+            to: params.to || params.phone,
+            template_name: params.template_name,
+            team: params.team,
+          },
+        })
+      } catch (e) {
+        console.warn('Não foi possível gravar lead_messages pré-envio', e)
+      }
+
+      // 2. Aciona o envio via update no integration_configs
+      const list = await pb.collection('integration_configs').getList(1, 1, {
+        filter: `tenant_id = "${tenantId}" && provider = "whatsapp"`,
+      })
+
+      if (list.items.length === 0) {
+        return { success: false, error: 'WhatsApp não está configurado para este tenant.' }
+      }
+
+      const item = list.items[0]
+      const currentCfg = item.config_json || item.config || {}
+      const updated = await pb.collection('integration_configs').update(item.id, {
+        config_json: {
+          ...currentCfg,
+          send_message: {
+            to: params.to || params.phone,
+            text: params.message || params.content,
+            template_name: params.template_name,
+            template_language: params.template_language || 'pt_BR',
+            template_components: params.template_components,
+          },
+        },
+      })
+
+      const resCfg = updated.config_json || updated.config || {}
+      const lastSend = resCfg.last_send_result
+
+      if (lastSend && !lastSend.success) {
+        if (messageRec) {
+          await pb
+            .collection('lead_messages')
+            .update(messageRec.id, {
+              status_delivery: 'failed',
+            })
+            .catch(() => {})
+        }
+        return {
+          success: false,
+          error: lastSend.error || 'Falha ao enviar mensagem pela Meta API.',
+        }
+      }
+
+      if (messageRec && lastSend?.wamid) {
+        await pb
+          .collection('lead_messages')
+          .update(messageRec.id, {
+            status_delivery: 'sent',
+            external_id: lastSend.wamid,
+          })
+          .catch(() => {})
+      }
+
+      return {
+        success: true,
+        wamid: lastSend?.wamid,
+        message_id: messageRec?.id || lastSend?.wamid,
+        record: messageRec,
+      }
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err?.message || 'Erro ao processar envio de WhatsApp.',
+      }
+    }
   }
 
   /**

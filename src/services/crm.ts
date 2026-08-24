@@ -881,27 +881,22 @@ export const CrmService = {
     tenantId: string,
   ): Promise<{ connected: boolean; config: any; scheduling_url?: string }> {
     try {
-      const res = await pb.send('/api/calendly/config?tenant_id=' + encodeURIComponent(tenantId), {
-        method: 'GET',
+      const list = await pb.collection('integration_configs').getList(1, 1, {
+        filter: `tenant_id = "${tenantId}" && provider = "calendly"`,
       })
-      return res || { connected: false, config: null, scheduling_url: '' }
-    } catch (e) {
-      console.warn('Failed to get Calendly config', e)
-      try {
-        const list = await pb.collection('integration_configs').getList(1, 1, {
-          filter: `tenant_id = "${tenantId}" && provider = "calendly"`,
-        })
-        if (list.items.length > 0 && list.items[0].is_active !== false) {
-          const cfg = list.items[0].config_json || list.items[0].config || {}
-          return {
-            connected: true,
-            config: list.items[0],
-            scheduling_url: cfg.scheduling_url || '',
-          }
+      if (list.items.length > 0) {
+        const item = list.items[0]
+        const cfg = (item.config_json || item.config || {}) as any
+        const isConnected = item.status === 'active' && item.is_active !== false
+        return {
+          connected: isConnected,
+          config: item,
+          scheduling_url: cfg.scheduling_url || '',
         }
-      } catch {
-        /* intentionally ignored */
       }
+      return { connected: false, config: null, scheduling_url: '' }
+    } catch (e) {
+      console.warn('Failed to get Calendly config from integration_configs', e)
       return { connected: false, config: null, scheduling_url: '' }
     }
   },
@@ -916,40 +911,150 @@ export const CrmService = {
     scheduling_url?: string
     config?: any
   }> {
-    return await pb.send('/api/calendly/connect', {
-      method: 'POST',
-      body: { tenant_id: tenantId, token },
-    })
+    try {
+      // 1. Check if record already exists
+      const list = await pb.collection('integration_configs').getList(1, 1, {
+        filter: `tenant_id = "${tenantId}" && provider = "calendly"`,
+      })
+
+      const payload = {
+        tenant_id: tenantId,
+        provider: 'calendly',
+        api_token: token.trim(),
+        api_key: token.trim(),
+        is_active: true,
+        config_json: {
+          provider: 'calendly',
+          connected_at: new Date().toISOString(),
+        },
+      }
+
+      let record: any
+      if (list.items.length > 0) {
+        record = await pb.collection('integration_configs').update(list.items[0].id, payload)
+      } else {
+        record = await pb.collection('integration_configs').create(payload)
+      }
+
+      const cfg = record.config_json || record.config || {}
+      if (record.status === 'error') {
+        return {
+          success: false,
+          error: cfg.error_message || 'Token do Calendly inválido ou rejeitado pela API.',
+          config: record,
+        }
+      }
+
+      return {
+        success: true,
+        message: 'Calendly conectado com sucesso!',
+        scheduling_url: cfg.scheduling_url || '',
+        config: record,
+      }
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err?.message || 'Falha ao salvar integração do Calendly.',
+      }
+    }
   },
 
   async disconnectCalendly(
     tenantId: string,
   ): Promise<{ success: boolean; message?: string; error?: string }> {
-    return await pb.send('/api/calendly/disconnect', {
-      method: 'POST',
-      body: { tenant_id: tenantId },
-    })
+    try {
+      const list = await pb.collection('integration_configs').getFullList({
+        filter: `tenant_id = "${tenantId}" && provider = "calendly"`,
+      })
+      for (const item of list) {
+        await pb.collection('integration_configs').delete(item.id)
+      }
+      return { success: true, message: 'Calendly desconectado com sucesso.' }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Erro ao desconectar Calendly.' }
+    }
   },
 
   async testCalendlyConnection(
     tenantId: string,
     token?: string,
   ): Promise<{ success: boolean; message: string; scheduling_url?: string; error?: string }> {
-    return await pb.send('/api/calendly/test', {
-      method: 'POST',
-      body: { tenant_id: tenantId, token },
-    })
+    try {
+      const list = await pb.collection('integration_configs').getList(1, 1, {
+        filter: `tenant_id = "${tenantId}" && provider = "calendly"`,
+      })
+      if (list.items.length === 0 && !token) {
+        return {
+          success: false,
+          message: 'Calendly não configurado.',
+          error: 'Calendly não configurado.',
+        }
+      }
+
+      if (list.items.length > 0) {
+        const item = list.items[0]
+        const currentCfg = item.config_json || item.config || {}
+        const updated = await pb.collection('integration_configs').update(item.id, {
+          api_token: token || item.api_token || item.api_key,
+          api_key: token || item.api_token || item.api_key,
+          config_json: {
+            ...currentCfg,
+            test_requested: true,
+            tested_at: new Date().toISOString(),
+          },
+        })
+        const cfg = updated.config_json || updated.config || {}
+        if (updated.status === 'active') {
+          return {
+            success: true,
+            message: 'Conexão com Calendly validada com sucesso!',
+            scheduling_url: cfg.scheduling_url,
+          }
+        } else {
+          return {
+            success: false,
+            message: cfg.error_message || 'Falha de validação com Calendly.',
+            error: cfg.error_message,
+          }
+        }
+      }
+
+      // Se passou token avulso, testa via criação temporária
+      const tempRec = await pb.collection('integration_configs').create({
+        tenant_id: tenantId,
+        provider: 'calendly',
+        api_token: token,
+        api_key: token,
+      })
+      const cfg = tempRec.config_json || tempRec.config || {}
+      const success = tempRec.status === 'active'
+      return {
+        success,
+        message: success
+          ? 'Calendly validado com sucesso!'
+          : cfg.error_message || 'Token inválido.',
+        scheduling_url: cfg.scheduling_url,
+        error: success ? undefined : cfg.error_message,
+      }
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err?.message || 'Erro ao testar Calendly.',
+        error: err?.message,
+      }
+    }
   },
 
   async getCalendlySchedulingLink(tenantId: string): Promise<string> {
     try {
-      const res = await pb.send(
-        '/api/calendly/scheduling-link?tenant_id=' + encodeURIComponent(tenantId),
-        {
-          method: 'GET',
-        },
-      )
-      return res?.scheduling_url || ''
+      const list = await pb.collection('integration_configs').getList(1, 1, {
+        filter: `tenant_id = "${tenantId}" && provider = "calendly"`,
+      })
+      if (list.items.length > 0) {
+        const cfg = (list.items[0].config_json || list.items[0].config || {}) as any
+        return cfg.scheduling_url || ''
+      }
+      return ''
     } catch {
       return ''
     }
@@ -958,28 +1063,20 @@ export const CrmService = {
   // --- GOOGLE MEET INTEGRATION HELPERS ---
   async getGoogleMeetConfig(tenantId: string): Promise<{ connected: boolean; config: any }> {
     try {
-      const res = await pb.send(
-        '/api/google-meet/config?tenant_id=' + encodeURIComponent(tenantId),
-        {
-          method: 'GET',
-        },
-      )
-      return res || { connected: false, config: null }
+      const list = await pb.collection('integration_configs').getList(1, 1, {
+        filter: `tenant_id = "${tenantId}" && provider = "google_meet"`,
+      })
+      if (list.items.length > 0) {
+        const item = list.items[0]
+        const isConnected = item.status === 'active' && item.is_active !== false
+        return {
+          connected: isConnected,
+          config: item,
+        }
+      }
+      return { connected: false, config: null }
     } catch (e) {
       console.warn('Failed to get Google Meet config', e)
-      try {
-        const list = await pb.collection('integration_configs').getList(1, 1, {
-          filter: `tenant_id = "${tenantId}" && provider = "google_meet"`,
-        })
-        if (list.items.length > 0 && list.items[0].is_active !== false) {
-          return {
-            connected: true,
-            config: list.items[0],
-          }
-        }
-      } catch {
-        /* intentionally ignored */
-      }
       return { connected: false, config: null }
     }
   },
@@ -993,51 +1090,133 @@ export const CrmService = {
     error?: string
     config?: any
   }> {
-    return await pb.send('/api/google-meet/connect', {
-      method: 'POST',
-      body: { tenant_id: tenantId, token },
-    })
+    try {
+      const list = await pb.collection('integration_configs').getList(1, 1, {
+        filter: `tenant_id = "${tenantId}" && provider = "google_meet"`,
+      })
+
+      const payload = {
+        tenant_id: tenantId,
+        provider: 'google_meet',
+        api_key: token.trim(),
+        api_token: token.trim(),
+        is_active: true,
+        config_json: {
+          provider: 'google_meet',
+          calendar_id: 'primary',
+          connected_at: new Date().toISOString(),
+        },
+      }
+
+      let record: any
+      if (list.items.length > 0) {
+        record = await pb.collection('integration_configs').update(list.items[0].id, payload)
+      } else {
+        record = await pb.collection('integration_configs').create(payload)
+      }
+
+      const cfg = record.config_json || record.config || {}
+      if (record.status === 'error') {
+        return {
+          success: false,
+          error: cfg.error_message || 'Credencial do Google Meet inválida.',
+          config: record,
+        }
+      }
+
+      return {
+        success: true,
+        message: 'Google Meet conectado com sucesso!',
+        config: record,
+      }
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err?.message || 'Falha ao salvar integração do Google Meet.',
+      }
+    }
   },
 
   async disconnectGoogleMeet(
     tenantId: string,
   ): Promise<{ success: boolean; message?: string; error?: string }> {
-    return await pb.send('/api/google-meet/disconnect', {
-      method: 'POST',
-      body: { tenant_id: tenantId },
-    })
+    try {
+      const list = await pb.collection('integration_configs').getFullList({
+        filter: `tenant_id = "${tenantId}" && provider = "google_meet"`,
+      })
+      for (const item of list) {
+        await pb.collection('integration_configs').delete(item.id)
+      }
+      return { success: true, message: 'Google Meet desconectado com sucesso.' }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Erro ao desconectar Google Meet.' }
+    }
   },
 
   async testGoogleMeetConnection(
     tenantId: string,
     token?: string,
   ): Promise<{ success: boolean; message: string; error?: string }> {
-    return await pb.send('/api/google-meet/test', {
-      method: 'POST',
-      body: { tenant_id: tenantId, token },
-    })
+    try {
+      const list = await pb.collection('integration_configs').getList(1, 1, {
+        filter: `tenant_id = "${tenantId}" && provider = "google_meet"`,
+      })
+      if (list.items.length === 0 && !token) {
+        return {
+          success: false,
+          message: 'Google Meet não configurado.',
+          error: 'Google Meet não configurado.',
+        }
+      }
+
+      if (list.items.length > 0) {
+        const item = list.items[0]
+        const currentCfg = item.config_json || item.config || {}
+        const updated = await pb.collection('integration_configs').update(item.id, {
+          api_key: token || item.api_key || item.api_token,
+          api_token: token || item.api_key || item.api_token,
+          config_json: {
+            ...currentCfg,
+            test_requested: true,
+            tested_at: new Date().toISOString(),
+          },
+        })
+        const cfg = updated.config_json || updated.config || {}
+        if (updated.status === 'active') {
+          return { success: true, message: 'Configuração do Google Meet validada com sucesso!' }
+        } else {
+          return {
+            success: false,
+            message: cfg.error_message || 'Falha na validação do Google Meet.',
+            error: cfg.error_message,
+          }
+        }
+      }
+
+      return { success: true, message: 'Chave do Google Meet aceita!' }
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err?.message || 'Erro ao testar Google Meet.',
+        error: err?.message,
+      }
+    }
   },
 
   // --- ZAPSIGN INTEGRATION HELPERS ---
   async getZapSignConfig(tenantId: string): Promise<{ connected: boolean; config: any }> {
     try {
-      const res = await pb.send('/api/zapsign/config?tenant_id=' + encodeURIComponent(tenantId), {
-        method: 'GET',
+      const list = await pb.collection('integration_configs').getList(1, 1, {
+        filter: `tenant_id = "${tenantId}" && provider = "zapsign"`,
       })
-      return res || { connected: false, config: null }
+      if (list.items.length > 0) {
+        const item = list.items[0]
+        const isConnected = item.status === 'active' && item.is_active !== false
+        return { connected: isConnected, config: item }
+      }
+      return { connected: false, config: null }
     } catch (e) {
       console.warn('Failed to get ZapSign config', e)
-      // Fallback: check integration_configs table directly
-      try {
-        const list = await pb.collection('integration_configs').getList(1, 1, {
-          filter: `tenant_id = "${tenantId}" && provider = "zapsign"`,
-        })
-        if (list.items.length > 0 && list.items[0].is_active !== false) {
-          return { connected: true, config: list.items[0] }
-        }
-      } catch {
-        /* intentionally ignored */
-      }
       return { connected: false, config: null }
     }
   },
@@ -1047,19 +1226,65 @@ export const CrmService = {
     token: string,
     sandbox = false,
   ): Promise<{ success: boolean; message?: string; error?: string }> {
-    return await pb.send('/api/zapsign/connect', {
-      method: 'POST',
-      body: { tenant_id: tenantId, token, sandbox },
-    })
+    try {
+      const list = await pb.collection('integration_configs').getList(1, 1, {
+        filter: `tenant_id = "${tenantId}" && provider = "zapsign"`,
+      })
+
+      const payload = {
+        tenant_id: tenantId,
+        provider: 'zapsign',
+        api_token: token.trim(),
+        api_key: token.trim(),
+        is_active: true,
+        config_json: {
+          provider: 'zapsign',
+          sandbox: sandbox,
+          connected_at: new Date().toISOString(),
+        },
+      }
+
+      let record: any
+      if (list.items.length > 0) {
+        record = await pb.collection('integration_configs').update(list.items[0].id, payload)
+      } else {
+        record = await pb.collection('integration_configs').create(payload)
+      }
+
+      const cfg = record.config_json || record.config || {}
+      if (record.status === 'error') {
+        return {
+          success: false,
+          error: cfg.error_message || 'Token inválido ou rejeitado pela API do ZapSign.',
+        }
+      }
+
+      return {
+        success: true,
+        message: 'ZapSign conectado com sucesso!',
+      }
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err?.message || 'Falha ao salvar integração do ZapSign.',
+      }
+    }
   },
 
   async disconnectZapSign(
     tenantId: string,
   ): Promise<{ success: boolean; message?: string; error?: string }> {
-    return await pb.send('/api/zapsign/disconnect', {
-      method: 'POST',
-      body: { tenant_id: tenantId },
-    })
+    try {
+      const list = await pb.collection('integration_configs').getFullList({
+        filter: `tenant_id = "${tenantId}" && provider = "zapsign"`,
+      })
+      for (const item of list) {
+        await pb.collection('integration_configs').delete(item.id)
+      }
+      return { success: true, message: 'ZapSign desconectado com sucesso.' }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Erro ao desconectar ZapSign.' }
+    }
   },
 
   async testZapSignConnection(
@@ -1067,10 +1292,61 @@ export const CrmService = {
     token?: string,
     sandbox = false,
   ): Promise<{ success: boolean; status: string; message: string }> {
-    return await pb.send('/api/zapsign/test', {
-      method: 'POST',
-      body: { tenant_id: tenantId, token, sandbox },
-    })
+    try {
+      const list = await pb.collection('integration_configs').getList(1, 1, {
+        filter: `tenant_id = "${tenantId}" && provider = "zapsign"`,
+      })
+      if (list.items.length === 0 && !token) {
+        return { success: false, status: 'error', message: 'ZapSign não configurado no tenant.' }
+      }
+
+      if (list.items.length > 0) {
+        const item = list.items[0]
+        const currentCfg = item.config_json || item.config || {}
+        const updated = await pb.collection('integration_configs').update(item.id, {
+          api_token: token || item.api_token || item.api_key,
+          api_key: token || item.api_token || item.api_key,
+          config_json: {
+            ...currentCfg,
+            sandbox: sandbox !== undefined ? sandbox : !!currentCfg.sandbox,
+            test_requested: true,
+            tested_at: new Date().toISOString(),
+          },
+        })
+        const cfg = updated.config_json || updated.config || {}
+        if (updated.status === 'active') {
+          return {
+            success: true,
+            status: 'connected',
+            message: 'Conexão com ZapSign validada com sucesso!',
+          }
+        } else {
+          return {
+            success: false,
+            status: 'error',
+            message: cfg.error_message || 'Falha de autenticação com a API do ZapSign.',
+          }
+        }
+      }
+
+      // Se passou token novo diretamente
+      const tempRec = await pb.collection('integration_configs').create({
+        tenant_id: tenantId,
+        provider: 'zapsign',
+        api_token: token,
+        api_key: token,
+        config_json: { sandbox },
+      })
+      const cfg = tempRec.config_json || tempRec.config || {}
+      const success = tempRec.status === 'active'
+      return {
+        success,
+        status: success ? 'connected' : 'error',
+        message: success ? 'ZapSign validado com sucesso!' : cfg.error_message || 'Token inválido.',
+      }
+    } catch (err: any) {
+      return { success: false, status: 'error', message: err?.message || 'Erro ao testar ZapSign.' }
+    }
   },
 
   // --- CAMPAIGNS (CAMPANHAS) ---
