@@ -66,13 +66,13 @@ export default function App() {
             {/* Dashboard — everyone */}
             <Route index element={<DashboardPage />} />
             <Route
-              path="/servicos"
+              path="servicos"
               element={
-                <RequireRole allowed={['admin', 'gestor']}>
+                <RequireRole allowedRoles={['admin', 'gestor']}>
                   <ServicosPage />
                 </RequireRole>
               }
-            />{' '}
+            />
             <Route
               path="leads/:id"
               element={
@@ -107,14 +107,6 @@ export default function App() {
                 </RequireRole>
               }
             />
-            <Route
-              path="servicos"
-              element={
-                <RequireRole allowedRoles={['admin', 'gestor', 'advogado']}>
-                  <ServicosPage />
-                </RequireRole>
-              }
-            />{' '}
             <Route
               path="pessoas/:id"
               element={

@@ -955,6 +955,69 @@ export const CrmService = {
     }
   },
 
+  // --- GOOGLE MEET INTEGRATION HELPERS ---
+  async getGoogleMeetConfig(tenantId: string): Promise<{ connected: boolean; config: any }> {
+    try {
+      const res = await pb.send(
+        '/api/google-meet/config?tenant_id=' + encodeURIComponent(tenantId),
+        {
+          method: 'GET',
+        },
+      )
+      return res || { connected: false, config: null }
+    } catch (e) {
+      console.warn('Failed to get Google Meet config', e)
+      try {
+        const list = await pb.collection('integration_configs').getList(1, 1, {
+          filter: `tenant_id = "${tenantId}" && provider = "google_meet"`,
+        })
+        if (list.items.length > 0 && list.items[0].is_active !== false) {
+          return {
+            connected: true,
+            config: list.items[0],
+          }
+        }
+      } catch {
+        /* intentionally ignored */
+      }
+      return { connected: false, config: null }
+    }
+  },
+
+  async connectGoogleMeet(
+    tenantId: string,
+    token: string,
+  ): Promise<{
+    success: boolean
+    message?: string
+    error?: string
+    config?: any
+  }> {
+    return await pb.send('/api/google-meet/connect', {
+      method: 'POST',
+      body: { tenant_id: tenantId, token },
+    })
+  },
+
+  async disconnectGoogleMeet(
+    tenantId: string,
+  ): Promise<{ success: boolean; message?: string; error?: string }> {
+    return await pb.send('/api/google-meet/disconnect', {
+      method: 'POST',
+      body: { tenant_id: tenantId },
+    })
+  },
+
+  async testGoogleMeetConnection(
+    tenantId: string,
+    token?: string,
+  ): Promise<{ success: boolean; message: string; error?: string }> {
+    return await pb.send('/api/google-meet/test', {
+      method: 'POST',
+      body: { tenant_id: tenantId, token },
+    })
+  },
+
   // --- ZAPSIGN INTEGRATION HELPERS ---
   async getZapSignConfig(tenantId: string): Promise<{ connected: boolean; config: any }> {
     try {

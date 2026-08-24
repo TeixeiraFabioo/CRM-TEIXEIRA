@@ -9,6 +9,7 @@ export interface GenerateChatOptions {
   messages: ChatMessage[]
   temperature?: number
   maxTokens?: number
+  public?: boolean
 }
 
 /**

@@ -20,6 +20,7 @@ import {
   HelpCircle,
   Send,
   Info,
+  Video,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -50,6 +51,18 @@ export function IntegrationsPage() {
   const [calendlyActionLoading, setCalendlyActionLoading] = useState(false)
   const [calendlyTestLoading, setCalendlyTestLoading] = useState(false)
   const [calendlyTestResult, setCalendlyTestResult] = useState<{
+    success: boolean
+    message: string
+  } | null>(null)
+
+  // Google Meet state
+  const [googleMeetConnected, setGoogleMeetConnected] = useState(false)
+  const [googleMeetConfig, setGoogleMeetConfig] = useState<any>(null)
+  const [googleMeetTokenInput, setGoogleMeetTokenInput] = useState('')
+  const [googleMeetLoading, setGoogleMeetLoading] = useState(true)
+  const [googleMeetActionLoading, setGoogleMeetActionLoading] = useState(false)
+  const [googleMeetTestLoading, setGoogleMeetTestLoading] = useState(false)
+  const [googleMeetTestResult, setGoogleMeetTestResult] = useState<{
     success: boolean
     message: string
   } | null>(null)
@@ -113,6 +126,21 @@ export function IntegrationsPage() {
     }
   }
 
+  const loadGoogleMeetState = async () => {
+    if (!tenant?.id) return
+    setGoogleMeetLoading(true)
+    try {
+      const res = await CrmService.getGoogleMeetConfig(tenant.id)
+      setGoogleMeetConnected(!!res.connected)
+      setGoogleMeetConfig(res.config || null)
+    } catch (err) {
+      console.error('Erro ao consultar Google Meet:', err)
+      setGoogleMeetConnected(false)
+    } finally {
+      setGoogleMeetLoading(false)
+    }
+  }
+
   const loadZapSignState = async () => {
     if (!tenant?.id) return
     setZapLoading(true)
@@ -154,6 +182,7 @@ export function IntegrationsPage() {
 
   useEffect(() => {
     loadCalendlyState()
+    loadGoogleMeetState()
     loadZapSignState()
     loadWhatsAppState()
   }, [tenant?.id])
@@ -277,6 +306,124 @@ export function IntegrationsPage() {
       })
     } finally {
       setCalendlyTestLoading(false)
+    }
+  }
+
+  const handleConnectGoogleMeet = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!tenant?.id) return
+    if (!googleMeetTokenInput.trim()) {
+      toast({
+        title: 'API Key obrigatória',
+        description: 'Informe a Google API Key / Token para conectar.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setGoogleMeetActionLoading(true)
+    setGoogleMeetTestResult(null)
+    try {
+      const res = await CrmService.connectGoogleMeet(tenant.id, googleMeetTokenInput.trim())
+      if (res.success) {
+        toast({
+          title: 'Google Meet Conectado!',
+          description: 'Integração salva e validada com sucesso via API.',
+        })
+        setGoogleMeetTokenInput('')
+        await loadGoogleMeetState()
+      } else {
+        toast({
+          title: 'Falha ao conectar Google Meet',
+          description: res.error || 'Credencial inválida ou não autorizada.',
+          variant: 'destructive',
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Erro de conexão',
+        description: err?.message || 'Falha ao salvar configuração do Google Meet.',
+        variant: 'destructive',
+      })
+    } finally {
+      setGoogleMeetActionLoading(false)
+    }
+  }
+
+  const handleDisconnectGoogleMeet = async () => {
+    if (!tenant?.id) return
+    if (!confirm('Deseja realmente desconectar o Google Meet? A chave salva será removida.')) {
+      return
+    }
+
+    setGoogleMeetActionLoading(true)
+    setGoogleMeetTestResult(null)
+    try {
+      const res = await CrmService.disconnectGoogleMeet(tenant.id)
+      if (res.success) {
+        toast({
+          title: 'Google Meet Desconectado',
+          description: 'A integração foi removida do sistema.',
+        })
+        setGoogleMeetConnected(false)
+        setGoogleMeetConfig(null)
+      } else {
+        toast({
+          title: 'Erro ao desconectar',
+          description: res.error || 'Não foi possível remover.',
+          variant: 'destructive',
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao desconectar',
+        description: err?.message || 'Falha na comunicação com o servidor.',
+        variant: 'destructive',
+      })
+    } finally {
+      setGoogleMeetActionLoading(false)
+    }
+  }
+
+  const handleTestGoogleMeetConnection = async () => {
+    if (!tenant?.id) return
+    setGoogleMeetTestLoading(true)
+    setGoogleMeetTestResult(null)
+    try {
+      const res = await CrmService.testGoogleMeetConnection(tenant.id)
+      if (res.success) {
+        setGoogleMeetTestResult({
+          success: true,
+          message: res.message || 'Comunicação com Google Meet testada com sucesso!',
+        })
+        toast({
+          title: 'Conexão Google Meet OK',
+          description: res.message || 'API respondeu com sucesso!',
+        })
+      } else {
+        setGoogleMeetTestResult({
+          success: false,
+          message: res.message || res.error || 'Falha ao validar credenciais do Google Meet.',
+        })
+        toast({
+          title: 'Teste de Conexão falhou',
+          description: res.message || res.error,
+          variant: 'destructive',
+        })
+      }
+    } catch (err: any) {
+      const msg = err?.message || 'Erro ao realizar teste de conexão.'
+      setGoogleMeetTestResult({
+        success: false,
+        message: msg,
+      })
+      toast({
+        title: 'Erro no teste',
+        description: msg,
+        variant: 'destructive',
+      })
+    } finally {
+      setGoogleMeetTestLoading(false)
     }
   }
 
@@ -558,16 +705,8 @@ export function IntegrationsPage() {
     {
       id: 'google_ads',
       name: 'Google Ads & Enhanced Conversions',
-      desc: 'Rastreamento de conversões offline de pesquisas jurídicas fundo de funil.',
+      desc: 'Rastreamento de conversões offline de pesquisas jurídicas fundo de funil e métricas de campanhas.',
       icon: Search,
-      status: 'development',
-      details: null,
-    },
-    {
-      id: 'google_meet',
-      name: 'Google Meet',
-      desc: 'Geração de salas de videoconferência para reuniões jurídicas e atendimento de clientes.',
-      icon: Calendar,
       status: 'development',
       details: null,
     },
@@ -953,6 +1092,165 @@ export function IntegrationsPage() {
                 size="sm"
                 onClick={handleDisconnectCalendly}
                 disabled={calendlyActionLoading}
+                className="h-7 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30 gap-1"
+              >
+                <Unplug className="h-3 w-3" /> Desconectar
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {/* CARD REAL DO GOOGLE MEET */}
+        <div className="bg-card border-2 border-primary/20 rounded-xl p-5 shadow-xs flex flex-col justify-between space-y-4 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-[#4285F4]/5 rounded-bl-full pointer-events-none" />
+
+          <div className="space-y-3">
+            <div className="flex justify-between items-start">
+              <div className="h-10 w-10 rounded-xl bg-[#4285F4] text-white flex items-center justify-center shadow-xs">
+                <Video className="h-5 w-5 text-white" />
+              </div>
+              {googleMeetLoading ? (
+                <Badge variant="outline" className="text-[10px] gap-1">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Verificando...
+                </Badge>
+              ) : googleMeetConnected ? (
+                <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px] gap-1">
+                  <CheckCircle2 className="h-3 w-3" /> Conectado
+                </Badge>
+              ) : (
+                <Badge
+                  variant="outline"
+                  className="text-[10px] text-amber-600 border-amber-500/30 gap-1"
+                >
+                  <AlertCircle className="h-3 w-3" /> Não configurado
+                </Badge>
+              )}
+            </div>
+
+            <div>
+              <div className="flex items-center gap-1.5">
+                <h3 className="font-bold text-sm">Google Meet</h3>
+                <span className="text-[10px] bg-blue-500/10 text-blue-700 dark:text-blue-300 px-1.5 py-0.2 rounded font-mono font-medium">
+                  Videoconferência
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                Geração automática de links e salas de reuniões no Google Meet diretamente no
+                agendamento de tarefas e compromissos com leads.
+              </p>
+            </div>
+
+            {/* SE JÁ HOUVER CONFIGURAÇÃO DO GOOGLE MEET */}
+            {googleMeetConnected ? (
+              <div className="bg-muted/40 border rounded-lg p-3 space-y-2.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground flex items-center gap-1">
+                    <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> Token / API Key
+                  </span>
+                  <span className="font-mono text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
+                    •••••••• (Protegido no backend)
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1 border-t">
+                  <span>Última sincronização:</span>
+                  <span className="font-medium text-foreground">
+                    {formatSyncDate(googleMeetConfig?.last_sync || googleMeetConfig?.updated)}
+                  </span>
+                </div>
+
+                {googleMeetTestResult && (
+                  <div
+                    className={`p-2 rounded text-[11px] flex items-start gap-1.5 ${
+                      googleMeetTestResult.success
+                        ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20'
+                        : 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/20'
+                    }`}
+                  >
+                    {googleMeetTestResult.success ? (
+                      <Check className="h-3.5 w-3.5 shrink-0 mt-0.5 text-emerald-600" />
+                    ) : (
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-rose-600" />
+                    )}
+                    <span className="leading-tight">{googleMeetTestResult.message}</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* SE NÃO HOUVER TOKEN SALVO */
+              <form onSubmit={handleConnectGoogleMeet} className="space-y-2.5 pt-1">
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-semibold flex items-center justify-between">
+                    <span className="flex items-center gap-1">
+                      <Key className="h-3 w-3 text-primary" /> API Key / Credencial Google
+                    </span>
+                    <a
+                      href="https://console.cloud.google.com/apis/credentials"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-primary hover:underline"
+                    >
+                      Google Cloud Console →
+                    </a>
+                  </Label>
+                  <Input
+                    type="password"
+                    value={googleMeetTokenInput}
+                    onChange={(e) => setGoogleMeetTokenInput(e.target.value)}
+                    placeholder="Cole sua API Key ou OAuth Token do Google..."
+                    className="h-8 text-xs font-mono"
+                    required
+                  />
+                  <p className="text-[10px] text-muted-foreground leading-tight">
+                    Credencial utilizada para criar salas virtuais do Google Meet com segurança.
+                  </p>
+                </div>
+
+                <Button
+                  type="submit"
+                  disabled={googleMeetActionLoading}
+                  size="sm"
+                  className="w-full h-8 text-xs bg-[#4285F4] hover:bg-[#3367d6] text-white font-semibold gap-1.5"
+                >
+                  {googleMeetActionLoading ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Conectando...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-3.5 w-3.5" /> Conectar Google Meet
+                    </>
+                  )}
+                </Button>
+              </form>
+            )}
+          </div>
+
+          {/* RODAPÉ DO CARD GOOGLE MEET */}
+          {googleMeetConnected && (
+            <div className="pt-3 border-t flex items-center justify-between gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleTestGoogleMeetConnection}
+                disabled={googleMeetTestLoading || googleMeetActionLoading}
+                className="h-7 text-xs gap-1 flex-1"
+              >
+                {googleMeetTestLoading ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" /> Testando...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-3 w-3" /> Testar Conexão
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleDisconnectGoogleMeet}
+                disabled={googleMeetActionLoading}
                 className="h-7 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30 gap-1"
               >
                 <Unplug className="h-3 w-3" /> Desconectar

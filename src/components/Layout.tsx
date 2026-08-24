@@ -52,8 +52,20 @@ export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
-    return document.documentElement.classList.contains('dark') || true
+    const stored = localStorage.getItem('theme')
+    if (stored === 'dark') return true
+    if (stored === 'light') return false
+    return window.matchMedia('(prefers-color-scheme: dark)').matches
   })
+
+  // Synchronize 'dark' class on documentElement on mount and state change
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
+  }, [isDarkMode])
 
   // Route tracker for Meta Pixel
   useMetaPixelRouteTracker()
@@ -73,6 +85,7 @@ export default function Layout() {
   const toggleDarkMode = () => {
     const next = !isDarkMode
     setIsDarkMode(next)
+    localStorage.setItem('theme', next ? 'dark' : 'light')
     if (next) {
       document.documentElement.classList.add('dark')
     } else {

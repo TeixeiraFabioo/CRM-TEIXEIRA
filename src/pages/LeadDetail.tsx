@@ -27,6 +27,7 @@ import {
   ArrowRightLeft,
   Bot,
   User,
+  Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -38,6 +39,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -178,6 +189,7 @@ export function LeadDetailPage() {
 
   // Reassignment state
   const [updatingAssignee, setUpdatingAssignee] = useState(false)
+  const [calendlyLink, setCalendlyLink] = useState('')
 
   // Chat message input state
   const defaultUserTeam: TeamType =
@@ -251,6 +263,10 @@ export function LeadDetailPage() {
     loss_reason: 'preço',
     observacoes: '',
   })
+
+  // Delete lead state (Admin only)
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
+  const [deletingLead, setDeletingLead] = useState(false)
 
   const loadMessages = async (leadId: string) => {
     try {
@@ -987,6 +1003,29 @@ ${formattedHistory}
     }
   }
 
+  const handleDeleteLead = async () => {
+    if (!id || userRole !== 'admin') return
+    setDeletingLead(true)
+    try {
+      await CrmService.softDeleteLead(id)
+      toast({
+        title: 'Lead excluído com sucesso',
+        description: 'O lead foi movido para a lixeira.',
+      })
+      navigate('/leads')
+    } catch (err: any) {
+      console.error('Erro ao excluir lead:', err)
+      toast({
+        title: 'Erro ao excluir lead',
+        description: err?.message || 'Não foi possível excluir o lead.',
+        variant: 'destructive',
+      })
+    } finally {
+      setDeletingLead(false)
+      setDeleteModalOpen(false)
+    }
+  }
+
   const handleMarkLost = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!tenant?.id || !id) return
@@ -1280,6 +1319,16 @@ ${formattedHistory}
           >
             <XCircle className="h-4 w-4" /> Marcar Perda
           </Button>
+          {userRole === 'admin' && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setDeleteModalOpen(true)}
+              className="h-9 gap-1.5 text-xs bg-rose-600 hover:bg-rose-700 text-white"
+            >
+              <Trash2 className="h-4 w-4" /> Excluir Lead
+            </Button>
+          )}
         </div>
       </div>
 
@@ -2432,6 +2481,34 @@ ${formattedHistory}
           </Tabs>
         </div>
       </div>
+
+      {/* MODAL DE EXCLUSÃO DE LEAD (ADMIN ONLY) */}
+      <AlertDialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" /> Excluir Lead
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir o lead <strong>{lead.name}</strong>? O registro será
+              movido para a lixeira e poderá ser recuperado posteriormente pelo administrador.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingLead}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault()
+                handleDeleteLead()
+              }}
+              disabled={deletingLead}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deletingLead ? 'Excluindo...' : 'Sim, excluir lead'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* TRANSFER TEAM MODAL */}
       <Dialog open={transferModalOpen} onOpenChange={setTransferModalOpen}>
