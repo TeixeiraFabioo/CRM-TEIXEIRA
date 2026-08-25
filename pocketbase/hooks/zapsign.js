@@ -31,13 +31,13 @@ onRecordCreate((e) => {
     }
 
     const sandbox = !!cfg.sandbox
-    const baseUrl = sandbox
-      ? 'https://sandbox.api.zapsign.com.br/api/v1/docs/'
-      : 'https://api.zapsign.com.br/api/v1/docs/'
+    const validateUrl = sandbox
+      ? 'https://sandbox.api.zapsign.com.br/api/v1/account/'
+      : 'https://api.zapsign.com.br/api/v1/account/'
 
     try {
       const testRes = $http.send({
-        url: baseUrl + '?page=1',
+        url: validateUrl,
         method: 'GET',
         headers: {
           Authorization: 'Bearer ' + token.trim(),
@@ -46,23 +46,30 @@ onRecordCreate((e) => {
         timeout: 15,
       })
 
-      if (testRes.statusCode >= 200 && testRes.statusCode < 300) {
+      if (testRes.statusCode === 200) {
         record.set('status', 'active')
         record.set('is_active', true)
         const nowIso = new Date().toISOString()
+        const accountData = testRes.json || {}
         const updatedCfg = Object.assign({}, cfg, {
           provider: 'zapsign',
           sandbox: sandbox,
+          account_info: accountData,
           last_validated: nowIso,
           error_message: '',
         })
         record.set('config_json', updatedCfg)
         record.set('config', updatedCfg)
       } else {
+        let respBody = ''
+        try {
+          respBody = testRes.raw || testRes.body || JSON.stringify(testRes.json || {})
+        } catch (_) {}
         const errDetail =
-          (testRes.json &&
-            (testRes.json.detail || testRes.json.message || JSON.stringify(testRes.json))) ||
-          'Token inválido ou recusado pela API do ZapSign (HTTP ' + testRes.statusCode + ')'
+          'Token inválido ou recusado pela API do ZapSign (HTTP ' +
+          testRes.statusCode +
+          '): ' +
+          (respBody || 'Erro de autenticação')
         record.set('status', 'error')
         record.set('is_active', false)
         const updatedCfg = Object.assign({}, cfg, {
@@ -113,13 +120,13 @@ onRecordUpdate((e) => {
     }
 
     const sandbox = !!cfg.sandbox
-    const baseUrl = sandbox
-      ? 'https://sandbox.api.zapsign.com.br/api/v1/docs/'
-      : 'https://api.zapsign.com.br/api/v1/docs/'
+    const validateUrl = sandbox
+      ? 'https://sandbox.api.zapsign.com.br/api/v1/account/'
+      : 'https://api.zapsign.com.br/api/v1/account/'
 
     try {
       const testRes = $http.send({
-        url: baseUrl + '?page=1',
+        url: validateUrl,
         method: 'GET',
         headers: {
           Authorization: 'Bearer ' + token.trim(),
@@ -128,13 +135,15 @@ onRecordUpdate((e) => {
         timeout: 15,
       })
 
-      if (testRes.statusCode >= 200 && testRes.statusCode < 300) {
+      if (testRes.statusCode === 200) {
         record.set('status', 'active')
         record.set('is_active', true)
         const nowIso = new Date().toISOString()
+        const accountData = testRes.json || {}
         const updatedCfg = Object.assign({}, cfg, {
           provider: 'zapsign',
           sandbox: sandbox,
+          account_info: accountData,
           last_validated: nowIso,
           error_message: '',
           test_requested: false,
@@ -142,10 +151,15 @@ onRecordUpdate((e) => {
         record.set('config_json', updatedCfg)
         record.set('config', updatedCfg)
       } else {
+        let respBody = ''
+        try {
+          respBody = testRes.raw || testRes.body || JSON.stringify(testRes.json || {})
+        } catch (_) {}
         const errDetail =
-          (testRes.json &&
-            (testRes.json.detail || testRes.json.message || JSON.stringify(testRes.json))) ||
-          'Token inválido ou recusado pela API do ZapSign (HTTP ' + testRes.statusCode + ')'
+          'Token inválido ou recusado pela API do ZapSign (HTTP ' +
+          testRes.statusCode +
+          '): ' +
+          (respBody || 'Erro de autenticação')
         record.set('status', 'error')
         record.set('is_active', false)
         const updatedCfg = Object.assign({}, cfg, {

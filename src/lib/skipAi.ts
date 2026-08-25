@@ -2,6 +2,8 @@
 // $ai.agent(slug).chat (Skip-shape). Don't hand-roll the SSE reader —
 // past attempts shipped "undefinedundefined…" and "[object Object]…".
 
+import pb from '@/lib/pocketbase/client'
+
 export interface OpenAIChatResult {
   id: string
   model: string
@@ -11,6 +13,69 @@ export interface OpenAIChatResult {
     finish_reason: string
   }>
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
+}
+
+export interface GenerateChatResponseParams {
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  tenant_id?: string
+  lead_id?: string
+  temperature?: number
+  public?: boolean
+}
+
+/**
+ * Sends a chat prompt to the backend AI endpoint (/api/ai/chat)
+ */
+export async function generateChatResponse(params: GenerateChatResponseParams): Promise<string> {
+  const backendBaseUrl = pb.baseUrl || ''
+  const endpoint = `${backendBaseUrl.replace(/\/$/, '')}/api/ai/chat`
+
+  // Resolve tenant_id from params, current auth record or query
+  let tenantId = params.tenant_id
+  if (!tenantId) {
+    const authRecord = pb.authStore.record as any
+    tenantId = authRecord?.tenant_id || ''
+  }
+
+  // Fallback: if not set, fetch first tenant
+  if (!tenantId) {
+    try {
+      const list = await pb.collection('tenants').getList(1, 1)
+      if (list.items.length > 0) {
+        tenantId = list.items[0].id
+      }
+    } catch {
+      /* intentionally ignored */
+    }
+  }
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(pb.authStore.token ? { Authorization: pb.authStore.token } : {}),
+    },
+    body: JSON.stringify({
+      tenant_id: tenantId || 'default',
+      messages: params.messages,
+      lead_id: params.lead_id,
+      temperature: params.temperature,
+    }),
+  })
+
+  if (!response.ok) {
+    let errorMsg = `AI Chat request failed with status ${response.status}`
+    try {
+      const errJson = await response.json()
+      if (errJson?.error) errorMsg = errJson.error
+    } catch {
+      /* intentionally ignored */
+    }
+    throw new Error(errorMsg)
+  }
+
+  const json = await response.json()
+  return json.response || ''
 }
 
 export interface AgentCitation {
@@ -265,41 +330,6 @@ export interface StreamAgentChatResult {
   message_id: string
   citations?: AgentCitation[]
   toolCalls: Array<{ id: string; name: string; ok: boolean }>
-}
-
-export interface GenerateChatOptions {
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
-  temperature?: number
-  public?: boolean
-  tenant_id?: string
-  lead_id?: string
-}
-
-export async function generateChatResponse(options: GenerateChatOptions): Promise<string> {
-  try {
-    const res = await fetch('/api/ai/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        messages: options.messages,
-        tenant_id: options.tenant_id || 'public',
-        lead_id: options.lead_id,
-      }),
-    })
-
-    if (!res.ok) {
-      const errJson = await res.json().catch(() => ({}))
-      throw new Error(errJson.error || `HTTP ${res.status}`)
-    }
-
-    const data = await res.json()
-    return data.response || data.reply || data.content || ''
-  } catch (err: any) {
-    console.warn('generateChatResponse fallback:', err)
-    return ''
-  }
 }
 
 // Drive an agent stream end-to-end. Resolves only after `done` (turn fully persisted);
