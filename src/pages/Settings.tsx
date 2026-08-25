@@ -576,7 +576,8 @@ export function SettingsPage() {
           : null
       const errorMsg =
         fieldMsg ||
-        getErrorMessage(err, 'Não foi possível criar o usuário. Verifique os dados informados.')
+        getErrorMessage(err) ||
+        'Não foi possível criar o usuário. Verifique os dados informados.'
       toast({
         title: 'Erro ao cadastrar usuário',
         description: errorMsg,
@@ -678,7 +679,7 @@ export function SettingsPage() {
               .map(([f, d]: any) => `${f}: ${d?.message || d}`)
               .join(', ')
           : null
-      const errorMsg = fieldMsg || getErrorMessage(err, 'Não foi possível atualizar o usuário.')
+      const errorMsg = fieldMsg || getErrorMessage(err) || 'Não foi possível atualizar o usuário.'
       toast({
         title: 'Erro ao atualizar usuário',
         description: errorMsg,
@@ -746,7 +747,7 @@ export function SettingsPage() {
       console.error('Error toggling user active:', err)
       toast({
         title: 'Erro ao atualizar status',
-        description: getErrorMessage(err, 'Falha ao comunicar com o servidor.'),
+        description: getErrorMessage(err) || 'Falha ao comunicar com o servidor.',
         variant: 'destructive',
       })
     } finally {
@@ -852,7 +853,7 @@ export function SettingsPage() {
       console.error('Error resetting password:', err)
       toast({
         title: 'Erro ao redefinir senha',
-        description: getErrorMessage(err, 'Falha ao atualizar a senha no servidor.'),
+        description: getErrorMessage(err) || 'Falha ao atualizar a senha no servidor.',
         variant: 'destructive',
       })
     } finally {
@@ -932,7 +933,7 @@ export function SettingsPage() {
       console.error('Error deleting user:', err)
       toast({
         title: 'Erro ao excluir usuário',
-        description: getErrorMessage(err, 'Falha ao remover o usuário.'),
+        description: getErrorMessage(err) || 'Falha ao remover o usuário.',
         variant: 'destructive',
       })
     } finally {

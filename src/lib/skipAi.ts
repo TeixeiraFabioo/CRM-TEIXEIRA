@@ -2,8 +2,6 @@
 // $ai.agent(slug).chat (Skip-shape). Don't hand-roll the SSE reader —
 // past attempts shipped "undefinedundefined…" and "[object Object]…".
 
-import pb from '@/lib/pocketbase/client'
-
 export interface OpenAIChatResult {
   id: string
   model: string
@@ -13,69 +11,6 @@ export interface OpenAIChatResult {
     finish_reason: string
   }>
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
-}
-
-export interface GenerateChatResponseParams {
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
-  tenant_id?: string
-  lead_id?: string
-  temperature?: number
-  public?: boolean
-}
-
-/**
- * Sends a chat prompt to the backend AI endpoint (/api/ai/chat)
- */
-export async function generateChatResponse(params: GenerateChatResponseParams): Promise<string> {
-  const backendBaseUrl = pb.baseUrl || ''
-  const endpoint = `${backendBaseUrl.replace(/\/$/, '')}/api/ai/chat`
-
-  // Resolve tenant_id from params, current auth record or query
-  let tenantId = params.tenant_id
-  if (!tenantId) {
-    const authRecord = pb.authStore.record as any
-    tenantId = authRecord?.tenant_id || ''
-  }
-
-  // Fallback: if not set, fetch first tenant
-  if (!tenantId) {
-    try {
-      const list = await pb.collection('tenants').getList(1, 1)
-      if (list.items.length > 0) {
-        tenantId = list.items[0].id
-      }
-    } catch {
-      /* intentionally ignored */
-    }
-  }
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(pb.authStore.token ? { Authorization: pb.authStore.token } : {}),
-    },
-    body: JSON.stringify({
-      tenant_id: tenantId || 'default',
-      messages: params.messages,
-      lead_id: params.lead_id,
-      temperature: params.temperature,
-    }),
-  })
-
-  if (!response.ok) {
-    let errorMsg = `AI Chat request failed with status ${response.status}`
-    try {
-      const errJson = await response.json()
-      if (errJson?.error) errorMsg = errJson.error
-    } catch {
-      /* intentionally ignored */
-    }
-    throw new Error(errorMsg)
-  }
-
-  const json = await response.json()
-  return json.response || ''
 }
 
 export interface AgentCitation {
@@ -330,6 +265,64 @@ export interface StreamAgentChatResult {
   message_id: string
   citations?: AgentCitation[]
   toolCalls: Array<{ id: string; name: string; ok: boolean }>
+}
+
+export interface GenerateChatResponseParams {
+  messages: Array<{ role: string; content: string }>
+  tenant_id?: string
+  lead_id?: string
+  temperature?: number
+  public?: boolean
+}
+
+/**
+ * Generates a non-streaming chat completion via the Skip Cloud backend AI endpoint.
+ */
+export async function generateChatResponse(params: GenerateChatResponseParams): Promise<string> {
+  const baseUrl =
+    (import.meta as any).env?.VITE_POCKETBASE_URL ||
+    (typeof window !== 'undefined' ? window.location.origin : '')
+  const endpoint = `${baseUrl.replace(/\/$/, '')}/api/ai/chat`
+
+  const payload: Record<string, any> = {
+    tenant_id: params.tenant_id || 'default',
+    messages: params.messages,
+    lead_id: params.lead_id,
+  }
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+
+  if (!res.ok) {
+    let errMsg = `AI request failed with status ${res.status}`
+    try {
+      const data = await res.json()
+      if (data && (data.error || data.message)) {
+        errMsg = data.error || data.message
+      }
+    } catch {
+      /* intentionally ignored */
+    }
+    throw new Error(errMsg)
+  }
+
+  const json = await res.json()
+  if (json && json.response) {
+    if (typeof json.response === 'string') return json.response
+    if (json.response.choices && json.response.choices[0]?.message?.content) {
+      return json.response.choices[0].message.content
+    }
+    if (typeof json.response === 'object') {
+      return JSON.stringify(json.response)
+    }
+  }
+
+  return json?.content || json?.answer || 'Sem resposta disponível.'
 }
 
 // Drive an agent stream end-to-end. Resolves only after `done` (turn fully persisted);

@@ -30,7 +30,8 @@ onRecordCreate((e) => {
       return e.next()
     }
 
-    const sandbox = !!cfg.sandbox
+    const cleanToken = token.trim()
+    const sandbox = !!cfg.sandbox || cleanToken.startsWith('sandbox_')
     const validateUrl = sandbox
       ? 'https://sandbox.api.zapsign.com.br/api/v1/account/'
       : 'https://api.zapsign.com.br/api/v1/account/'
@@ -40,7 +41,7 @@ onRecordCreate((e) => {
         url: validateUrl,
         method: 'GET',
         headers: {
-          Authorization: 'Bearer ' + token.trim(),
+          Authorization: 'Bearer ' + cleanToken,
           'Content-Type': 'application/json',
         },
         timeout: 15,
@@ -61,15 +62,27 @@ onRecordCreate((e) => {
         record.set('config_json', updatedCfg)
         record.set('config', updatedCfg)
       } else {
-        let respBody = ''
-        try {
-          respBody = testRes.raw || testRes.body || JSON.stringify(testRes.json || {})
-        } catch (_) {}
+        let errMessage = ''
+        const resJson = testRes.json || {}
+        if (resJson.error && resJson.error.message) {
+          errMessage = resJson.error.message
+        } else if (resJson.detail) {
+          errMessage = resJson.detail
+        } else if (resJson.message) {
+          errMessage = resJson.message
+        } else if (testRes.statusCode === 401 || testRes.statusCode === 403) {
+          errMessage = 'Token inválido ou não autorizado (HTTP ' + testRes.statusCode + ')'
+        } else {
+          try {
+            errMessage = testRes.raw || testRes.body || JSON.stringify(resJson)
+          } catch (_) {}
+        }
+
         const errDetail =
-          'Token inválido ou recusado pela API do ZapSign (HTTP ' +
+          'Token recusado pela API do ZapSign (HTTP ' +
           testRes.statusCode +
           '): ' +
-          (respBody || 'Erro de autenticação')
+          (errMessage || 'Erro de autenticação')
         record.set('status', 'error')
         record.set('is_active', false)
         const updatedCfg = Object.assign({}, cfg, {
@@ -119,7 +132,8 @@ onRecordUpdate((e) => {
       return e.next()
     }
 
-    const sandbox = !!cfg.sandbox
+    const cleanToken = token.trim()
+    const sandbox = !!cfg.sandbox || cleanToken.startsWith('sandbox_')
     const validateUrl = sandbox
       ? 'https://sandbox.api.zapsign.com.br/api/v1/account/'
       : 'https://api.zapsign.com.br/api/v1/account/'
@@ -129,7 +143,7 @@ onRecordUpdate((e) => {
         url: validateUrl,
         method: 'GET',
         headers: {
-          Authorization: 'Bearer ' + token.trim(),
+          Authorization: 'Bearer ' + cleanToken,
           'Content-Type': 'application/json',
         },
         timeout: 15,
@@ -151,15 +165,27 @@ onRecordUpdate((e) => {
         record.set('config_json', updatedCfg)
         record.set('config', updatedCfg)
       } else {
-        let respBody = ''
-        try {
-          respBody = testRes.raw || testRes.body || JSON.stringify(testRes.json || {})
-        } catch (_) {}
+        let errMessage = ''
+        const resJson = testRes.json || {}
+        if (resJson.error && resJson.error.message) {
+          errMessage = resJson.error.message
+        } else if (resJson.detail) {
+          errMessage = resJson.detail
+        } else if (resJson.message) {
+          errMessage = resJson.message
+        } else if (testRes.statusCode === 401 || testRes.statusCode === 403) {
+          errMessage = 'Token inválido ou não autorizado (HTTP ' + testRes.statusCode + ')'
+        } else {
+          try {
+            errMessage = testRes.raw || testRes.body || JSON.stringify(resJson)
+          } catch (_) {}
+        }
+
         const errDetail =
-          'Token inválido ou recusado pela API do ZapSign (HTTP ' +
+          'Token recusado pela API do ZapSign (HTTP ' +
           testRes.statusCode +
           '): ' +
-          (respBody || 'Erro de autenticação')
+          (errMessage || 'Erro de autenticação')
         record.set('status', 'error')
         record.set('is_active', false)
         const updatedCfg = Object.assign({}, cfg, {
@@ -351,6 +377,11 @@ onRecordAfterUpdateSuccess((e) => {
         signerObj.send_automatic_whatsapp = true
       }
 
+      const cleanApiToken = apiToken.trim()
+      if (cleanApiToken.startsWith('sandbox_')) {
+        isSandbox = true
+      }
+
       let targetUrl = customBaseUrl
       if (!targetUrl) {
         targetUrl = isSandbox
@@ -401,7 +432,7 @@ onRecordAfterUpdateSuccess((e) => {
           url: targetUrl,
           method: 'POST',
           headers: {
-            Authorization: 'Bearer ' + apiToken.trim(),
+            Authorization: 'Bearer ' + cleanApiToken,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(zapsignPayload),
