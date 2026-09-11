@@ -376,13 +376,7 @@ export default function Layout() {
           {/* Right Controls: Meta Pixel, Notifications, Quick Actions, Theme */}
           <div className="flex items-center gap-2 sm:gap-3">
             {/* Meta Pixel Badge */}
-            {pixelId ? (
-              <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-600 dark:text-blue-400">
-                <Share2 className="h-3 w-3 animate-pulse" />
-                <span>Pixel:</span>
-                <span className="font-mono font-bold">{pixelId}</span>
-              </div>
-            ) : role === 'admin' ? (
+            {pixelId ? null : role === 'admin' ? (
               <Link to="/settings" className="hidden md:block">
                 <Badge variant="outline" className="text-[11px] text-amber-600 border-amber-500/30">
                   Pixel não vinculado
