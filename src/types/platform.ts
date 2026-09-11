@@ -469,11 +469,21 @@ export interface ContractRecord {
 export interface IntegrationConfigRecord {
   id: string
   tenant_id: string
-  provider: 'zapsign' | 'clicksign' | 'whatsapp' | 'meta_ads' | 'google_ads' | 'calendly'
-  status: 'active' | 'inactive' | 'error'
+  provider:
+    | 'zapsign'
+    | 'clicksign'
+    | 'whatsapp'
+    | 'meta_ads'
+    | 'google_ads'
+    | 'calendly'
+    | 'google_meet'
+    | string
+  status: 'active' | 'inactive' | 'error' | string
   api_token?: string
+  api_key?: string
   webhook_secret?: string
   is_active?: boolean
+  error_message?: string
   config?: Record<string, unknown>
   config_json?: Record<string, unknown>
   created?: string
