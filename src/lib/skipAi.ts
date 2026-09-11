@@ -72,7 +72,10 @@ interface SseBlock {
   data: string
 }
 
-async function* readSseBlocks(response: Response, signal?: AbortSignal): AsyncGenerator<SseBlock> {
+async function* readSseBlocks(
+  response: Response,
+  signal?: AbortSignal,
+): AsyncGenerator<SseBlock> {
   if (!response.body) return
   const reader = response.body.getReader()
   // Wire abort directly into the reader. reader.cancel(reason) makes
@@ -265,83 +268,6 @@ export interface StreamAgentChatResult {
   message_id: string
   citations?: AgentCitation[]
   toolCalls: Array<{ id: string; name: string; ok: boolean }>
-}
-
-export interface GenerateChatResponseOptions {
-  messages: Array<{ role: string; content: string }>
-  temperature?: number
-  max_tokens?: number
-  model?: string
-}
-
-export type ChatResponseMessage = {
-  content: string
-}
-
-export interface ChatResponseResult extends String {
-  message: ChatResponseMessage
-  content: string
-}
-
-export async function generateChatResponse(
-  options: GenerateChatResponseOptions,
-): Promise<ChatResponseResult> {
-  const baseUrl =
-    (import.meta as any).env?.VITE_POCKETBASE_URL ||
-    (typeof window !== 'undefined' ? window.location.origin : '')
-  const cleanBase = baseUrl.replace(/\/$/, '')
-  const url = `${cleanBase}/api/ai/chat`
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      messages: options.messages,
-      temperature: options.temperature,
-      max_tokens: options.max_tokens,
-      model: options.model,
-      stream: true,
-    }),
-  })
-
-  let fullText = ''
-
-  if (!res.ok) {
-    // If stream fails or route is not 200, try reading text/json or throw
-    let errMsg = `Chat request failed: ${res.status}`
-    try {
-      const errData = await res.json()
-      if (errData?.message) errMsg = errData.message
-      else if (errData?.error) errMsg = errData.error
-    } catch {
-      const rawText = await res.text().catch(() => '')
-      if (rawText) errMsg = rawText
-    }
-    throw new Error(errMsg)
-  }
-
-  const contentType = res.headers.get('content-type') || ''
-  if (contentType.includes('text/event-stream')) {
-    for await (const chunk of parseChatStream(res)) {
-      const delta = chunk.choices?.[0]?.delta?.content
-      if (typeof delta === 'string') {
-        fullText += delta
-      }
-    }
-  } else {
-    // Non-streaming fallback
-    const json = await res.json()
-    fullText = json.choices?.[0]?.message?.content || json.message?.content || json.content || ''
-  }
-
-  // Create an object that acts as a String primitive AND has .message.content and .content
-  const strObj = new String(fullText) as unknown as ChatResponseResult
-  strObj.content = fullText
-  strObj.message = { content: fullText }
-
-  return strObj
 }
 
 // Drive an agent stream end-to-end. Resolves only after `done` (turn fully persisted);
