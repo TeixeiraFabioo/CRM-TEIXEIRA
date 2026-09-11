@@ -267,115 +267,6 @@ export interface StreamAgentChatResult {
   toolCalls: Array<{ id: string; name: string; ok: boolean }>
 }
 
-export interface GenerateChatOptions {
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
-  temperature?: number
-  public?: boolean
-}
-
-export interface ChatResponse {
-  content: string
-  message: { content: string; role: string }
-  toString(): string
-  valueOf(): string
-}
-
-export class ChatResponseImpl implements ChatResponse {
-  content: string
-  message: { content: string; role: string }
-  constructor(text: string) {
-    this.content = text
-    this.message = { content: text, role: 'assistant' }
-  }
-  toString(): string {
-    return this.content
-  }
-  valueOf(): string {
-    return this.content
-  }
-  [Symbol.toPrimitive](): string {
-    return this.content
-  }
-}
-
-export const ChatResponse = ChatResponseImpl
-export type ChatResponseType = string & ChatResponse
-
-export async function generateChatResponse(
-  options: GenerateChatOptions,
-): Promise<string & ChatResponse> {
-  const languageInstruction =
-    'IMPORTANTE: Responda SEMPRE em português do Brasil (pt-BR), de forma profissional, clara e concisa.'
-  const messages = [...(options.messages || [])]
-  const sysIndex = messages.findIndex((m) => m.role === 'system')
-  if (sysIndex >= 0) {
-    messages[sysIndex] = {
-      ...messages[sysIndex],
-      content: messages[sysIndex].content + '\n\n' + languageInstruction,
-    }
-  } else {
-    messages.unshift({ role: 'system', content: languageInstruction })
-  }
-
-  const backendUrl =
-    (import.meta as any).env?.VITE_POCKETBASE_URL ||
-    (typeof window !== 'undefined' ? window.location.origin : '')
-  const apiUrl = `${backendUrl.replace(/\/$/, '')}/api/ai/chat`
-
-  const wrapResponse = (text: string): string & ChatResponse => {
-    const strObj = new String(text) as any
-    strObj.content = text
-    strObj.message = { content: text, role: 'assistant' }
-    return strObj as string & ChatResponse
-  }
-
-  let aggregatedText = ''
-  try {
-    const streamRes = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages,
-        temperature: options.temperature ?? 0.7,
-        stream: true,
-      }),
-    })
-    if (streamRes.ok) {
-      await streamAgentChat(streamRes, {
-        onChunk: (deltaText: string) => {
-          aggregatedText += deltaText
-        },
-      })
-      if (aggregatedText.trim()) return wrapResponse(aggregatedText.trim())
-    }
-  } catch (streamErr) {
-    console.warn('Streaming falhou, acionando fallback:', streamErr)
-  }
-
-  try {
-    const res = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages, temperature: options.temperature ?? 0.7 }),
-    })
-    if (res.ok) {
-      const data = await res.json()
-      const text =
-        data?.message?.content ||
-        data?.content ||
-        data?.choices?.[0]?.message?.content ||
-        data?.response ||
-        ''
-      return wrapResponse(String(text).trim())
-    }
-  } catch (fetchErr) {
-    console.error('Falha no fallback de IA:', fetchErr)
-  }
-  return wrapResponse(
-    aggregatedText.trim() || 'Desculpe, não foi possível gerar uma resposta no momento.',
-  )
-}
-
 // Drive an agent stream end-to-end. Resolves only after `done` (turn fully persisted);
 // throws on abort, on the `error` event, or if the stream ends before `done`.
 export async function streamAgentChat(
@@ -457,4 +348,59 @@ export async function streamAgentChat(
   }
 
   return { content, conversation_id: conversationId, message_id: messageId, citations, toolCalls }
+}
+
+export interface GenerateChatResponseParams {
+  messages: Array<{ role: string; content: string }>
+  temperature?: number
+  public?: boolean
+  tenantId?: string
+  leadId?: string
+}
+
+export async function generateChatResponse(params: GenerateChatResponseParams): Promise<string> {
+  const { messages, tenantId, leadId } = params
+  // If no tenantId provided, try to detect from PB auth or fetch the default tenant
+  let targetTenantId = tenantId
+  if (!targetTenantId) {
+    try {
+      const clientModule = await import('@/lib/pocketbase/client')
+      const pbInstance = clientModule.default
+      const authModel = pbInstance.authStore.model || pbInstance.authStore.record
+      if (authModel && (authModel as any).tenant_id) {
+        targetTenantId = (authModel as any).tenant_id
+      } else {
+        const firstTenant = await pbInstance.collection('tenants').getList(1, 1)
+        if (firstTenant.items.length > 0) {
+          targetTenantId = firstTenant.items[0].id
+        }
+      }
+    } catch {
+      // fallback
+    }
+  }
+
+  const clientModule = await import('@/lib/pocketbase/client')
+  const pbInstance = clientModule.default
+  const baseUrl = pbInstance.baseUrl || ''
+  const response = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(pbInstance.authStore.token ? { Authorization: pbInstance.authStore.token } : {}),
+    },
+    body: JSON.stringify({
+      tenant_id: targetTenantId || 'default',
+      messages,
+      lead_id: leadId,
+    }),
+  })
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => null)
+    throw new Error(errData?.error || `Falha na requisição da IA (${response.status})`)
+  }
+
+  const data = await response.json()
+  return data.response || ''
 }

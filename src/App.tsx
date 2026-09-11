@@ -66,6 +66,14 @@ export default function App() {
             {/* Dashboard — everyone */}
             <Route index element={<DashboardPage />} />
             <Route
+              path="leads"
+              element={
+                <RequireRole allowedRoles={['admin', 'gestor', 'advogado']}>
+                  <LeadsPage />
+                </RequireRole>
+              }
+            />
+            <Route
               path="servicos"
               element={
                 <RequireRole allowedRoles={['admin', 'gestor']}>
