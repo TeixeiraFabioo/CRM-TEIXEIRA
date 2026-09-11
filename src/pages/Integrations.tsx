@@ -785,6 +785,55 @@ export function IntegrationsPage() {
               </p>
             </div>
 
+            {/* ALERTA DE ERRO REAL DO REGISTRO (INTEGRATION_CONFIGS) */}
+            {waConfig?.error_message && (
+              <div className="p-2.5 rounded-lg text-xs bg-destructive/10 text-destructive border border-destructive/20 flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-destructive" />
+                <div className="space-y-0.5 leading-snug">
+                  <span className="font-semibold block">Erro na Integração:</span>
+                  <span>{waConfig.error_message}</span>
+                </div>
+              </div>
+            )}
+
+            {/* PAINEL DE COEXISTÊNCIA META CLOUD API + WHATSAPP BUSINESS */}
+            <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 space-y-2 text-xs text-blue-950 dark:text-blue-200">
+              <div className="flex items-center gap-1.5 font-bold text-blue-700 dark:text-blue-300">
+                <Info className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+                <span>Coexistência: Meta Cloud API + WhatsApp Business no mesmo número</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-blue-900/90 dark:text-blue-200/90">
+                É possível operar o aplicativo WhatsApp Business normalmente no celular E conectar a
+                Cloud API simultaneamente no mesmo número, mantendo atendimento móvel e
+                automações/CRM em paralelo.
+              </p>
+              <div className="space-y-1 pt-1 text-[11px]">
+                <span className="font-semibold block text-blue-800 dark:text-blue-300">
+                  Passo a passo:
+                </span>
+                <ol className="list-decimal list-inside space-y-0.5 pl-1 text-[11px]">
+                  <li>Cadastrar o número no Meta Business Manager como número da Cloud API;</li>
+                  <li>
+                    Manter o WhatsApp Business instalado durante a verificação por SMS/ligação;
+                  </li>
+                  <li>Configurar o webhook abaixo no Meta Developers.</li>
+                </ol>
+              </div>
+              <div className="bg-background/80 dark:bg-background/60 border border-blue-500/20 rounded p-2 font-mono text-[10px] space-y-1 text-foreground select-all">
+                <div>
+                  <span className="text-muted-foreground">URL do Webhook:</span>{' '}
+                  https://teixeiranascimento.goskip.app/api/whatsapp/webhook
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Verify Token:</span>{' '}
+                  skip_hub_crm_whatsapp_verify_token
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Campos subscritos:</span> messages
+                </div>
+              </div>
+            </div>
+
             {/* SE JÁ HOUVER CONFIGURAÇÃO DO WHATSAPP */}
             {waConnected && waConfig ? (
               <div className="bg-muted/40 border rounded-lg p-3 space-y-2.5 text-xs">
@@ -936,6 +985,17 @@ export function IntegrationsPage() {
                 na criação de tarefas do Lead.
               </p>
             </div>
+
+            {/* ALERTA DE ERRO REAL DO REGISTRO (INTEGRATION_CONFIGS) */}
+            {calendlyConfig?.error_message && (
+              <div className="p-2.5 rounded-lg text-xs bg-destructive/10 text-destructive border border-destructive/20 flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-destructive" />
+                <div className="space-y-0.5 leading-snug">
+                  <span className="font-semibold block">Erro na Integração:</span>
+                  <span>{calendlyConfig.error_message}</span>
+                </div>
+              </div>
+            )}
 
             {/* SE JÁ HOUVER CONFIGURAÇÃO DO CALENDLY */}
             {calendlyConnected ? (
@@ -1140,6 +1200,17 @@ export function IntegrationsPage() {
               </p>
             </div>
 
+            {/* ALERTA DE ERRO REAL DO REGISTRO (INTEGRATION_CONFIGS) */}
+            {googleMeetConfig?.error_message && (
+              <div className="p-2.5 rounded-lg text-xs bg-destructive/10 text-destructive border border-destructive/20 flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-destructive" />
+                <div className="space-y-0.5 leading-snug">
+                  <span className="font-semibold block">Erro na Integração:</span>
+                  <span>{googleMeetConfig.error_message}</span>
+                </div>
+              </div>
+            )}
+
             {/* SE JÁ HOUVER CONFIGURAÇÃO DO GOOGLE MEET */}
             {googleMeetConnected ? (
               <div className="bg-muted/40 border rounded-lg p-3 space-y-2.5 text-xs">
@@ -1296,6 +1367,17 @@ export function IntegrationsPage() {
                 sincronização automática via webhooks.
               </p>
             </div>
+
+            {/* ALERTA DE ERRO REAL DO REGISTRO (INTEGRATION_CONFIGS) */}
+            {zapConfig?.error_message && (
+              <div className="p-2.5 rounded-lg text-xs bg-destructive/10 text-destructive border border-destructive/20 flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-destructive" />
+                <div className="space-y-0.5 leading-snug">
+                  <span className="font-semibold block">Erro na Integração:</span>
+                  <span>{zapConfig.error_message}</span>
+                </div>
+              </div>
+            )}
 
             {/* SE JÁ HOUVER CONFIGURAÇÃO */}
             {zapConnected ? (

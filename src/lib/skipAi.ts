@@ -72,10 +72,7 @@ interface SseBlock {
   data: string
 }
 
-async function* readSseBlocks(
-  response: Response,
-  signal?: AbortSignal,
-): AsyncGenerator<SseBlock> {
+async function* readSseBlocks(response: Response, signal?: AbortSignal): AsyncGenerator<SseBlock> {
   if (!response.body) return
   const reader = response.body.getReader()
   // Wire abort directly into the reader. reader.cancel(reason) makes
@@ -268,6 +265,115 @@ export interface StreamAgentChatResult {
   message_id: string
   citations?: AgentCitation[]
   toolCalls: Array<{ id: string; name: string; ok: boolean }>
+}
+
+export interface GenerateChatOptions {
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  temperature?: number
+  public?: boolean
+}
+
+export interface ChatResponse {
+  content: string
+  message: { content: string; role: string }
+  toString(): string
+  valueOf(): string
+}
+
+export class ChatResponseImpl implements ChatResponse {
+  content: string
+  message: { content: string; role: string }
+  constructor(text: string) {
+    this.content = text
+    this.message = { content: text, role: 'assistant' }
+  }
+  toString(): string {
+    return this.content
+  }
+  valueOf(): string {
+    return this.content
+  }
+  [Symbol.toPrimitive](): string {
+    return this.content
+  }
+}
+
+export const ChatResponse = ChatResponseImpl
+export type ChatResponseType = string & ChatResponse
+
+export async function generateChatResponse(
+  options: GenerateChatOptions,
+): Promise<string & ChatResponse> {
+  const languageInstruction =
+    'IMPORTANTE: Responda SEMPRE em português do Brasil (pt-BR), de forma profissional, clara e concisa.'
+  const messages = [...(options.messages || [])]
+  const sysIndex = messages.findIndex((m) => m.role === 'system')
+  if (sysIndex >= 0) {
+    messages[sysIndex] = {
+      ...messages[sysIndex],
+      content: messages[sysIndex].content + '\n\n' + languageInstruction,
+    }
+  } else {
+    messages.unshift({ role: 'system', content: languageInstruction })
+  }
+
+  const backendUrl =
+    (import.meta as any).env?.VITE_POCKETBASE_URL ||
+    (typeof window !== 'undefined' ? window.location.origin : '')
+  const apiUrl = `${backendUrl.replace(/\/$/, '')}/api/ai/chat`
+
+  const wrapResponse = (text: string): string & ChatResponse => {
+    const strObj = new String(text) as any
+    strObj.content = text
+    strObj.message = { content: text, role: 'assistant' }
+    return strObj as string & ChatResponse
+  }
+
+  let aggregatedText = ''
+  try {
+    const streamRes = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages,
+        temperature: options.temperature ?? 0.7,
+        stream: true,
+      }),
+    })
+    if (streamRes.ok) {
+      await streamAgentChat(streamRes, {
+        onChunk: (deltaText: string) => {
+          aggregatedText += deltaText
+        },
+      })
+      if (aggregatedText.trim()) return wrapResponse(aggregatedText.trim())
+    }
+  } catch (streamErr) {
+    console.warn('Streaming falhou, acionando fallback:', streamErr)
+  }
+
+  try {
+    const res = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages, temperature: options.temperature ?? 0.7 }),
+    })
+    if (res.ok) {
+      const data = await res.json()
+      const text =
+        data?.message?.content ||
+        data?.content ||
+        data?.choices?.[0]?.message?.content ||
+        data?.response ||
+        ''
+      return wrapResponse(String(text).trim())
+    }
+  } catch (fetchErr) {
+    console.error('Falha no fallback de IA:', fetchErr)
+  }
+  return wrapResponse(
+    aggregatedText.trim() || 'Desculpe, não foi possível gerar uma resposta no momento.',
+  )
 }
 
 // Drive an agent stream end-to-end. Resolves only after `done` (turn fully persisted);
