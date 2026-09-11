@@ -52,6 +52,7 @@ import {
   UserRecord,
   LeadRecord,
   ContractRecord,
+  LEAD_STATUS_LABELS,
 } from '@/types/platform'
 
 export function PipelinePage() {
@@ -88,7 +89,7 @@ export function PipelinePage() {
     servico: 'Recuperação Tributária e Teses Fiscais',
     probabilidade: 50,
     lead_id: '',
-    assigned_to: '',
+    responsavel_id: '',
   })
 
   // Drag state
@@ -159,7 +160,7 @@ export function PipelinePage() {
         servico: 'Recuperação Tributária e Teses Fiscais',
         probabilidade: 50,
         lead_id: '',
-        assigned_to: '',
+        responsavel_id: '',
       })
       loadPipelineData()
     } catch (err: any) {
@@ -333,12 +334,10 @@ export function PipelinePage() {
 
     const matchesUser =
       userFilter === 'all' ||
-      opp.assigned_to === userFilter ||
       opp.responsavel_id === userFilter ||
-      opp.expand?.lead_id?.assigned_to === userFilter ||
       opp.expand?.lead_id?.responsavel_id === userFilter
 
-    // Filtro de temperatura (copiado/adaptado de Leads.tsx)
+    // Filtro de temperatura
     const oppTemp = opp.expand?.lead_id?.temperature
     const matchesTemp =
       temperatureFilter === 'all' ||
@@ -347,22 +346,39 @@ export function PipelinePage() {
       (temperatureFilter === 'warm' && oppTemp === 'morno') ||
       (temperatureFilter === 'cold' && oppTemp === 'frio')
 
-    // Filtro de status (copiado/adaptado de Leads.tsx)
+    // Filtro de status canônico
     const leadStatus = opp.expand?.lead_id?.status
     const oppStatus = opp.status
     const matchesStatus =
       statusFilter === 'all' ||
       leadStatus === statusFilter ||
-      (statusFilter === 'Novo Lead' && (!leadStatus || leadStatus === 'Novo Lead')) ||
-      (statusFilter === 'Convertido / Ganho' && (oppStatus === 'won' || oppStatus === 'ganha')) ||
-      (statusFilter === 'Perdido' && (oppStatus === 'lost' || oppStatus === 'perdida'))
+      (statusFilter === 'novo' &&
+        (!leadStatus || leadStatus === 'novo' || leadStatus === 'Novo Lead')) ||
+      (statusFilter === 'qualificado_ia' &&
+        (leadStatus === 'qualificado_ia' || leadStatus === 'Qualificado')) ||
+      (statusFilter === 'em_contato' &&
+        (leadStatus === 'em_contato' || leadStatus === 'Em Atendimento')) ||
+      (statusFilter === 'reuniao_agendada' &&
+        (leadStatus === 'reuniao_agendada' || leadStatus === 'Reunião Agendada')) ||
+      (statusFilter === 'proposta_enviada' &&
+        (leadStatus === 'proposta_enviada' || leadStatus === 'Oportunidade Criada')) ||
+      (statusFilter === 'ganho' &&
+        (leadStatus === 'ganho' ||
+          leadStatus === 'Convertido / Ganho' ||
+          oppStatus === 'won' ||
+          oppStatus === 'ganha')) ||
+      (statusFilter === 'perdido' &&
+        (leadStatus === 'perdido' ||
+          leadStatus === 'Perdido' ||
+          oppStatus === 'lost' ||
+          oppStatus === 'perdida'))
 
-    // Filtro de origem (copiado/adaptado de Leads.tsx)
-    const leadSource = opp.expand?.lead_id?.source || opp.expand?.lead_id?.origem || opp.origem
+    // Filtro de origem
+    const leadOrigem = opp.expand?.lead_id?.origem || opp.origem
     const matchesSource =
       sourceFilter === 'all' ||
-      leadSource === sourceFilter ||
-      (sourceFilter === 'landing_page' && (leadSource === 'landing_page' || leadSource === 'Site'))
+      leadOrigem === sourceFilter ||
+      (sourceFilter === 'landing_page' && leadOrigem === 'landing_page')
 
     // Filtro de intervalo de data de criação (de / até) pelo campo created
     const createdDateStr = opp.expand?.lead_id?.created || opp.created
@@ -503,12 +519,17 @@ export function PipelinePage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos os Status</SelectItem>
-                <SelectItem value="Novo Lead">Novo Lead</SelectItem>
-                <SelectItem value="Em Atendimento">Em Atendimento</SelectItem>
-                <SelectItem value="Qualificado">Qualificado</SelectItem>
-                <SelectItem value="Oportunidade Criada">Oportunidade Criada</SelectItem>
-                <SelectItem value="Convertido / Ganho">Convertido / Ganho</SelectItem>
-                <SelectItem value="Perdido">Perdido</SelectItem>
+                <SelectItem value="novo">{LEAD_STATUS_LABELS.novo}</SelectItem>
+                <SelectItem value="qualificado_ia">{LEAD_STATUS_LABELS.qualificado_ia}</SelectItem>
+                <SelectItem value="em_contato">{LEAD_STATUS_LABELS.em_contato}</SelectItem>
+                <SelectItem value="reuniao_agendada">
+                  {LEAD_STATUS_LABELS.reuniao_agendada}
+                </SelectItem>
+                <SelectItem value="proposta_enviada">
+                  {LEAD_STATUS_LABELS.proposta_enviada}
+                </SelectItem>
+                <SelectItem value="ganho">{LEAD_STATUS_LABELS.ganho}</SelectItem>
+                <SelectItem value="perdido">{LEAD_STATUS_LABELS.perdido}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -664,7 +685,7 @@ export function PipelinePage() {
                           <div className="flex items-center gap-1">
                             <User className="h-3 w-3 text-muted-foreground" />
                             <span className="truncate max-w-[100px]">
-                              {opp.expand?.assigned_to?.name || 'Não atribuído'}
+                              {opp.expand?.responsavel_id?.name || 'Não atribuído'}
                             </span>
                           </div>
 
@@ -840,7 +861,7 @@ export function PipelinePage() {
                         <span className="text-muted-foreground text-[11px]">—</span>
                       )}
                     </td>
-                    <td className="p-3">{opp.expand?.assigned_to?.name || 'Geral'}</td>
+                    <td className="p-3">{opp.expand?.responsavel_id?.name || 'Geral'}</td>
                     <td className="p-3 pr-4 text-right">
                       <Button variant="ghost" size="sm" className="h-7 text-xs">
                         Abrir →
@@ -915,10 +936,8 @@ export function PipelinePage() {
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold">Advogado Responsável</Label>
               <Select
-                value={formData.assigned_to}
-                onValueChange={(val) =>
-                  setFormData({ ...formData, assigned_to: val, responsavel_id: val })
-                }
+                value={formData.responsavel_id}
+                onValueChange={(val) => setFormData({ ...formData, responsavel_id: val })}
               >
                 <SelectTrigger className="h-9 text-xs">
                   <SelectValue placeholder="Selecione o responsável..." />

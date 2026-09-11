@@ -89,6 +89,7 @@ import {
   TagRecord,
   CustomFieldRecord,
   MessageTemplateRecord,
+  LEAD_STATUS_LABELS,
 } from '@/types/platform'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
@@ -601,9 +602,9 @@ Seu objetivo é orientar o time interno (Comercial, Jurídico e Financeiro) com 
 - Telefone/WhatsApp: ${lead.whatsapp || lead.phone || 'Não informado'}
 - E-mail: ${lead.email || 'Não informado'}
 - Serviço / Interesse: ${lead.service || 'Assessoria Jurídica'}
-- Origem / Canal: ${lead.origem || lead.source || 'Meta Ads'} (Campanha: ${lead.campaign || 'Geral'})
+- Origem / Canal: ${lead.origem || 'Meta Ads'} (Campanha: ${lead.campaign || lead.conjunto || 'Geral'})
 - Equipe Responsável Atual: ${getTeamBadge(lead.team_owner || lead.team || 'comercial').label}
-- Temperatura / Status: ${lead.temperature || 'Quente'} / ${lead.status || 'Em Atendimento'}
+- Temperatura / Status: ${lead.temperature || 'Quente'} / ${LEAD_STATUS_LABELS[lead.status || ''] || lead.status || 'Em Atendimento'}
 - Valor Potencial Estimado: R$ ${Number(lead.potential_value || lead.valor_potencial || 0).toLocaleString('pt-BR')}
 - Observações Iniciais: ${lead.observacoes || 'Nenhuma'}
 
@@ -691,9 +692,9 @@ ${formattedHistory}
 
   // Permission rule for reassigning lead:
   // Admin and gestor can reassign any lead.
-  // Advogado/consultor can only reassign leads that belong to them (assigned_to === authUser.id || responsavel_id === authUser.id).
+  // Advogado/consultor can only reassign leads that belong to them (responsavel_id === authUser.id).
   const currentAuthId = user?.id || pb.authStore.record?.id || ''
-  const currentLeadAssigneeId = lead?.assigned_to || lead?.responsavel_id || ''
+  const currentLeadAssigneeId = lead?.responsavel_id || ''
   const canReassignLead =
     userRole === 'admin' ||
     userRole === 'gestor' ||
@@ -705,10 +706,7 @@ ${formattedHistory}
     if (actualNewUserId === currentLeadAssigneeId) return
 
     const oldUserId = currentLeadAssigneeId
-    const oldUserObj =
-      users.find((u) => u.id === oldUserId) ||
-      lead.expand?.assigned_to ||
-      lead.expand?.responsavel_id
+    const oldUserObj = users.find((u) => u.id === oldUserId) || lead.expand?.responsavel_id
     const newUserObj = users.find((u) => u.id === actualNewUserId)
     const fromName = oldUserObj?.name || (oldUserId ? 'Usuário Anterior' : 'Sem responsável')
     const toName = newUserObj?.name || (actualNewUserId ? 'Novo Usuário' : 'Não atribuído')
@@ -721,11 +719,10 @@ ${formattedHistory}
       const updatedLead = await pb.collection('leads').update<LeadRecord>(
         id,
         {
-          assigned_to: actualNewUserId || null,
           responsavel_id: actualNewUserId || null,
         },
         {
-          expand: 'assigned_to,responsavel_id,empresa_id',
+          expand: 'responsavel_id,empresa_id',
         },
       )
 
@@ -741,12 +738,10 @@ ${formattedHistory}
           resource_type: 'leads',
           resource_id: id,
           old_value: {
-            assigned_to: oldUserId || null,
             responsavel_id: oldUserId || null,
             assigned_name: fromName,
           },
           new_value: {
-            assigned_to: actualNewUserId || null,
             responsavel_id: actualNewUserId || null,
             assigned_name: toName,
             details: {
@@ -990,11 +985,15 @@ ${formattedHistory}
           value: wonData.value,
           servico: wonData.servico,
           lead_id: id,
+          responsavel_id: lead?.responsavel_id || undefined,
           status: 'open',
         })
         targetOppId = opp.id
       }
       await CrmService.markOpportunityWon(targetOppId, wonData)
+      await CrmService.updateLead(id, {
+        status: 'ganho',
+      })
       toast({ title: 'Parabéns! Lead convertido em CLIENTE contratado!' })
       setWonModalOpen(false)
       navigate('/clientes')
@@ -1038,7 +1037,7 @@ ${formattedHistory}
         )
       }
       await CrmService.updateLead(id, {
-        status: 'Perdido',
+        status: 'perdido',
         observacoes:
           (lead?.observacoes || '') +
           `\n[MOTIVO PERDA]: ${lostData.loss_reason} - ${lostData.observacoes}`,
@@ -1061,7 +1060,7 @@ ${formattedHistory}
       id: 'lead_create',
       type: 'creation',
       title: 'Lead Jurídico Captado',
-      description: `Lead entrou via ${lead.origem || lead.source || 'Meta Ads'}${lead.campaign ? ` (Campanha: ${lead.campaign})` : ''}. Valor Potencial: R$ ${Number(lead.potential_value || lead.valor_potencial || 0).toLocaleString('pt-BR')}`,
+      description: `Lead entrou via ${lead.origem || 'Meta Ads'}${lead.campaign || lead.conjunto ? ` (Campanha: ${lead.campaign || lead.conjunto})` : ''}. Valor Potencial: R$ ${Number(lead.potential_value || lead.valor_potencial || 0).toLocaleString('pt-BR')}`,
       date: lead.created || '',
       badge: lead.temperature,
     })
@@ -1105,7 +1104,7 @@ ${formattedHistory}
       title: `✅ Tarefa: ${t.titulo || (t as any).title}`,
       description: `Status: ${t.status || 'pendente'} • ${t.tipo ? `Tipo: ${t.tipo} • ` : ''}Agendado: ${t.data || (t as any).due_date || 'Data não definida'} ${t.horario || ''}`,
       date: t.created || '',
-      author: (t as any).expand?.assigned_to?.name || (t as any).expand?.responsavel_id?.name,
+      author: (t as any).expand?.responsavel_id?.name,
     })
   })
 
@@ -1139,7 +1138,7 @@ ${formattedHistory}
     )
   }
 
-  const currentAssignedUserId = lead.assigned_to || lead.responsavel_id || '_unassigned_'
+  const currentAssignedUserId = lead.responsavel_id || '_unassigned_'
 
   return (
     <div className="space-y-6">
@@ -1163,7 +1162,9 @@ ${formattedHistory}
                 <Badge className="bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 gap-1">
                   <Flame className="h-3 w-3" /> {lead.temperature || 'Quente'}
                 </Badge>
-                <Badge variant="outline">{lead.status || 'Em Atendimento'}</Badge>
+                <Badge variant="outline">
+                  {LEAD_STATUS_LABELS[lead.status || ''] || lead.status || 'Em Atendimento'}
+                </Badge>
                 {(() => {
                   const currentTeam = lead.team_owner || lead.team || 'comercial'
                   const tBadge = getTeamBadge(currentTeam)
@@ -1176,7 +1177,7 @@ ${formattedHistory}
               </div>
               <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-3 flex-wrap">
                 <span>
-                  Origem: <strong>{lead.origem || lead.source || 'Meta Ads'}</strong>
+                  Origem: <strong>{lead.origem || 'Meta Ads'}</strong>
                 </span>
                 <span>•</span>
                 <span>
@@ -1209,9 +1210,7 @@ ${formattedHistory}
                 <span className="text-xs font-semibold text-foreground leading-tight mt-0.5">
                   {updatingAssignee
                     ? 'Atualizando...'
-                    : lead.expand?.assigned_to?.name ||
-                      lead.expand?.responsavel_id?.name ||
-                      'Não atribuído'}
+                    : lead.expand?.responsavel_id?.name || 'Não atribuído'}
                 </span>
               </div>
             </div>
@@ -1708,7 +1707,7 @@ ${formattedHistory}
                 <span className="font-medium flex items-center gap-1">
                   {lead.origem === 'landing_page'
                     ? 'Landing Page'
-                    : lead.channel || lead.source || 'Meta Ads'}
+                    : lead.channel || lead.origem || 'Meta Ads'}
                   {lead.origem === 'landing_page' && (
                     <Badge
                       variant="outline"

@@ -95,6 +95,32 @@ export interface PessoaRecord {
   updated?: string
 }
 
+export type LeadStatusCode =
+  | 'novo'
+  | 'qualificado_ia'
+  | 'em_contato'
+  | 'reuniao_agendada'
+  | 'proposta_enviada'
+  | 'ganho'
+  | 'perdido'
+
+export const LEAD_STATUS_LABELS: Record<string, string> = {
+  novo: 'Novo Lead',
+  qualificado_ia: 'Qualificado IA',
+  em_contato: 'Em Contato',
+  reuniao_agendada: 'Reunião Agendada',
+  proposta_enviada: 'Proposta Enviada',
+  ganho: 'Ganho',
+  perdido: 'Perdido',
+  // retrocompatibilidade para leitura visual de dados legados
+  'Novo Lead': 'Novo Lead',
+  'Em Atendimento': 'Em Contato',
+  Qualificado: 'Qualificado IA',
+  'Oportunidade Criada': 'Proposta Enviada',
+  'Convertido / Ganho': 'Ganho',
+  Perdido: 'Perdido',
+}
+
 export interface LeadRecord {
   id: string
   tenant_id: string
@@ -135,7 +161,7 @@ export interface LeadRecord {
   team_owner?: 'comercial' | 'juridico' | 'financeiro' | string
   score?: number
   temperature?: 'hot' | 'warm' | 'cold' | 'frio' | 'morno' | 'quente' | 'muito_quente'
-  status?: string
+  status?: LeadStatusCode | string
   entry_date?: string
   last_contact?: string
   next_activity?: string

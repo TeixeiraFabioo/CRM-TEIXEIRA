@@ -3,7 +3,7 @@ import pb from '@/lib/pocketbase/client'
 export interface WhatsAppConfig {
   id?: string
   provider: 'whatsapp'
-  status: 'active' | 'inactive' | 'error'
+  status: 'active' | 'inactive' | 'error' | string
   is_active: boolean
   phone_number_id?: string
   waba_id?: string
@@ -11,6 +11,7 @@ export interface WhatsAppConfig {
   verified_name?: string
   quality_rating?: string
   verify_token?: string
+  error_message?: string
   created?: string
   updated?: string
   last_sync?: string
@@ -58,8 +59,9 @@ export class WhatsAppService {
       if (list.items.length > 0 && list.items[0].is_active !== false) {
         const item = list.items[0]
         const cfg = (item.config_json || item.config || {}) as any
+        const errorMessage = item.error_message || cfg.error_message || ''
         return {
-          connected: true,
+          connected: item.status === 'active' && !errorMessage,
           config: {
             id: item.id,
             provider: 'whatsapp',
@@ -72,6 +74,7 @@ export class WhatsAppService {
             quality_rating: cfg.quality_rating || 'UNKNOWN',
             verify_token:
               item.webhook_secret || cfg.verify_token || 'skip_hub_crm_whatsapp_verify_token',
+            error_message: errorMessage,
             updated: item.updated,
             created: item.created,
           },

@@ -67,13 +67,14 @@ import { CrmService } from '@/services/crm'
 import pb from '@/lib/pocketbase/client'
 import {
   LeadRecord,
+  TagRecord,
   UserRecord,
   ServiceRecord,
   EmpresaRecord,
   SlaConfigRecord,
-  TagRecord,
+  LeadStatusCode,
+  LEAD_STATUS_LABELS,
 } from '@/types/platform'
-
 export function LeadsPage() {
   const { tenant, userRole } = useTenant()
   const { toast } = useToast()
@@ -98,14 +99,14 @@ export function LeadsPage() {
   const [tagModalOpen, setTagModalOpen] = useState(false)
   const [selectedTagId, setSelectedTagId] = useState('')
   const [statusModalOpen, setStatusModalOpen] = useState(false)
-  const [selectedBulkStatus, setSelectedBulkStatus] = useState('Novo Lead')
+  const [selectedBulkStatus, setSelectedBulkStatus] = useState<LeadStatusCode>('novo')
   const [bulkDeleteAlertOpen, setBulkDeleteAlertOpen] = useState(false)
   const [bulkActionLoading, setBulkActionLoading] = useState(false)
 
   // Filters
   const [searchTerm, setSearchTerm] = useState('')
   const [temperatureFilter, setTemperatureFilter] = useState('all')
-  const [statusFilter, setStatusFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState<string>('all')
   const [sourceFilter, setSourceFilter] = useState('all')
   const [responsibleFilter, setResponsibleFilter] = useState('all')
 
@@ -123,9 +124,13 @@ export function LeadsPage() {
     estado: 'SP',
     cpf_cnpj: '',
     pessoa_fisica_juridica: 'PJ',
-    source: 'Meta Ads',
+    origem: 'Meta Ads',
+    conjunto: '',
+    anuncio: '',
+    team_owner: 'comercial',
+    responsavel_id: '',
     temperature: 'hot',
-    status: 'Novo Lead',
+    status: 'novo',
     service: 'Recuperação Tributária e Teses Fiscais',
     potential_value: 25000,
     observacoes: '',
@@ -222,9 +227,13 @@ export function LeadsPage() {
         estado: 'SP',
         cpf_cnpj: '',
         pessoa_fisica_juridica: 'PJ',
-        source: 'Meta Ads',
+        origem: 'Meta Ads',
+        conjunto: '',
+        anuncio: '',
+        team_owner: 'comercial',
+        responsavel_id: '',
         temperature: 'hot',
-        status: 'Novo Lead',
+        status: 'novo',
         service: 'Recuperação Tributária e Teses Fiscais',
         potential_value: 25000,
         observacoes: '',
@@ -300,7 +309,6 @@ export function LeadsPage() {
       await Promise.all(
         selectedLeads.map((id) =>
           pb.collection('leads').update(id, {
-            assigned_to: selectedAssignee,
             responsavel_id: selectedAssignee,
           }),
         ),
@@ -311,7 +319,7 @@ export function LeadsPage() {
       if (tenant?.id) {
         await CrmService.logAudit(tenant.id, 'bulk_reassign', 'leads', undefined, null, {
           count: selectedLeads.length,
-          assigned_to: selectedAssignee,
+          responsavel_id: selectedAssignee,
         })
       }
       setSelectedLeads([])
@@ -377,12 +385,13 @@ export function LeadsPage() {
       await Promise.all(
         selectedLeads.map((id) =>
           pb.collection('leads').update(id, {
-            status: selectedBulkStatus,
+            status: selectedBulkStatus, // código canônico: 'novo'|'qualificado_ia'|'em_contato'|'reuniao_agendada'|'proposta_enviada'|'ganho'|'perdido'
           }),
         ),
       )
+      const label = LEAD_STATUS_LABELS[selectedBulkStatus] || selectedBulkStatus
       toast({
-        title: `Status de ${selectedLeads.length} leads atualizado para "${selectedBulkStatus}"!`,
+        title: `Status de ${selectedLeads.length} leads atualizado para "${label}"!`,
       })
       if (tenant?.id) {
         await CrmService.logAudit(tenant.id, 'bulk_status_change', 'leads', undefined, null, {
@@ -430,21 +439,22 @@ export function LeadsPage() {
     }
 
     const rows = filteredLeads.map((l) => {
-      const respName =
-        l.expand?.assigned_to?.name || l.expand?.responsavel_id?.name || 'Não atribuído'
+      const respName = l.expand?.responsavel_id?.name || 'Não atribuído'
       const createdDate = l.created
         ? new Date(l.created).toLocaleDateString('pt-BR') +
           ' ' +
           new Date(l.created).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
         : ''
 
+      const friendlyStatus = (l.status && LEAD_STATUS_LABELS[l.status]) || l.status || 'Novo Lead'
+
       return [
         escapeCsv(l.name),
         escapeCsv(l.company),
         escapeCsv(l.email),
         escapeCsv(l.phone || l.whatsapp),
-        escapeCsv(l.source || l.origem),
-        escapeCsv(l.status),
+        escapeCsv(l.origem),
+        escapeCsv(friendlyStatus),
         escapeCsv(l.temperature),
         escapeCsv(respName),
         escapeCsv(createdDate),
@@ -484,13 +494,20 @@ export function LeadsPage() {
       (temperatureFilter === 'warm' && lead.temperature === 'morno') ||
       (temperatureFilter === 'cold' && lead.temperature === 'frio')
 
-    const matchesStatus = statusFilter === 'all' || lead.status === statusFilter
-    const matchesSource =
-      sourceFilter === 'all' || lead.source === sourceFilter || lead.origem === sourceFilter
-    const matchesResp =
-      responsibleFilter === 'all' ||
-      lead.assigned_to === responsibleFilter ||
-      lead.responsavel_id === responsibleFilter
+    const matchesStatus =
+      statusFilter === 'all' ||
+      lead.status === statusFilter ||
+      (statusFilter === 'novo' && (!lead.status || lead.status === 'Novo Lead')) ||
+      (statusFilter === 'qualificado_ia' && lead.status === 'Qualificado') ||
+      (statusFilter === 'em_contato' && lead.status === 'Em Atendimento') ||
+      (statusFilter === 'reuniao_agendada' && lead.status === 'Reunião Agendada') ||
+      (statusFilter === 'proposta_enviada' && lead.status === 'Oportunidade Criada') ||
+      (statusFilter === 'ganho' && lead.status === 'Convertido / Ganho') ||
+      (statusFilter === 'perdido' && lead.status === 'Perdido')
+
+    const matchesSource = sourceFilter === 'all' || lead.origem === sourceFilter
+
+    const matchesResp = responsibleFilter === 'all' || lead.responsavel_id === responsibleFilter
 
     return matchesSearch && matchesTemp && matchesStatus && matchesSource && matchesResp
   })
@@ -697,12 +714,17 @@ export function LeadsPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos os Status</SelectItem>
-                <SelectItem value="Novo Lead">Novo Lead</SelectItem>
-                <SelectItem value="Em Atendimento">Em Atendimento</SelectItem>
-                <SelectItem value="Qualificado">Qualificado</SelectItem>
-                <SelectItem value="Oportunidade Criada">Oportunidade Criada</SelectItem>
-                <SelectItem value="Convertido / Ganho">Convertido / Ganho</SelectItem>
-                <SelectItem value="Perdido">Perdido</SelectItem>
+                <SelectItem value="novo">{LEAD_STATUS_LABELS.novo}</SelectItem>
+                <SelectItem value="qualificado_ia">{LEAD_STATUS_LABELS.qualificado_ia}</SelectItem>
+                <SelectItem value="em_contato">{LEAD_STATUS_LABELS.em_contato}</SelectItem>
+                <SelectItem value="reuniao_agendada">
+                  {LEAD_STATUS_LABELS.reuniao_agendada}
+                </SelectItem>
+                <SelectItem value="proposta_enviada">
+                  {LEAD_STATUS_LABELS.proposta_enviada}
+                </SelectItem>
+                <SelectItem value="ganho">{LEAD_STATUS_LABELS.ganho}</SelectItem>
+                <SelectItem value="perdido">{LEAD_STATUS_LABELS.perdido}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -811,21 +833,29 @@ export function LeadsPage() {
                     <td className="p-3.5">
                       <div className="font-medium text-foreground flex items-center gap-1.5 flex-wrap">
                         <span>
-                          {lead.origem === 'landing_page' || lead.source === 'landing_page'
+                          {lead.origem === 'landing_page'
                             ? 'Landing Page'
-                            : lead.origem || lead.source || 'Meta Ads'}
+                            : lead.origem || 'Meta Ads'}
                         </span>
-                        {(lead.origem === 'landing_page' || lead.source === 'landing_page') && (
+                        {lead.origem === 'landing_page' && (
                           <span className="text-[9px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 font-semibold border border-amber-500/20">
                             Web
                           </span>
                         )}
                       </div>
-                      {(lead.utm_source || lead.utm_campaign || lead.campaign) && (
+                      {(lead.utm_source ||
+                        lead.utm_campaign ||
+                        lead.campaign ||
+                        lead.conjunto ||
+                        lead.anuncio) && (
                         <div className="text-[10px] text-muted-foreground truncate max-w-[140px] mt-0.5 font-mono">
                           {lead.utm_source
                             ? `utm: ${lead.utm_source}`
-                            : lead.campaign || lead.utm_campaign}
+                            : lead.conjunto
+                              ? `conj: ${lead.conjunto}`
+                              : lead.anuncio
+                                ? `ad: ${lead.anuncio}`
+                                : lead.campaign || lead.utm_campaign}
                         </div>
                       )}
                     </td>
@@ -843,7 +873,9 @@ export function LeadsPage() {
                     {/* Status */}
                     <td className="p-3.5">
                       <Badge variant="outline" className="font-medium text-[11px]">
-                        {lead.status || 'Novo Lead'}
+                        {(lead.status && LEAD_STATUS_LABELS[lead.status]) ||
+                          lead.status ||
+                          LEAD_STATUS_LABELS.novo}
                       </Badge>
                     </td>
 
@@ -856,9 +888,7 @@ export function LeadsPage() {
 
                     {/* Responsável */}
                     <td className="p-3.5 text-muted-foreground">
-                      {lead.expand?.assigned_to?.name ||
-                        lead.expand?.responsavel_id?.name ||
-                        'Não atribuído'}
+                      {lead.expand?.responsavel_id?.name || 'Não atribuído'}
                     </td>
 
                     {/* Data */}
@@ -1027,21 +1057,31 @@ export function LeadsPage() {
             </p>
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold">Novo Status</Label>
-              <Select value={selectedBulkStatus} onValueChange={setSelectedBulkStatus}>
+              <Select
+                value={selectedBulkStatus}
+                onValueChange={(val: LeadStatusCode) => setSelectedBulkStatus(val)}
+              >
                 <SelectTrigger className="h-9 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Novo Lead">Novo Lead</SelectItem>
-                  <SelectItem value="Em Atendimento">Em Atendimento</SelectItem>
-                  <SelectItem value="Qualificado">Qualificado</SelectItem>
-                  <SelectItem value="Oportunidade Criada">Oportunidade Criada</SelectItem>
-                  <SelectItem value="Convertido / Ganho">Convertido / Ganho</SelectItem>
-                  <SelectItem value="Perdido">Perdido</SelectItem>
+                  <SelectItem value="novo">{LEAD_STATUS_LABELS.novo}</SelectItem>
+                  <SelectItem value="qualificado_ia">
+                    {LEAD_STATUS_LABELS.qualificado_ia}
+                  </SelectItem>
+                  <SelectItem value="em_contato">{LEAD_STATUS_LABELS.em_contato}</SelectItem>
+                  <SelectItem value="reuniao_agendada">
+                    {LEAD_STATUS_LABELS.reuniao_agendada}
+                  </SelectItem>
+                  <SelectItem value="proposta_enviada">
+                    {LEAD_STATUS_LABELS.proposta_enviada}
+                  </SelectItem>
+                  <SelectItem value="ganho">{LEAD_STATUS_LABELS.ganho}</SelectItem>
+                  <SelectItem value="perdido">{LEAD_STATUS_LABELS.perdido}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-          </div>
+          </div>{' '}
           <DialogFooter className="pt-2">
             <Button
               variant="outline"
@@ -1188,8 +1228,8 @@ export function LeadsPage() {
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold">Origem do Lead</Label>
                 <Select
-                  value={formData.source || formData.origem}
-                  onValueChange={(val) => setFormData({ ...formData, source: val, origem: val })}
+                  value={formData.origem}
+                  onValueChange={(val) => setFormData({ ...formData, origem: val })}
                 >
                   <SelectTrigger className="h-9 text-xs">
                     <SelectValue />
@@ -1203,6 +1243,43 @@ export function LeadsPage() {
                     <SelectItem value="Outro">Outro Canal</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Equipe Responsável</Label>
+                <Select
+                  value={formData.team_owner || 'comercial'}
+                  onValueChange={(val) => setFormData({ ...formData, team_owner: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="comercial">Comercial / Vendas</SelectItem>
+                    <SelectItem value="juridico">Jurídico / Advogados</SelectItem>
+                    <SelectItem value="financeiro">Financeiro / Controladoria</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Conjunto de Anúncios</Label>
+                <Input
+                  value={formData.conjunto || ''}
+                  onChange={(e) => setFormData({ ...formData, conjunto: e.target.value })}
+                  placeholder="Ex: Conjunto Retargeting Tributário"
+                  className="h-9 text-xs"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Anúncio Específico</Label>
+                <Input
+                  value={formData.anuncio || ''}
+                  onChange={(e) => setFormData({ ...formData, anuncio: e.target.value })}
+                  placeholder="Ex: Criativo 02 - Carrossel"
+                  className="h-9 text-xs"
+                />
               </div>
 
               <div className="space-y-1.5">
@@ -1261,10 +1338,8 @@ export function LeadsPage() {
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold">Responsável / Advogado</Label>
                 <Select
-                  value={formData.assigned_to || formData.responsavel_id}
-                  onValueChange={(val) =>
-                    setFormData({ ...formData, assigned_to: val, responsavel_id: val })
-                  }
+                  value={formData.responsavel_id || ''}
+                  onValueChange={(val) => setFormData({ ...formData, responsavel_id: val })}
                 >
                   <SelectTrigger className="h-9 text-xs">
                     <SelectValue placeholder="Selecione um advogado..." />

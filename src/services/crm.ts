@@ -616,7 +616,7 @@ export const CrmService = {
           .collection('opportunities')
           .update(id, { customer_id: customerId, cliente_id: customerId })
         // Mark lead as converted
-        await pb.collection('leads').update(lead.id, { status: 'Convertido / Ganho' })
+        await pb.collection('leads').update(lead.id, { status: 'ganho' })
       } catch (err) {
         console.warn('Auto customer creation error', err)
       }
@@ -912,7 +912,7 @@ export const CrmService = {
   // --- CALENDLY INTEGRATION HELPERS ---
   async getCalendlyConfig(
     tenantId: string,
-  ): Promise<{ connected: boolean; config: any; scheduling_url?: string }> {
+  ): Promise<{ connected: boolean; config: any; scheduling_url?: string; error_message?: string }> {
     try {
       const list = await pb.collection('integration_configs').getList(1, 1, {
         filter: `tenant_id = "${tenantId}" && provider = "calendly"`,
@@ -920,11 +920,16 @@ export const CrmService = {
       if (list.items.length > 0) {
         const item = list.items[0]
         const cfg = (item.config_json || item.config || {}) as any
-        const isConnected = item.status === 'active' && item.is_active !== false
+        const errorMessage = item.error_message || cfg.error_message || ''
+        const isConnected = item.status === 'active' && item.is_active !== false && !errorMessage
         return {
           connected: isConnected,
-          config: item,
+          config: {
+            ...item,
+            error_message: errorMessage || item.error_message,
+          },
           scheduling_url: cfg.scheduling_url || '',
+          error_message: errorMessage,
         }
       }
       return { connected: false, config: null, scheduling_url: '' }
@@ -1094,17 +1099,25 @@ export const CrmService = {
   },
 
   // --- GOOGLE MEET INTEGRATION HELPERS ---
-  async getGoogleMeetConfig(tenantId: string): Promise<{ connected: boolean; config: any }> {
+  async getGoogleMeetConfig(
+    tenantId: string,
+  ): Promise<{ connected: boolean; config: any; error_message?: string }> {
     try {
       const list = await pb.collection('integration_configs').getList(1, 1, {
         filter: `tenant_id = "${tenantId}" && provider = "google_meet"`,
       })
       if (list.items.length > 0) {
         const item = list.items[0]
-        const isConnected = item.status === 'active' && item.is_active !== false
+        const cfg = (item.config_json || item.config || {}) as any
+        const errorMessage = item.error_message || cfg.error_message || ''
+        const isConnected = item.status === 'active' && item.is_active !== false && !errorMessage
         return {
           connected: isConnected,
-          config: item,
+          config: {
+            ...item,
+            error_message: errorMessage || item.error_message,
+          },
+          error_message: errorMessage,
         }
       }
       return { connected: false, config: null }
@@ -1237,15 +1250,26 @@ export const CrmService = {
   },
 
   // --- ZAPSIGN INTEGRATION HELPERS ---
-  async getZapSignConfig(tenantId: string): Promise<{ connected: boolean; config: any }> {
+  async getZapSignConfig(
+    tenantId: string,
+  ): Promise<{ connected: boolean; config: any; error_message?: string }> {
     try {
       const list = await pb.collection('integration_configs').getList(1, 1, {
         filter: `tenant_id = "${tenantId}" && provider = "zapsign"`,
       })
       if (list.items.length > 0) {
         const item = list.items[0]
-        const isConnected = item.status === 'active' && item.is_active !== false
-        return { connected: isConnected, config: item }
+        const cfg = (item.config_json || item.config || {}) as any
+        const errorMessage = item.error_message || cfg.error_message || ''
+        const isConnected = item.status === 'active' && item.is_active !== false && !errorMessage
+        return {
+          connected: isConnected,
+          config: {
+            ...item,
+            error_message: errorMessage || item.error_message,
+          },
+          error_message: errorMessage,
+        }
       }
       return { connected: false, config: null }
     } catch (e) {

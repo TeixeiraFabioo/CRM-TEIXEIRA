@@ -77,8 +77,7 @@ export function TrashPage() {
             title: l.name,
             subtitle: l.company || l.email || l.phone,
             deletedAt: l.updated || l.created || new Date().toISOString(),
-            deletedBy:
-              l.expand?.assigned_to?.name || l.expand?.responsavel_id?.name || 'Sistema / Usuário',
+            deletedBy: l.expand?.responsavel_id?.name || 'Sistema / Usuário',
             raw: l,
           }),
         ),
@@ -102,8 +101,7 @@ export function TrashPage() {
             title: o.title,
             subtitle: `R$ ${Number(o.value || 0).toLocaleString('pt-BR')}`,
             deletedAt: o.updated || o.created || new Date().toISOString(),
-            deletedBy:
-              o.expand?.assigned_to?.name || o.expand?.responsavel_id?.name || 'Sistema / Usuário',
+            deletedBy: o.expand?.responsavel_id?.name || 'Sistema / Usuário',
             raw: o,
           }),
         ),
