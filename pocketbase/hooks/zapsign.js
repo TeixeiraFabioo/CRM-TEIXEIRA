@@ -24,9 +24,14 @@ onRecordCreate((e) => {
     if (!token && cfg.api_token) token = cfg.api_token
     if (!token && cfg.token) token = cfg.token
 
+    if (token && !record.getString('api_token')) {
+      record.set('api_token', token)
+    }
+
     if (!token) {
       record.set('status', 'inactive')
       record.set('is_active', false)
+      record.set('error_message', '')
       return e.next()
     }
 
@@ -50,6 +55,7 @@ onRecordCreate((e) => {
       if (testRes.statusCode === 200) {
         record.set('status', 'active')
         record.set('is_active', true)
+        record.set('error_message', '')
         const nowIso = new Date().toISOString()
         const accountData = testRes.json || {}
         const updatedCfg = Object.assign({}, cfg, {
@@ -85,6 +91,7 @@ onRecordCreate((e) => {
           (errMessage || 'Erro de autenticação')
         record.set('status', 'error')
         record.set('is_active', false)
+        record.set('error_message', String(errDetail))
         const updatedCfg = Object.assign({}, cfg, {
           provider: 'zapsign',
           sandbox: sandbox,
@@ -94,13 +101,15 @@ onRecordCreate((e) => {
         record.set('config', updatedCfg)
       }
     } catch (httpErr) {
+      const connErr =
+        'Falha de conexão com a API do ZapSign: ' + (httpErr.message || String(httpErr))
       record.set('status', 'error')
       record.set('is_active', false)
+      record.set('error_message', connErr)
       const updatedCfg = Object.assign({}, cfg, {
         provider: 'zapsign',
         sandbox: sandbox,
-        error_message:
-          'Falha de conexão com a API do ZapSign: ' + (httpErr.message || String(httpErr)),
+        error_message: connErr,
       })
       record.set('config_json', updatedCfg)
       record.set('config', updatedCfg)
@@ -126,9 +135,14 @@ onRecordUpdate((e) => {
     if (!token && cfg.api_token) token = cfg.api_token
     if (!token && cfg.token) token = cfg.token
 
+    if (token && !record.getString('api_token')) {
+      record.set('api_token', token)
+    }
+
     if (!token) {
       record.set('status', 'inactive')
       record.set('is_active', false)
+      record.set('error_message', '')
       return e.next()
     }
 
@@ -152,6 +166,7 @@ onRecordUpdate((e) => {
       if (testRes.statusCode === 200) {
         record.set('status', 'active')
         record.set('is_active', true)
+        record.set('error_message', '')
         const nowIso = new Date().toISOString()
         const accountData = testRes.json || {}
         const updatedCfg = Object.assign({}, cfg, {
@@ -188,6 +203,7 @@ onRecordUpdate((e) => {
           (errMessage || 'Erro de autenticação')
         record.set('status', 'error')
         record.set('is_active', false)
+        record.set('error_message', String(errDetail))
         const updatedCfg = Object.assign({}, cfg, {
           provider: 'zapsign',
           sandbox: sandbox,
@@ -198,13 +214,15 @@ onRecordUpdate((e) => {
         record.set('config', updatedCfg)
       }
     } catch (httpErr) {
+      const connErr =
+        'Falha de conexão com a API do ZapSign: ' + (httpErr.message || String(httpErr))
       record.set('status', 'error')
       record.set('is_active', false)
+      record.set('error_message', connErr)
       const updatedCfg = Object.assign({}, cfg, {
         provider: 'zapsign',
         sandbox: sandbox,
-        error_message:
-          'Falha de conexão com a API do ZapSign: ' + (httpErr.message || String(httpErr)),
+        error_message: connErr,
         test_requested: false,
       })
       record.set('config_json', updatedCfg)

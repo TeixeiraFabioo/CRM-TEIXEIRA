@@ -23,9 +23,14 @@ onRecordCreate((e) => {
     if (!token && cfg.apiKey) token = cfg.apiKey
     if (!token && cfg.token) token = cfg.token
 
+    if (token && !record.getString('api_token')) {
+      record.set('api_token', token)
+    }
+
     if (!token) {
       record.set('status', 'inactive')
       record.set('is_active', false)
+      record.set('error_message', '')
       return e.next()
     }
 
@@ -47,6 +52,7 @@ onRecordCreate((e) => {
 
         record.set('status', 'active')
         record.set('is_active', true)
+        record.set('error_message', '')
         const updatedCfg = Object.assign({}, cfg, {
           provider: 'calendly',
           scheduling_url: schedulingUrl,
@@ -59,12 +65,25 @@ onRecordCreate((e) => {
         record.set('config_json', updatedCfg)
         record.set('config', updatedCfg)
       } else {
+        let errMessage = ''
+        const resJson = testRes.json || {}
+        if (resJson.message) {
+          errMessage = resJson.message
+        } else if (resJson.title) {
+          errMessage = resJson.title
+        } else {
+          try {
+            errMessage = testRes.raw || testRes.body || JSON.stringify(resJson)
+          } catch (_) {}
+        }
         const errDetail =
-          (testRes.json &&
-            (testRes.json.message || testRes.json.title || JSON.stringify(testRes.json))) ||
-          'Token inválido ou recusado pela API do Calendly (HTTP ' + testRes.statusCode + ')'
+          'Erro na API do Calendly (HTTP ' +
+          testRes.statusCode +
+          '): ' +
+          (errMessage || 'Token inválido')
         record.set('status', 'error')
         record.set('is_active', false)
+        record.set('error_message', String(errDetail))
         const updatedCfg = Object.assign({}, cfg, {
           provider: 'calendly',
           error_message: String(errDetail),
@@ -73,12 +92,14 @@ onRecordCreate((e) => {
         record.set('config', updatedCfg)
       }
     } catch (httpErr) {
+      const connErr =
+        'Falha de conexão com a API do Calendly: ' + (httpErr.message || String(httpErr))
       record.set('status', 'error')
       record.set('is_active', false)
+      record.set('error_message', connErr)
       const updatedCfg = Object.assign({}, cfg, {
         provider: 'calendly',
-        error_message:
-          'Falha de conexão com a API do Calendly: ' + (httpErr.message || String(httpErr)),
+        error_message: connErr,
       })
       record.set('config_json', updatedCfg)
       record.set('config', updatedCfg)
@@ -106,9 +127,14 @@ onRecordUpdate((e) => {
     if (!token && cfg.apiKey) token = cfg.apiKey
     if (!token && cfg.token) token = cfg.token
 
+    if (token && !record.getString('api_token')) {
+      record.set('api_token', token)
+    }
+
     if (!token) {
       record.set('status', 'inactive')
       record.set('is_active', false)
+      record.set('error_message', '')
       return e.next()
     }
 
@@ -130,6 +156,7 @@ onRecordUpdate((e) => {
 
         record.set('status', 'active')
         record.set('is_active', true)
+        record.set('error_message', '')
         const updatedCfg = Object.assign({}, cfg, {
           provider: 'calendly',
           scheduling_url: schedulingUrl,
@@ -143,12 +170,25 @@ onRecordUpdate((e) => {
         record.set('config_json', updatedCfg)
         record.set('config', updatedCfg)
       } else {
+        let errMessage = ''
+        const resJson = testRes.json || {}
+        if (resJson.message) {
+          errMessage = resJson.message
+        } else if (resJson.title) {
+          errMessage = resJson.title
+        } else {
+          try {
+            errMessage = testRes.raw || testRes.body || JSON.stringify(resJson)
+          } catch (_) {}
+        }
         const errDetail =
-          (testRes.json &&
-            (testRes.json.message || testRes.json.title || JSON.stringify(testRes.json))) ||
-          'Token inválido ou recusado pela API do Calendly (HTTP ' + testRes.statusCode + ')'
+          'Erro na API do Calendly (HTTP ' +
+          testRes.statusCode +
+          '): ' +
+          (errMessage || 'Token inválido')
         record.set('status', 'error')
         record.set('is_active', false)
+        record.set('error_message', String(errDetail))
         const updatedCfg = Object.assign({}, cfg, {
           provider: 'calendly',
           error_message: String(errDetail),
@@ -158,12 +198,14 @@ onRecordUpdate((e) => {
         record.set('config', updatedCfg)
       }
     } catch (httpErr) {
+      const connErr =
+        'Falha de conexão com a API do Calendly: ' + (httpErr.message || String(httpErr))
       record.set('status', 'error')
       record.set('is_active', false)
+      record.set('error_message', connErr)
       const updatedCfg = Object.assign({}, cfg, {
         provider: 'calendly',
-        error_message:
-          'Falha de conexão com a API do Calendly: ' + (httpErr.message || String(httpErr)),
+        error_message: connErr,
         test_requested: false,
       })
       record.set('config_json', updatedCfg)

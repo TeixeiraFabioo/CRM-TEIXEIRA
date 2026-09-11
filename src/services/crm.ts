@@ -73,12 +73,12 @@ export const CrmService = {
   // --- LEADS ---
   async getLeads(tenantId: string, filterStr?: string): Promise<LeadRecord[]> {
     try {
-      let filter = `tenant_id = "${tenantId}" && (soft_delete = false || soft_delete = null) && (deleted = false || deleted = null)`
+      let filter = `tenant_id = "${tenantId}" && (soft_delete = false || soft_delete = null)`
       if (filterStr) filter += ` && (${filterStr})`
       const list = await pb.collection('leads').getFullList<LeadRecord>({
         filter,
         sort: '-created',
-        expand: 'assigned_to,responsavel_id,empresa_id',
+        expand: 'responsavel_id,empresa_id',
       })
       return list
     } catch (e) {
@@ -90,7 +90,7 @@ export const CrmService = {
   async getLeadById(id: string): Promise<LeadRecord | null> {
     try {
       return await pb.collection('leads').getOne<LeadRecord>(id, {
-        expand: 'assigned_to,responsavel_id,empresa_id',
+        expand: 'responsavel_id,empresa_id',
       })
     } catch (e) {
       console.warn('Failed to get lead by id', e)
@@ -101,18 +101,30 @@ export const CrmService = {
   async createLead(tenantId: string, data: Partial<LeadRecord>): Promise<LeadRecord> {
     // Score calculation
     let calculatedScore = data.score || 50
-    if (data.source === 'Meta Ads' || data.origem === 'Meta Ads') calculatedScore += 15
-    if (data.source === 'Indicação' || data.origem === 'Indicação') calculatedScore += 25
+    if (data.origem === 'Meta Ads' || data.source === 'Meta Ads') calculatedScore += 15
+    if (data.origem === 'Indicação' || data.source === 'Indicação') calculatedScore += 25
     if (data.temperature === 'hot' || data.temperature === 'muito_quente') calculatedScore += 20
+
+    const canonicalOrigem = data.origem || data.source || 'Meta Ads'
+    const canonicalResponsavel = data.responsavel_id || data.assigned_to || ''
+    const canonicalTeamOwner = data.team_owner || data.team || 'comercial'
+    const canonicalConjunto = data.conjunto || data.ad_set || ''
+    const canonicalAnuncio = data.anuncio || data.ad || ''
 
     const record = await pb.collection('leads').create<LeadRecord>({
       tenant_id: tenantId,
       name: data.name || 'Novo Lead',
       score: calculatedScore,
       temperature: data.temperature || 'warm',
-      status: data.status || 'Novo Lead',
-      source: data.source || data.origem || 'Meta Ads',
-      origem: data.origem || data.source || 'Meta Ads',
+      status: data.status || 'novo',
+      origem: canonicalOrigem,
+      source: canonicalOrigem,
+      responsavel_id: canonicalResponsavel,
+      assigned_to: canonicalResponsavel,
+      team_owner: canonicalTeamOwner,
+      team: canonicalTeamOwner,
+      conjunto: canonicalConjunto,
+      anuncio: canonicalAnuncio,
       potential_value: data.potential_value || data.valor_potencial || 10000,
       valor_potencial: data.valor_potencial || data.potential_value || 10000,
       entry_date: new Date().toISOString(),
@@ -129,7 +141,28 @@ export const CrmService = {
       .collection('leads')
       .getOne<LeadRecord>(id)
       .catch(() => null)
-    const record = await pb.collection('leads').update<LeadRecord>(id, data)
+
+    // Garantir alinhamento de campos canônicos caso sejam passados
+    const patchData: any = { ...data }
+    if (patchData.responsavel_id !== undefined && patchData.assigned_to === undefined) {
+      patchData.assigned_to = patchData.responsavel_id
+    } else if (patchData.assigned_to !== undefined && patchData.responsavel_id === undefined) {
+      patchData.responsavel_id = patchData.assigned_to
+    }
+    if (patchData.team_owner !== undefined && patchData.team === undefined) {
+      patchData.team = patchData.team_owner
+    }
+    if (patchData.origem !== undefined && patchData.source === undefined) {
+      patchData.source = patchData.origem
+    }
+    if (patchData.conjunto !== undefined && patchData.ad_set === undefined) {
+      patchData.ad_set = patchData.conjunto
+    }
+    if (patchData.anuncio !== undefined && patchData.ad === undefined) {
+      patchData.ad = patchData.anuncio
+    }
+
+    const record = await pb.collection('leads').update<LeadRecord>(id, patchData)
     if (old) {
       await this.logAudit(record.tenant_id, 'update', 'lead', id, old, record)
     }
@@ -138,27 +171,27 @@ export const CrmService = {
 
   async softDeleteLead(id: string): Promise<void> {
     const record = await pb.collection('leads').getOne<LeadRecord>(id)
-    await pb.collection('leads').update(id, { soft_delete: true, deleted: true })
+    await pb.collection('leads').update(id, { soft_delete: true })
     await this.logAudit(
       record.tenant_id,
       'archive',
       'lead',
       id,
-      { soft_delete: false, deleted: false },
-      { soft_delete: true, deleted: true },
+      { soft_delete: false },
+      { soft_delete: true },
     )
   },
 
   async restoreLead(id: string): Promise<void> {
     const record = await pb.collection('leads').getOne<LeadRecord>(id)
-    await pb.collection('leads').update(id, { soft_delete: false, deleted: false })
+    await pb.collection('leads').update(id, { soft_delete: false })
     await this.logAudit(
       record.tenant_id,
       'restore',
       'lead',
       id,
-      { soft_delete: true, deleted: true },
-      { soft_delete: false, deleted: false },
+      { soft_delete: true },
+      { soft_delete: false },
     )
   },
 
@@ -449,9 +482,9 @@ export const CrmService = {
         pb
           .collection('leads')
           .getFullList<LeadRecord>({
-            filter: `tenant_id = "${tenantId}" && (deleted = true || soft_delete = true)`,
+            filter: `tenant_id = "${tenantId}" && soft_delete = true`,
             sort: '-updated',
-            expand: 'assigned_to,responsavel_id,empresa_id',
+            expand: 'responsavel_id,empresa_id',
           })
           .catch(() => []),
         pb

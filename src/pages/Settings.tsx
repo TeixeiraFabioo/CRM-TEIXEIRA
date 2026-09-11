@@ -169,7 +169,7 @@ export function SettingsPage() {
   const [newUser, setNewUser] = useState({
     name: '',
     email: '',
-    role: 'user' as 'admin' | 'manager' | 'user',
+    role: 'advogado' as string,
     team: '',
   })
   const [isSubmittingUser, setIsSubmittingUser] = useState(false)
@@ -190,7 +190,7 @@ export function SettingsPage() {
   const [editUserData, setEditUserData] = useState({
     name: '',
     email: '',
-    role: 'user' as 'admin' | 'manager' | 'user',
+    role: 'advogado' as string,
     team: '',
   })
   const [isSavingEdit, setIsSavingEdit] = useState(false)
@@ -553,7 +553,7 @@ export function SettingsPage() {
       })
 
       setCreateUserModalOpen(false)
-      setNewUser({ name: '', email: '', role: 'user', team: '' })
+      setNewUser({ name: '', email: '', role: 'advogado', team: '' })
 
       // Show temporary password modal once with copy button
       setPasswordModalData({
@@ -602,7 +602,7 @@ export function SettingsPage() {
     setEditUserData({
       name: u.name || '',
       email: u.email || '',
-      role: (u.role as 'admin' | 'manager' | 'user') || 'user',
+      role: u.role || 'advogado',
       team: (u.team as string) || '',
     })
     setEditUserModalOpen(true)
@@ -2020,17 +2020,15 @@ export function SettingsPage() {
                 <Label className="text-xs font-semibold">Papel / Role *</Label>
                 <Select
                   value={newUser.role}
-                  onValueChange={(val: 'admin' | 'manager' | 'user') =>
-                    setNewUser({ ...newUser, role: val })
-                  }
+                  onValueChange={(val: string) => setNewUser({ ...newUser, role: val })}
                 >
                   <SelectTrigger className="h-9 text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {isAdmin && <SelectItem value="admin">Administrador</SelectItem>}
-                    <SelectItem value="manager">Gestor</SelectItem>
-                    <SelectItem value="user">Advogado / Consultor</SelectItem>
+                    <SelectItem value="gestor">Gestor</SelectItem>
+                    <SelectItem value="advogado">Advogado / Consultor</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -2133,9 +2131,7 @@ export function SettingsPage() {
                 <Label className="text-xs font-semibold">Papel / Role *</Label>
                 <Select
                   value={editUserData.role}
-                  onValueChange={(val: 'admin' | 'manager' | 'user') =>
-                    setEditUserData({ ...editUserData, role: val })
-                  }
+                  onValueChange={(val: string) => setEditUserData({ ...editUserData, role: val })}
                   disabled={!isAdmin && !isGestor}
                 >
                   <SelectTrigger className="h-9 text-xs">
@@ -2143,8 +2139,8 @@ export function SettingsPage() {
                   </SelectTrigger>
                   <SelectContent>
                     {isAdmin && <SelectItem value="admin">Administrador</SelectItem>}
-                    <SelectItem value="manager">Gestor</SelectItem>
-                    <SelectItem value="user">Advogado / Consultor</SelectItem>
+                    <SelectItem value="gestor">Gestor</SelectItem>
+                    <SelectItem value="advogado">Advogado / Consultor</SelectItem>
                   </SelectContent>
                 </Select>
                 {!isAdmin && (

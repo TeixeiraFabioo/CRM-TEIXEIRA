@@ -15,7 +15,7 @@
  */
 
 // Webhook GET: Verificação do webhook da Meta (hub.challenge)
-routerAdd('GET', '/api/whatsapp/webhook', (c) => {
+routerAdd('GET', '/backend/v1/whatsapp/webhook', (c) => {
   try {
     const challenge = c.queryParam('hub.challenge') || c.queryParam('hub_challenge') || ''
     const mode = c.queryParam('hub.mode') || c.queryParam('hub_mode') || ''
@@ -86,7 +86,7 @@ routerAdd('GET', '/api/whatsapp/webhook', (c) => {
 })
 
 // Webhook POST: Recebimento de mensagens da Meta WhatsApp Cloud API
-routerAdd('POST', '/api/whatsapp/webhook', (c) => {
+routerAdd('POST', '/backend/v1/whatsapp/webhook', (c) => {
   try {
     let body = null
     try {
@@ -513,6 +513,10 @@ onRecordCreate((e) => {
     if (!token && cfg.api_token) token = cfg.api_token
     if (!token && cfg.token) token = cfg.token
 
+    if (token && !record.getString('api_token')) {
+      record.set('api_token', token)
+    }
+
     const phoneNumberId = (
       cfg.phone_number_id ||
       cfg.phoneNumberId ||
@@ -524,6 +528,7 @@ onRecordCreate((e) => {
     if (!token || !phoneNumberId) {
       record.set('status', 'inactive')
       record.set('is_active', false)
+      record.set('error_message', '')
       return e.next()
     }
 
@@ -546,6 +551,7 @@ onRecordCreate((e) => {
 
         record.set('status', 'active')
         record.set('is_active', true)
+        record.set('error_message', '')
         const updatedCfg = Object.assign({}, cfg, {
           provider: 'whatsapp',
           phone_number_id: phoneNumberId,
@@ -558,12 +564,23 @@ onRecordCreate((e) => {
         record.set('config_json', updatedCfg)
         record.set('config', updatedCfg)
       } else {
+        let errMessage = ''
+        const resJson = testRes.json || {}
+        if (resJson.error && resJson.error.message) {
+          errMessage = resJson.error.message
+        } else {
+          try {
+            errMessage = testRes.raw || testRes.body || JSON.stringify(resJson)
+          } catch (_) {}
+        }
         const errDetail =
-          (testRes.json && testRes.json.error && testRes.json.error.message) ||
-          (testRes.json && JSON.stringify(testRes.json)) ||
-          'Credenciais inválidas na Meta Graph API (HTTP ' + testRes.statusCode + ')'
+          'Erro na API da Meta (HTTP ' +
+          testRes.statusCode +
+          '): ' +
+          (errMessage || 'Credenciais inválidas')
         record.set('status', 'error')
         record.set('is_active', false)
+        record.set('error_message', String(errDetail))
         const updatedCfg = Object.assign({}, cfg, {
           provider: 'whatsapp',
           phone_number_id: phoneNumberId,
@@ -573,13 +590,14 @@ onRecordCreate((e) => {
         record.set('config', updatedCfg)
       }
     } catch (httpErr) {
+      const connErr = 'Falha de conexão com a API da Meta: ' + (httpErr.message || String(httpErr))
       record.set('status', 'error')
       record.set('is_active', false)
+      record.set('error_message', connErr)
       const updatedCfg = Object.assign({}, cfg, {
         provider: 'whatsapp',
         phone_number_id: phoneNumberId,
-        error_message:
-          'Falha de conexão com a API da Meta: ' + (httpErr.message || String(httpErr)),
+        error_message: connErr,
       })
       record.set('config_json', updatedCfg)
       record.set('config', updatedCfg)
@@ -606,6 +624,10 @@ onRecordUpdate((e) => {
     if (!token && cfg.access_token) token = cfg.access_token
     if (!token && cfg.api_token) token = cfg.api_token
     if (!token && cfg.token) token = cfg.token
+
+    if (token && !record.getString('api_token')) {
+      record.set('api_token', token)
+    }
 
     const phoneNumberId = (cfg.phone_number_id || cfg.phoneNumberId || cfg.phone_id || '').trim()
 
@@ -685,6 +707,7 @@ onRecordUpdate((e) => {
     if (!token || !phoneNumberId) {
       record.set('status', 'inactive')
       record.set('is_active', false)
+      record.set('error_message', '')
       return e.next()
     }
 
@@ -708,6 +731,7 @@ onRecordUpdate((e) => {
 
         record.set('status', 'active')
         record.set('is_active', true)
+        record.set('error_message', '')
         const updatedCfg = Object.assign({}, cfg, {
           provider: 'whatsapp',
           phone_number_id: phoneNumberId,
@@ -721,12 +745,23 @@ onRecordUpdate((e) => {
         record.set('config_json', updatedCfg)
         record.set('config', updatedCfg)
       } else {
+        let errMessage = ''
+        const resJson = testRes.json || {}
+        if (resJson.error && resJson.error.message) {
+          errMessage = resJson.error.message
+        } else {
+          try {
+            errMessage = testRes.raw || testRes.body || JSON.stringify(resJson)
+          } catch (_) {}
+        }
         const errDetail =
-          (testRes.json && testRes.json.error && testRes.json.error.message) ||
-          (testRes.json && JSON.stringify(testRes.json)) ||
-          'Credenciais inválidas na Meta Graph API (HTTP ' + testRes.statusCode + ')'
+          'Erro na API da Meta (HTTP ' +
+          testRes.statusCode +
+          '): ' +
+          (errMessage || 'Credenciais inválidas')
         record.set('status', 'error')
         record.set('is_active', false)
+        record.set('error_message', String(errDetail))
         const updatedCfg = Object.assign({}, cfg, {
           provider: 'whatsapp',
           phone_number_id: phoneNumberId,
@@ -737,13 +772,14 @@ onRecordUpdate((e) => {
         record.set('config', updatedCfg)
       }
     } catch (httpErr) {
+      const connErr = 'Falha de conexão com a API da Meta: ' + (httpErr.message || String(httpErr))
       record.set('status', 'error')
       record.set('is_active', false)
+      record.set('error_message', connErr)
       const updatedCfg = Object.assign({}, cfg, {
         provider: 'whatsapp',
         phone_number_id: phoneNumberId,
-        error_message:
-          'Falha de conexão com a API da Meta: ' + (httpErr.message || String(httpErr)),
+        error_message: connErr,
         test_requested: false,
       })
       record.set('config_json', updatedCfg)

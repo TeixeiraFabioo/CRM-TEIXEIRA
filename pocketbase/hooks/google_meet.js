@@ -16,15 +16,21 @@ onRecordCreate((e) => {
     const provider = record.getString('provider')
     if (provider !== 'google_meet') return e.next()
 
-    let apiKey = record.getString('api_key') || record.getString('api_token') || ''
+    let apiKey = record.getString('api_token') || record.getString('api_key') || ''
     const cfg = record.get('config_json') || record.get('config') || {}
+    if (!apiKey && cfg.api_token) apiKey = cfg.api_token
     if (!apiKey && cfg.api_key) apiKey = cfg.api_key
     if (!apiKey && cfg.apiKey) apiKey = cfg.apiKey
     if (!apiKey && cfg.token) apiKey = cfg.token
 
+    if (apiKey && !record.getString('api_token')) {
+      record.set('api_token', apiKey)
+    }
+
     if (!apiKey) {
       record.set('status', 'inactive')
       record.set('is_active', false)
+      record.set('error_message', '')
       return e.next()
     }
 
@@ -39,13 +45,15 @@ onRecordCreate((e) => {
           timeout: 10,
         })
         if (testRes.statusCode >= 400) {
+          let errDetail =
+            'Token OAuth do Google inválido ou expirado (HTTP ' + testRes.statusCode + ')'
           record.set('status', 'error')
           record.set('is_active', false)
+          record.set('error_message', errDetail)
           const updatedCfg = Object.assign({}, cfg, {
             provider: 'google_meet',
             calendar_id: calendarId,
-            error_message:
-              'Token OAuth do Google inválido ou expirado (HTTP ' + testRes.statusCode + ')',
+            error_message: errDetail,
           })
           record.set('config_json', updatedCfg)
           record.set('config', updatedCfg)
@@ -59,6 +67,7 @@ onRecordCreate((e) => {
     const nowIso = new Date().toISOString()
     record.set('status', 'active')
     record.set('is_active', true)
+    record.set('error_message', '')
     const updatedCfg = Object.assign({}, cfg, {
       provider: 'google_meet',
       calendar_id: calendarId,
@@ -84,15 +93,21 @@ onRecordUpdate((e) => {
     const provider = record.getString('provider')
     if (provider !== 'google_meet') return e.next()
 
-    let apiKey = record.getString('api_key') || record.getString('api_token') || ''
+    let apiKey = record.getString('api_token') || record.getString('api_key') || ''
     const cfg = record.get('config_json') || record.get('config') || {}
+    if (!apiKey && cfg.api_token) apiKey = cfg.api_token
     if (!apiKey && cfg.api_key) apiKey = cfg.api_key
     if (!apiKey && cfg.apiKey) apiKey = cfg.apiKey
     if (!apiKey && cfg.token) apiKey = cfg.token
 
+    if (apiKey && !record.getString('api_token')) {
+      record.set('api_token', apiKey)
+    }
+
     if (!apiKey) {
       record.set('status', 'inactive')
       record.set('is_active', false)
+      record.set('error_message', '')
       return e.next()
     }
 
@@ -106,13 +121,15 @@ onRecordUpdate((e) => {
           timeout: 10,
         })
         if (testRes.statusCode >= 400) {
+          let errDetail =
+            'Token OAuth do Google inválido ou expirado (HTTP ' + testRes.statusCode + ')'
           record.set('status', 'error')
           record.set('is_active', false)
+          record.set('error_message', errDetail)
           const updatedCfg = Object.assign({}, cfg, {
             provider: 'google_meet',
             calendar_id: calendarId,
-            error_message:
-              'Token OAuth do Google inválido ou expirado (HTTP ' + testRes.statusCode + ')',
+            error_message: errDetail,
             test_requested: false,
           })
           record.set('config_json', updatedCfg)
@@ -127,6 +144,7 @@ onRecordUpdate((e) => {
     const nowIso = new Date().toISOString()
     record.set('status', 'active')
     record.set('is_active', true)
+    record.set('error_message', '')
     const updatedCfg = Object.assign({}, cfg, {
       provider: 'google_meet',
       calendar_id: calendarId,
