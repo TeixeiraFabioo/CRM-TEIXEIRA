@@ -55,10 +55,12 @@ export function IntegrationsPage() {
     message: string
   } | null>(null)
 
-  // Google Meet state
+  // Google Meet / Calendar state
   const [googleMeetConnected, setGoogleMeetConnected] = useState(false)
   const [googleMeetConfig, setGoogleMeetConfig] = useState<any>(null)
-  const [googleMeetTokenInput, setGoogleMeetTokenInput] = useState('')
+  const [googleMeetClientId, setGoogleMeetClientId] = useState('')
+  const [googleMeetClientSecret, setGoogleMeetClientSecret] = useState('')
+  const [googleMeetRefreshToken, setGoogleMeetRefreshToken] = useState('')
   const [googleMeetLoading, setGoogleMeetLoading] = useState(true)
   const [googleMeetActionLoading, setGoogleMeetActionLoading] = useState(false)
   const [googleMeetTestLoading, setGoogleMeetTestLoading] = useState(false)
@@ -133,6 +135,11 @@ export function IntegrationsPage() {
       const res = await CrmService.getGoogleMeetConfig(tenant.id)
       setGoogleMeetConnected(!!res.connected)
       setGoogleMeetConfig(res.config || null)
+      if (res.config) {
+        setGoogleMeetClientId(res.config.client_id || '')
+        setGoogleMeetClientSecret(res.config.client_secret || '')
+        setGoogleMeetRefreshToken(res.config.refresh_token || '')
+      }
     } catch (err) {
       console.error('Erro ao consultar Google Meet:', err)
       setGoogleMeetConnected(false)
@@ -312,10 +319,26 @@ export function IntegrationsPage() {
   const handleConnectGoogleMeet = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!tenant?.id) return
-    if (!googleMeetTokenInput.trim()) {
+
+    const cId = googleMeetClientId.trim()
+    const cSecret = googleMeetClientSecret.trim()
+    const rToken = googleMeetRefreshToken.trim()
+
+    // Validação de API Key (AIza*)
+    if (cId.startsWith('AIza') || cSecret.startsWith('AIza') || rToken.startsWith('AIza')) {
       toast({
-        title: 'API Key obrigatória',
-        description: 'Informe a Google API Key / Token para conectar.',
+        title: 'Credencial inválida',
+        description:
+          'Calendar API exige OAuth 2, não API Key. Cole o client_id, client_secret e refresh token gerados no Google Cloud Console.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (!cId || !cSecret || !rToken) {
+      toast({
+        title: 'Campos obrigatórios',
+        description: 'Preencha client_id, client_secret e refresh_token para autenticação OAuth 2.',
         variant: 'destructive',
       })
       return
@@ -324,18 +347,21 @@ export function IntegrationsPage() {
     setGoogleMeetActionLoading(true)
     setGoogleMeetTestResult(null)
     try {
-      const res = await CrmService.connectGoogleMeet(tenant.id, googleMeetTokenInput.trim())
+      const res = await CrmService.connectGoogleMeetOAuth(tenant.id, {
+        client_id: cId,
+        client_secret: cSecret,
+        refresh_token: rToken,
+      })
       if (res.success) {
         toast({
-          title: 'Google Meet Conectado!',
-          description: 'Integração salva e validada com sucesso via API.',
+          title: 'Google Calendar & Meet Conectado!',
+          description: 'OAuth 2 configurado com sucesso para criação de eventos e links.',
         })
-        setGoogleMeetTokenInput('')
         await loadGoogleMeetState()
       } else {
         toast({
           title: 'Falha ao conectar Google Meet',
-          description: res.error || 'Credencial inválida ou não autorizada.',
+          description: res.error || 'Credenciais OAuth 2 inválidas ou não autorizadas.',
           variant: 'destructive',
         })
       }
@@ -352,7 +378,11 @@ export function IntegrationsPage() {
 
   const handleDisconnectGoogleMeet = async () => {
     if (!tenant?.id) return
-    if (!confirm('Deseja realmente desconectar o Google Meet? A chave salva será removida.')) {
+    if (
+      !confirm(
+        'Deseja realmente desconectar o Google Calendar / Meet? As credenciais OAuth salvas serão removidas.',
+      )
+    ) {
       return
     }
 
@@ -367,6 +397,9 @@ export function IntegrationsPage() {
         })
         setGoogleMeetConnected(false)
         setGoogleMeetConfig(null)
+        setGoogleMeetClientId('')
+        setGoogleMeetClientSecret('')
+        setGoogleMeetRefreshToken('')
       } else {
         toast({
           title: 'Erro ao desconectar',
@@ -1189,14 +1222,14 @@ export function IntegrationsPage() {
 
             <div>
               <div className="flex items-center gap-1.5">
-                <h3 className="font-bold text-sm">Google Meet</h3>
+                <h3 className="font-bold text-sm">Google Calendar &amp; Meet</h3>
                 <span className="text-[10px] bg-blue-500/10 text-blue-700 dark:text-blue-300 px-1.5 py-0.2 rounded font-mono font-medium">
-                  Videoconferência
+                  OAuth 2.0
                 </span>
               </div>
               <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                Geração automática de links e salas de reuniões no Google Meet diretamente no
-                agendamento de tarefas e compromissos com leads.
+                Criação automática de eventos no Google Calendar com videoconferência Google Meet
+                diretamente no agendamento de tarefas e reuniões com leads.
               </p>
             </div>
 
@@ -1216,18 +1249,26 @@ export function IntegrationsPage() {
               <div className="bg-muted/40 border rounded-lg p-3 space-y-2.5 text-xs">
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground flex items-center gap-1">
-                    <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> Token / API Key
+                    <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> Credenciais OAuth 2
                   </span>
                   <span className="font-mono text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
-                    •••••••• (Protegido no backend)
+                    Configurado (Protegido)
                   </span>
                 </div>
 
-                <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1 border-t">
-                  <span>Última sincronização:</span>
-                  <span className="font-medium text-foreground">
-                    {formatSyncDate(googleMeetConfig?.last_sync || googleMeetConfig?.updated)}
-                  </span>
+                <div className="space-y-1 text-[11px] text-muted-foreground pt-1 border-t">
+                  <div className="flex items-center justify-between">
+                    <span>Client ID:</span>
+                    <span className="font-mono text-foreground truncate max-w-[180px]">
+                      {googleMeetConfig?.config_json?.client_id || '••••••••'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Última sincronização:</span>
+                    <span className="font-medium text-foreground">
+                      {formatSyncDate(googleMeetConfig?.last_sync || googleMeetConfig?.updated)}
+                    </span>
+                  </div>
                 </div>
 
                 {googleMeetTestResult && (
@@ -1248,32 +1289,84 @@ export function IntegrationsPage() {
                 )}
               </div>
             ) : (
-              /* SE NÃO HOUVER TOKEN SALVO */
-              <form onSubmit={handleConnectGoogleMeet} className="space-y-2.5 pt-1">
-                <div className="space-y-1">
-                  <Label className="text-[11px] font-semibold flex items-center justify-between">
-                    <span className="flex items-center gap-1">
-                      <Key className="h-3 w-3 text-primary" /> API Key / Credencial Google
+              /* SE NÃO HOUVER TOKEN SALVO OU PREENCHIMENTO OAUTH */
+              <form onSubmit={handleConnectGoogleMeet} className="space-y-3 pt-1">
+                {/* Passo a passo explicativo */}
+                <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-2.5 text-[11px] text-foreground space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-blue-700 dark:text-blue-400 flex items-center gap-1">
+                      <Info className="h-3.5 w-3.5" /> Como obter as credenciais OAuth 2:
                     </span>
                     <a
                       href="https://console.cloud.google.com/apis/credentials"
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-[10px] text-primary hover:underline"
+                      className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5 font-medium"
                     >
-                      Google Cloud Console →
+                      Google Cloud Console <ExternalLink className="h-2.5 w-2.5" />
                     </a>
+                  </div>
+                  <ol className="list-decimal list-inside space-y-1 text-muted-foreground text-[10px] leading-relaxed">
+                    <li>
+                      No Google Cloud Console, ative a <strong>Google Calendar API</strong>.
+                    </li>
+                    <li>
+                      Crie credenciais do tipo <strong>ID do cliente OAuth (Aplicativo Web)</strong>
+                      .
+                    </li>
+                    <li>
+                      Adicione <code>https://developers.google.com/oauthplayground</code> como URI
+                      de redirecionamento autorizada.
+                    </li>
+                    <li>
+                      Abra o <strong>OAuth 2.0 Playground</strong>, autorize o escopo{' '}
+                      <code>https://www.googleapis.com/auth/calendar.events</code> e troque o código
+                      de autorização pelo <strong>Refresh Token</strong>.
+                    </li>
+                  </ol>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-semibold flex items-center gap-1">
+                    <Key className="h-3 w-3 text-primary" /> Client ID (OAuth 2) *
+                  </Label>
+                  <Input
+                    value={googleMeetClientId}
+                    onChange={(e) => setGoogleMeetClientId(e.target.value)}
+                    placeholder="Ex: 123456789-abc.apps.googleusercontent.com"
+                    className="h-8 text-xs font-mono"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-semibold flex items-center gap-1">
+                    <ShieldCheck className="h-3 w-3 text-primary" /> Client Secret *
                   </Label>
                   <Input
                     type="password"
-                    value={googleMeetTokenInput}
-                    onChange={(e) => setGoogleMeetTokenInput(e.target.value)}
-                    placeholder="Cole sua API Key ou OAuth Token do Google..."
+                    value={googleMeetClientSecret}
+                    onChange={(e) => setGoogleMeetClientSecret(e.target.value)}
+                    placeholder="GOCSPX-..."
+                    className="h-8 text-xs font-mono"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-semibold flex items-center gap-1">
+                    <RefreshCw className="h-3 w-3 text-primary" /> Refresh Token *
+                  </Label>
+                  <Input
+                    type="password"
+                    value={googleMeetRefreshToken}
+                    onChange={(e) => setGoogleMeetRefreshToken(e.target.value)}
+                    placeholder="1//04..."
                     className="h-8 text-xs font-mono"
                     required
                   />
                   <p className="text-[10px] text-muted-foreground leading-tight">
-                    Credencial utilizada para criar salas virtuais do Google Meet com segurança.
+                    Calendar API exige OAuth 2, não API Key (não use chave começando com AIza).
                   </p>
                 </div>
 
@@ -1285,11 +1378,11 @@ export function IntegrationsPage() {
                 >
                   {googleMeetActionLoading ? (
                     <>
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Conectando...
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Salvando...
                     </>
                   ) : (
                     <>
-                      <Check className="h-3.5 w-3.5" /> Conectar Google Meet
+                      <Check className="h-3.5 w-3.5" /> Salvar Credenciais OAuth 2
                     </>
                   )}
                 </Button>

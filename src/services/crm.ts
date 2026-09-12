@@ -1169,9 +1169,9 @@ export const CrmService = {
     }
   },
 
-  async connectGoogleMeet(
+  async connectGoogleMeetOAuth(
     tenantId: string,
-    token: string,
+    oauthData: { client_id: string; client_secret: string; refresh_token: string },
   ): Promise<{
     success: boolean
     message?: string
@@ -1186,12 +1186,16 @@ export const CrmService = {
       const payload = {
         tenant_id: tenantId,
         provider: 'google_meet',
-        api_key: token.trim(),
-        api_token: token.trim(),
+        api_key: oauthData.refresh_token.trim(),
+        api_token: oauthData.refresh_token.trim(),
         is_active: true,
+        error_message: '',
         config_json: {
           provider: 'google_meet',
           calendar_id: 'primary',
+          client_id: oauthData.client_id.trim(),
+          client_secret: oauthData.client_secret.trim(),
+          refresh_token: oauthData.refresh_token.trim(),
           connected_at: new Date().toISOString(),
         },
       }
@@ -1204,10 +1208,10 @@ export const CrmService = {
       }
 
       const cfg = record.config_json || record.config || {}
-      if (record.status === 'error') {
+      if (record.status === 'error' || record.error_message) {
         return {
           success: false,
-          error: cfg.error_message || 'Credencial do Google Meet inválida.',
+          error: record.error_message || cfg.error_message || 'Credencial do Google Meet inválida.',
           config: record,
         }
       }
@@ -1223,6 +1227,22 @@ export const CrmService = {
         error: err?.message || 'Falha ao salvar integração do Google Meet.',
       }
     }
+  },
+
+  async connectGoogleMeet(
+    tenantId: string,
+    token: string,
+  ): Promise<{
+    success: boolean
+    message?: string
+    error?: string
+    config?: any
+  }> {
+    return this.connectGoogleMeetOAuth(tenantId, {
+      client_id: '',
+      client_secret: '',
+      refresh_token: token,
+    })
   },
 
   async disconnectGoogleMeet(
@@ -1252,17 +1272,29 @@ export const CrmService = {
       if (list.items.length === 0 && !token) {
         return {
           success: false,
-          message: 'Google Meet não configurado.',
-          error: 'Google Meet não configurado.',
+          message: 'Google Calendar / Meet não configurado.',
+          error: 'Google Calendar / Meet não configurado.',
         }
       }
 
       if (list.items.length > 0) {
         const item = list.items[0]
         const currentCfg = item.config_json || item.config || {}
+        const keyVal = (token || item.api_key || item.api_token || '').trim()
+        const rToken = (currentCfg.refresh_token || '').trim()
+
+        if (keyVal.startsWith('AIza') || rToken.startsWith('AIza')) {
+          return {
+            success: false,
+            message:
+              'Calendar API exige OAuth 2, não API Key. Cole o client_id, client_secret e refresh token gerados no Google Cloud Console.',
+            error: 'Calendar API exige OAuth 2, não API Key.',
+          }
+        }
+
         const updated = await pb.collection('integration_configs').update(item.id, {
-          api_key: token || item.api_key || item.api_token,
-          api_token: token || item.api_key || item.api_token,
+          api_key: keyVal,
+          api_token: keyVal,
           config_json: {
             ...currentCfg,
             test_requested: true,
@@ -1270,18 +1302,23 @@ export const CrmService = {
           },
         })
         const cfg = updated.config_json || updated.config || {}
-        if (updated.status === 'active') {
-          return { success: true, message: 'Configuração do Google Meet validada com sucesso!' }
+        if (updated.status === 'active' && !updated.error_message) {
+          return {
+            success: true,
+            message: 'Configuração do Google Calendar / Meet validada com sucesso!',
+          }
         } else {
+          const errMsg =
+            updated.error_message || cfg.error_message || 'Falha na validação do Google Meet.'
           return {
             success: false,
-            message: cfg.error_message || 'Falha na validação do Google Meet.',
-            error: cfg.error_message,
+            message: errMsg,
+            error: errMsg,
           }
         }
       }
 
-      return { success: true, message: 'Chave do Google Meet aceita!' }
+      return { success: true, message: 'Credenciais do Google Calendar aceitas!' }
     } catch (err: any) {
       return {
         success: false,

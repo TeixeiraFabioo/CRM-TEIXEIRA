@@ -281,13 +281,22 @@ onRecordCreate((e) => {
             console.warn('[Google Meet Hook] Falha ao criar evento no Calendar:', errMsg)
             if (configRec) {
               try {
-                configRec.set('error_message', 'Erro ao criar evento Google Meet: ' + errMsg)
+                configRec.set('error_message', errMsg)
                 $app.save(configRec)
               } catch (_) {}
             }
           }
         } catch (calErr) {
           console.warn('[Google Meet Hook] Erro de conexão com Google Calendar:', calErr)
+          if (configRec) {
+            try {
+              configRec.set(
+                'error_message',
+                'Falha de conexão com Google Calendar: ' + (calErr.message || String(calErr)),
+              )
+              $app.save(configRec)
+            } catch (_) {}
+          }
         }
       }
     }
@@ -546,9 +555,30 @@ onRecordUpdate((e) => {
               task.set('meet_link', generatedMeetLink)
               console.log('[Google Meet Hook Update] Meet Link criado:', generatedMeetLink)
             }
+          } else {
+            const errJson = calRes.json || {}
+            const errMsg = errJson.error
+              ? errJson.error.message || JSON.stringify(errJson.error)
+              : 'HTTP ' + calRes.statusCode
+            console.warn('[Google Meet Hook Update] Falha ao criar evento no Calendar:', errMsg)
+            if (configRec) {
+              try {
+                configRec.set('error_message', errMsg)
+                $app.save(configRec)
+              } catch (_) {}
+            }
           }
         } catch (calErr) {
           console.warn('[Google Meet Hook Update] Erro:', calErr)
+          if (configRec) {
+            try {
+              configRec.set(
+                'error_message',
+                'Falha de conexão com Google Calendar: ' + (calErr.message || String(calErr)),
+              )
+              $app.save(configRec)
+            } catch (_) {}
+          }
         }
       }
     }
@@ -569,18 +599,45 @@ onRecordCreate((e) => {
     const provider = record.getString('provider')
     if (provider !== 'google_meet') return e.next()
 
-    let apiKey = record.getString('api_token') || record.getString('api_key') || ''
+    let apiKey = (record.getString('api_token') || record.getString('api_key') || '').trim()
     const cfg = record.get('config_json') || record.get('config') || {}
-    if (!apiKey && cfg.api_token) apiKey = cfg.api_token
-    if (!apiKey && cfg.api_key) apiKey = cfg.api_key
-    if (!apiKey && cfg.apiKey) apiKey = cfg.apiKey
-    if (!apiKey && cfg.token) apiKey = cfg.token
+    if (!apiKey && cfg.api_token) apiKey = String(cfg.api_token).trim()
+    if (!apiKey && cfg.api_key) apiKey = String(cfg.api_key).trim()
+    if (!apiKey && cfg.apiKey) apiKey = String(cfg.apiKey).trim()
+    if (!apiKey && cfg.token) apiKey = String(cfg.token).trim()
+
+    // Validação estrita: Calendar API exige OAuth 2, não API Key
+    if (apiKey.startsWith('AIza')) {
+      record.set('status', 'error')
+      record.set('is_active', false)
+      record.set(
+        'error_message',
+        'Calendar API exige OAuth 2, não API Key. Cole o client_id, client_secret e refresh token gerados no Google Cloud Console.',
+      )
+      const updatedCfg = Object.assign({}, cfg, {
+        provider: 'google_meet',
+        error_message:
+          'Calendar API exige OAuth 2, não API Key. Cole o client_id, client_secret e refresh token gerados no Google Cloud Console.',
+      })
+      record.set('config_json', updatedCfg)
+      record.set('config', updatedCfg)
+      return e.next()
+    }
 
     if (apiKey && !record.getString('api_token')) {
       record.set('api_token', apiKey)
     }
 
     const refreshToken = (cfg.refresh_token || cfg.refreshToken || '').trim()
+    if (refreshToken.startsWith('AIza')) {
+      record.set('status', 'error')
+      record.set('is_active', false)
+      record.set(
+        'error_message',
+        'Calendar API exige OAuth 2, não API Key. Cole o client_id, client_secret e refresh token gerados no Google Cloud Console.',
+      )
+      return e.next()
+    }
 
     if (!apiKey && !refreshToken) {
       record.set('status', 'inactive')
@@ -718,18 +775,45 @@ onRecordUpdate((e) => {
     const provider = record.getString('provider')
     if (provider !== 'google_meet') return e.next()
 
-    let apiKey = record.getString('api_token') || record.getString('api_key') || ''
+    let apiKey = (record.getString('api_token') || record.getString('api_key') || '').trim()
     const cfg = record.get('config_json') || record.get('config') || {}
-    if (!apiKey && cfg.api_token) apiKey = cfg.api_token
-    if (!apiKey && cfg.api_key) apiKey = cfg.api_key
-    if (!apiKey && cfg.apiKey) apiKey = cfg.apiKey
-    if (!apiKey && cfg.token) apiKey = cfg.token
+    if (!apiKey && cfg.api_token) apiKey = String(cfg.api_token).trim()
+    if (!apiKey && cfg.api_key) apiKey = String(cfg.api_key).trim()
+    if (!apiKey && cfg.apiKey) apiKey = String(cfg.apiKey).trim()
+    if (!apiKey && cfg.token) apiKey = String(cfg.token).trim()
+
+    // Validação estrita: Calendar API exige OAuth 2, não API Key
+    if (apiKey.startsWith('AIza')) {
+      record.set('status', 'error')
+      record.set('is_active', false)
+      record.set(
+        'error_message',
+        'Calendar API exige OAuth 2, não API Key. Cole o client_id, client_secret e refresh token gerados no Google Cloud Console.',
+      )
+      const updatedCfg = Object.assign({}, cfg, {
+        provider: 'google_meet',
+        error_message:
+          'Calendar API exige OAuth 2, não API Key. Cole o client_id, client_secret e refresh token gerados no Google Cloud Console.',
+      })
+      record.set('config_json', updatedCfg)
+      record.set('config', updatedCfg)
+      return e.next()
+    }
 
     if (apiKey && !record.getString('api_token')) {
       record.set('api_token', apiKey)
     }
 
     const refreshToken = (cfg.refresh_token || cfg.refreshToken || '').trim()
+    if (refreshToken.startsWith('AIza')) {
+      record.set('status', 'error')
+      record.set('is_active', false)
+      record.set(
+        'error_message',
+        'Calendar API exige OAuth 2, não API Key. Cole o client_id, client_secret e refresh token gerados no Google Cloud Console.',
+      )
+      return e.next()
+    }
 
     if (!apiKey && !refreshToken) {
       record.set('status', 'inactive')

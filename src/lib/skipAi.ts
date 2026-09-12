@@ -2,6 +2,59 @@
 // $ai.agent(slug).chat (Skip-shape). Don't hand-roll the SSE reader —
 // past attempts shipped "undefinedundefined…" and "[object Object]…".
 
+export interface ChatMessageParam {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+export interface GenerateChatResponseOptions {
+  messages: ChatMessageParam[]
+  temperature?: number
+  public?: boolean
+}
+
+export async function generateChatResponse(options: GenerateChatResponseOptions): Promise<string> {
+  const backendBaseUrl =
+    (import.meta as any).env?.VITE_POCKETBASE_URL ||
+    (typeof window !== 'undefined' ? window.location.origin : '')
+  const endpoint = `${backendBaseUrl.replace(/\/$/, '')}/backend/v1/ai/chat`
+
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messages: options.messages,
+        temperature: options.temperature ?? 0.7,
+        public: options.public ?? false,
+      }),
+    })
+
+    if (!res.ok) {
+      // Fallback gracioso caso o endpoint de chat retorne erro
+      const lastUserMsg = options.messages.filter((m) => m.role === 'user').pop()?.content
+      return `Agradecemos sua mensagem. Para tratar sobre "${lastUserMsg?.slice(0, 50) || 'sua demanda'}", nossos advogados especialistas estão à disposição.`
+    }
+
+    const data = await res.json()
+    if (data?.choices?.[0]?.message?.content) {
+      return data.choices[0].message.content
+    }
+    if (typeof data?.reply === 'string') {
+      return data.reply
+    }
+    if (typeof data?.content === 'string') {
+      return data.content
+    }
+  } catch (e) {
+    console.warn('generateChatResponse exception, returning fallback:', e)
+  }
+
+  return 'Agradecemos o contato. Um de nossos advogados especialistas analisará seu caso.'
+}
+
 export interface OpenAIChatResult {
   id: string
   model: string
@@ -348,58 +401,4 @@ export async function streamAgentChat(
   }
 
   return { content, conversation_id: conversationId, message_id: messageId, citations, toolCalls }
-}
-
-export interface GenerateChatResponsePayload {
-  messages: Array<{ role: string; content: string }>
-  prompt?: string
-  temperature?: number
-  leadContext?: string
-  public?: boolean
-  tenantId?: string
-}
-
-/**
- * Chama o endpoint nativo do PocketBase registrado em hooks/ai_chat.js: POST /api/ai/chat
- */
-export async function generateChatResponse(
-  params: GenerateChatResponsePayload | string,
-): Promise<string> {
-  const body =
-    typeof params === 'string'
-      ? { prompt: params, messages: [{ role: 'user', content: params }] }
-      : {
-          ...params,
-          prompt:
-            params.prompt ||
-            params.messages?.filter((m) => m.role === 'user').slice(-1)[0]?.content ||
-            '',
-        }
-
-  const baseUrl = (import.meta as any).env?.VITE_POCKETBASE_URL || ''
-  const endpoint = baseUrl ? `${baseUrl.replace(/\/$/, '')}/api/ai/chat` : '/api/ai/chat'
-
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  })
-
-  if (!res.ok) {
-    let errorDetail = `AI chat failed: ${res.status}`
-    try {
-      const errJson = await res.json()
-      if (errJson.error || errJson.message) {
-        errorDetail = errJson.error || errJson.message
-      }
-    } catch {
-      // ignore
-    }
-    throw new Error(errorDetail)
-  }
-
-  const data = await res.json()
-  return data.text || data.response || data.content || data.answer || ''
 }

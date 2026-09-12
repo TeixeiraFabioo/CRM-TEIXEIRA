@@ -52,6 +52,7 @@ export function TarefasPage() {
   const [users, setUsers] = useState<UserRecord[]>([])
   const [leads, setLeads] = useState<LeadRecord[]>([])
   const [opportunities, setOpportunities] = useState<OpportunityRecord[]>([])
+  const [googleMeetError, setGoogleMeetError] = useState<string>('')
   const [loading, setLoading] = useState(true)
 
   const [viewMode, setViewMode] = useState<'list' | 'weekly' | 'daily'>('list')
@@ -62,6 +63,13 @@ export function TarefasPage() {
 
   const [createModalOpen, setCreateModalOpen] = useState(false)
   const [savingTask, setSavingTask] = useState(false)
+
+  // Quando o modal abre ou o usuário logado carrega, pré-seleciona o responsavel_id se vazio
+  useEffect(() => {
+    if (createModalOpen && user?.id && !formData.responsavel_id) {
+      setFormData((prev) => ({ ...prev, responsavel_id: user.id }))
+    }
+  }, [createModalOpen, user?.id])
 
   const [formData, setFormData] = useState<{
     titulo: string
@@ -86,7 +94,7 @@ export function TarefasPage() {
     descricao: '',
     lead_id: '',
     oportunidade_id: '',
-    responsavel_id: '',
+    responsavel_id: user?.id || '',
     participantes: '',
     meet_link: '',
   })
@@ -95,16 +103,18 @@ export function TarefasPage() {
     if (!tenant?.id) return
     setLoading(true)
     try {
-      const [tList, uList, lList, oppList] = await Promise.all([
+      const [tList, uList, lList, oppList, googleCfg] = await Promise.all([
         CrmService.getTasks(tenant.id),
         CrmService.getUsers(tenant.id),
         CrmService.getLeads(tenant.id),
         CrmService.getOpportunities(tenant.id),
+        CrmService.getGoogleMeetConfig(tenant.id),
       ])
       setTasks(tList)
       setUsers(uList)
       setLeads(lList)
       setOpportunities(oppList)
+      setGoogleMeetError(googleCfg.error_message || '')
     } finally {
       setLoading(false)
     }
@@ -197,6 +207,15 @@ export function TarefasPage() {
     e.preventDefault()
     if (!tenant?.id || !formData.titulo.trim()) return
 
+    if (formData.tipo === 'reuniao' && !formData.responsavel_id) {
+      toast({
+        title: 'Responsável obrigatório',
+        description: 'Selecione um responsável para agendar a reunião.',
+        variant: 'destructive',
+      })
+      return
+    }
+
     setSavingTask(true)
     try {
       const participantsArray = formData.participantes
@@ -237,7 +256,7 @@ export function TarefasPage() {
         descricao: '',
         lead_id: '',
         oportunidade_id: '',
-        responsavel_id: '',
+        responsavel_id: user?.id || '',
         participantes: '',
         meet_link: '',
       })
@@ -343,6 +362,28 @@ export function TarefasPage() {
           </Button>
         </div>
       </div>
+
+      {/* Banner de erro da integração com Google Calendar se houver erro */}
+      {googleMeetError && (
+        <div className="p-3.5 rounded-xl border border-destructive/30 bg-destructive/10 text-destructive flex items-start justify-between gap-3 text-xs">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-destructive" />
+            <div>
+              <p className="font-semibold">Atenção na sincronização com o Google Calendar:</p>
+              <p className="text-destructive/90 mt-0.5">
+                Evento não criado no Google Calendar:{' '}
+                <span className="font-medium">{googleMeetError}</span>
+              </p>
+            </div>
+          </div>
+          <a
+            href="/integracoes"
+            className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold underline hover:opacity-80"
+          >
+            Ajustar credenciais OAuth →
+          </a>
+        </div>
+      )}
 
       {/* Carga de trabalho por Responsável (Cenário 2) */}
       <div className="bg-card border rounded-xl p-4 shadow-2xs space-y-3">
@@ -573,7 +614,7 @@ export function TarefasPage() {
                             </Badge>
                           )}
 
-                          {t.meet_link && (
+                          {t.meet_link ? (
                             <a
                               href={t.meet_link}
                               target="_blank"
@@ -583,6 +624,17 @@ export function TarefasPage() {
                               <Video className="h-3 w-3" /> Entrar no Google Meet
                               <ExternalLink className="h-2.5 w-2.5" />
                             </a>
+                          ) : (
+                            t.tipo === 'reuniao' &&
+                            googleMeetError && (
+                              <span
+                                title={`Evento não criado no Google Calendar: ${googleMeetError}`}
+                                className="inline-flex items-center gap-1 text-[11px] text-rose-600 dark:text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded-md font-medium"
+                              >
+                                <AlertCircle className="h-3 w-3 shrink-0" />
+                                <span>Evento não criado no Google Calendar: {googleMeetError}</span>
+                              </span>
+                            )
                           )}
                         </div>
 
@@ -747,7 +799,7 @@ export function TarefasPage() {
                               </div>
                             )}
 
-                            {t.meet_link && (
+                            {t.meet_link ? (
                               <a
                                 href={t.meet_link}
                                 target="_blank"
@@ -756,6 +808,16 @@ export function TarefasPage() {
                               >
                                 <Video className="h-2.5 w-2.5" /> Meet
                               </a>
+                            ) : (
+                              t.tipo === 'reuniao' &&
+                              googleMeetError && (
+                                <span
+                                  title={`Evento não criado no Google Calendar: ${googleMeetError}`}
+                                  className="text-[9px] text-rose-600 font-medium flex items-center gap-1 bg-rose-500/10 px-1 py-0.5 rounded truncate"
+                                >
+                                  <AlertCircle className="h-2.5 w-2.5 shrink-0" /> Não sincronizado
+                                </span>
+                              )
                             )}
                           </div>
                         )
@@ -863,7 +925,7 @@ export function TarefasPage() {
                                 <AlertTriangle className="h-2.5 w-2.5" /> Conflito de Horário
                               </Badge>
                             )}
-                            {t.meet_link && (
+                            {t.meet_link ? (
                               <a
                                 href={t.meet_link}
                                 target="_blank"
@@ -872,6 +934,19 @@ export function TarefasPage() {
                               >
                                 <Video className="h-3 w-3" /> Entrar Meet
                               </a>
+                            ) : (
+                              t.tipo === 'reuniao' &&
+                              googleMeetError && (
+                                <span
+                                  title={`Evento não criado no Google Calendar: ${googleMeetError}`}
+                                  className="inline-flex items-center gap-1 text-[11px] text-rose-600 dark:text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded font-medium"
+                                >
+                                  <AlertCircle className="h-3 w-3 shrink-0" />
+                                  <span>
+                                    Evento não criado no Google Calendar: {googleMeetError}
+                                  </span>
+                                </span>
+                              )
                             )}
                           </div>
 
@@ -995,13 +1070,19 @@ export function TarefasPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs font-semibold">Responsável</Label>
+                <Label className="text-xs font-semibold">
+                  Responsável{' '}
+                  {formData.tipo === 'reuniao' && <span className="text-rose-500">*</span>}
+                </Label>
                 <Select
                   value={formData.responsavel_id}
                   onValueChange={(val) => setFormData({ ...formData, responsavel_id: val })}
+                  required={formData.tipo === 'reuniao'}
                 >
-                  <SelectTrigger className="h-9 text-xs">
-                    <SelectValue placeholder="Selecione..." />
+                  <SelectTrigger
+                    className={`h-9 text-xs ${formData.tipo === 'reuniao' && !formData.responsavel_id ? 'border-rose-400' : ''}`}
+                  >
+                    <SelectValue placeholder="Selecione o responsável..." />
                   </SelectTrigger>
                   <SelectContent>
                     {users.map((u) => (
@@ -1011,6 +1092,11 @@ export function TarefasPage() {
                     ))}
                   </SelectContent>
                 </Select>
+                {formData.tipo === 'reuniao' && !formData.responsavel_id && (
+                  <p className="text-[10px] text-rose-500">
+                    Obrigatório para sincronizar agenda e Google Calendar.
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1.5">

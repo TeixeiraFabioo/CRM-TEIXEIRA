@@ -242,6 +242,7 @@ export function LeadDetailPage() {
     data: new Date().toISOString().slice(0, 10),
     horario: '14:00',
     descricao: '',
+    responsavel_id: user?.id || '',
   })
 
   const [oppModalOpen, setOppModalOpen] = useState(false)
@@ -427,6 +428,16 @@ export function LeadDetailPage() {
     checkWhatsAppStatus()
     loadCalendlyLink()
   }, [id, tenant?.id])
+
+  // Atualiza responsavel_id padrão na tarefa jurídica
+  useEffect(() => {
+    if (taskModalOpen && !taskData.responsavel_id) {
+      setTaskData((prev) => ({
+        ...prev,
+        responsavel_id: lead?.responsavel_id || user?.id || '',
+      }))
+    }
+  }, [taskModalOpen, lead?.responsavel_id, user?.id])
 
   const handleSendMessage = async (
     e: React.FormEvent,
@@ -886,9 +897,19 @@ ${formattedHistory}
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!tenant?.id || !id) return
+    const finalRespId = taskData.responsavel_id || lead?.responsavel_id || user?.id
+    if (taskData.tipo === 'reuniao' && !finalRespId) {
+      toast({
+        title: 'Responsável obrigatório',
+        description: 'Selecione um responsável para a reunião.',
+        variant: 'destructive',
+      })
+      return
+    }
     try {
       await CrmService.createTask(tenant.id, {
         ...taskData,
+        responsavel_id: finalRespId || undefined,
         lead_id: id,
       })
       setTaskModalOpen(false)
@@ -2518,6 +2539,28 @@ ${formattedHistory}
                   className="h-9 text-xs"
                 />
               </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">
+                Responsável{' '}
+                {taskData.tipo === 'reuniao' && <span className="text-rose-500">*</span>}
+              </Label>
+              <Select
+                value={taskData.responsavel_id || user?.id || ''}
+                onValueChange={(val) => setTaskData({ ...taskData, responsavel_id: val })}
+              >
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue placeholder="Selecione o responsável..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {users.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.name || u.email}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <DialogFooter className="pt-2">
               <Button
