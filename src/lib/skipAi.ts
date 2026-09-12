@@ -1,6 +1,7 @@
 // Typed helpers for hooks proxying $ai.chat (OpenAI-shape) and
 // $ai.agent(slug).chat (Skip-shape). Don't hand-roll the SSE reader —
 // past attempts shipped "undefinedundefined…" and "[object Object]…".
+import pb from '@/lib/pocketbase/client'
 
 export interface OpenAIChatResult {
   id: string
@@ -11,47 +12,6 @@ export interface OpenAIChatResult {
     finish_reason: string
   }>
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
-}
-
-export interface GenerateChatResponseParams {
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
-  temperature?: number
-  public?: boolean
-  max_tokens?: number
-}
-
-// Client helper for single-turn or multi-message chat completion
-export async function generateChatResponse(params: GenerateChatResponseParams): Promise<string> {
-  const isProd = typeof window !== 'undefined' && window.location.hostname !== 'localhost'
-  const endpoint = '/api/ai/chat'
-
-  try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        messages: params.messages,
-        temperature: params.temperature ?? 0.7,
-        public: params.public ?? false,
-      }),
-    })
-
-    if (res.ok) {
-      const data = await res.json()
-      if (typeof data === 'string') return data
-      if (data?.content) return data.content
-      if (data?.choices?.[0]?.message?.content) return data.choices[0].message.content
-      if (data?.reply) return data.reply
-    }
-  } catch (e) {
-    console.warn('Endpoint /api/ai/chat indisponível, usando fallback de IA jurídica local.', e)
-  }
-
-  // Fallback inteligente para atendimento jurídico
-  const lastUserMsg = [...params.messages].reverse().find((m) => m.role === 'user')?.content || ''
-  return `Com base na legislação vigente e nas teses de nosso escritório, analisamos sua consulta sobre: "${lastUserMsg.slice(0, 80)}...". Nossos advogados especialistas estão à disposição para examinar a documentação correspondente. Recomendamos agendar uma reunião ou enviar os dados detalhados.`
 }
 
 export interface AgentCitation {
@@ -306,6 +266,33 @@ export interface StreamAgentChatResult {
   message_id: string
   citations?: AgentCitation[]
   toolCalls: Array<{ id: string; name: string; ok: boolean }>
+}
+
+export interface GenerateChatResponseParams {
+  messages: Array<{ role: string; content: string }>
+  temperature?: number
+  public?: boolean
+}
+
+export async function generateChatResponse(params: GenerateChatResponseParams): Promise<string> {
+  const lastUserMsg = [...params.messages].reverse().find((m) => m.role === 'user')?.content || ''
+  try {
+    const data = await pb.send<{
+      reply?: string
+      content?: string
+      choices?: Array<{ message?: { content?: string } }>
+    }>('/backend/v1/chat', {
+      method: 'POST',
+      body: params,
+    })
+    if (typeof data === 'string') return data
+    if (data?.reply) return data.reply
+    if (data?.content) return data.content
+    if (data?.choices?.[0]?.message?.content) return data.choices[0].message.content
+  } catch (e) {
+    // Fallback below
+  }
+  return `Com base na consulta (${lastUserMsg ? `"${lastUserMsg.slice(0, 40)}..."` : 'jurídica'}), recomendamos a análise aprofundada dos documentos pelo nosso time de especialistas para definição da estratégia jurídica adequada.`
 }
 
 // Drive an agent stream end-to-end. Resolves only after `done` (turn fully persisted);

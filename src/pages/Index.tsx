@@ -39,18 +39,20 @@ export function DashboardPage() {
   const [customers, setCustomers] = useState<CustomerRecord[]>([])
   const [contracts, setContracts] = useState<ContractRecord[]>([])
   const [campaigns, setCampaigns] = useState<CampaignRecord[]>([])
+  const [leadsWithMessages, setLeadsWithMessages] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
 
   const loadData = async () => {
     if (!tenant?.id) return
     setLoading(true)
     try {
-      const [lList, oList, cList, ctrList, campList] = await Promise.all([
+      const [lList, oList, cList, ctrList, campList, msgSet] = await Promise.all([
         CrmService.getLeads(tenant.id),
         CrmService.getOpportunities(tenant.id),
         CrmService.getCustomers(tenant.id),
         CrmService.getContracts(tenant.id),
         CrmService.getCampaigns(tenant.id),
+        CrmService.getLeadsWithMessagesMap(tenant.id),
       ])
 
       setLeads(lList)
@@ -58,6 +60,7 @@ export function DashboardPage() {
       setCustomers(cList)
       setContracts(ctrList)
       setCampaigns(campList)
+      setLeadsWithMessages(msgSet)
     } finally {
       setLoading(false)
     }
@@ -69,9 +72,17 @@ export function DashboardPage() {
 
   // Computed metrics
   const totalLeads = leads.length
-  const hotLeads = leads.filter(
+  // Leads quentes que aguardam primeiro contato:
+  // - soft_delete != true (já garantido por CrmService.getLeads)
+  // - status inicial/novo ou qualificado_ia (LeadStatusCode)
+  // - sem nenhuma mensagem/interação registrada no lead_messages
+  const INITIAL_HOT_STATUSES = new Set(['novo', 'Novo Lead', 'qualificado_ia', 'Qualificado'])
+  const hotAwaitingContactLeads = leads.filter(
     (l) =>
-      l.temperature === 'hot' || l.temperature === 'quente' || l.temperature === 'muito_quente',
+      INITIAL_HOT_STATUSES.has(l.status || 'novo') &&
+      !leadsWithMessages.has(l.id) &&
+      !l.last_inbound_message_at &&
+      !l.last_outbound_message_at,
   )
   const openOpps = opportunities.filter((o) => o.status === 'open' || !o.status)
   const wonOpps = opportunities.filter((o) => o.status === 'won')
@@ -81,29 +92,34 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      {/* Smart Alert Banner */}
-      <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
-        <div className="flex items-center gap-3">
-          <div className="h-8 w-8 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
-            <Flame className="h-4 w-4 animate-bounce" />
+      {/* Smart Alert Banner - só renderiza se houver leads reais aguardando */}
+      {!loading && hotAwaitingContactLeads.length > 0 && (
+        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs animate-in fade-in duration-200">
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-8 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+              <Flame className="h-4 w-4 animate-bounce" />
+            </div>
+            <div className="text-xs">
+              <span className="font-bold text-foreground">
+                {hotAwaitingContactLeads.length}{' '}
+                {hotAwaitingContactLeads.length === 1
+                  ? 'lead quente com alta intenção aguarda primeiro contato.'
+                  : 'leads quentes com alta intenção aguardam primeiro contato.'}
+              </span>
+              <span className="text-muted-foreground block sm:inline sm:ml-1">
+                Atenda em até 15 minutos para manter a taxa de conversão acima de 25%.
+              </span>
+            </div>
           </div>
-          <div className="text-xs">
-            <span className="font-bold text-foreground">
-              {hotLeads.length} Leads Quentes com alta intenção aguardam primeiro contato.
-            </span>
-            <span className="text-muted-foreground block sm:inline sm:ml-1">
-              Atenda em até 15 minutos para manter a taxa de conversão acima de 25%.
-            </span>
-          </div>
+          <Button
+            size="sm"
+            onClick={() => navigate('/leads?status=novo')}
+            className="h-7 text-xs bg-[#0A1F3F] text-white shrink-0"
+          >
+            Atender Leads Quentes →
+          </Button>
         </div>
-        <Button
-          size="sm"
-          onClick={() => navigate('/leads?temperatura=hot')}
-          className="h-7 text-xs bg-[#0A1F3F] text-white shrink-0"
-        >
-          Atender Leads Quentes →
-        </Button>
-      </div>
+      )}
 
       {/* Main KPI Cards Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

@@ -105,8 +105,14 @@ export function LeadsPage() {
 
   // Filters
   const [searchTerm, setSearchTerm] = useState('')
-  const [temperatureFilter, setTemperatureFilter] = useState('all')
-  const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [temperatureFilter, setTemperatureFilter] = useState(() => {
+    const tempParam = searchParams.get('temperatura')
+    return tempParam ? tempParam : 'all'
+  })
+  const [statusFilter, setStatusFilter] = useState<string>(() => {
+    const statusParam = searchParams.get('status')
+    return statusParam ? statusParam : 'all'
+  })
   const [sourceFilter, setSourceFilter] = useState('all')
   const [responsibleFilter, setResponsibleFilter] = useState('all')
 
@@ -144,6 +150,14 @@ export function LeadsPage() {
       setCreateModalOpen(true)
       searchParams.delete('novo')
       setSearchParams(searchParams)
+    }
+    const tempParam = searchParams.get('temperatura')
+    if (tempParam) {
+      setTemperatureFilter(tempParam)
+    }
+    const statusParam = searchParams.get('status')
+    if (statusParam) {
+      setStatusFilter(statusParam)
     }
   }, [searchParams, setSearchParams])
 
