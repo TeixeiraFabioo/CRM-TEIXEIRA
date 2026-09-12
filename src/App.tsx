@@ -20,12 +20,9 @@ import CustomersPage from '@/pages/Customers'
 import CustomerDetailPage from '@/pages/CustomerDetail'
 import PipelinePage from '@/pages/Pipeline'
 import OpportunityDetailPage from '@/pages/OpportunityDetail'
-import PessoasPage from '@/pages/Pessoas'
 import PessoaDetailPage from '@/pages/PessoaDetail'
-import EmpresasPage from '@/pages/Empresas'
 import EmpresaDetailPage from '@/pages/EmpresaDetail'
 import TarefasPage from '@/pages/Tarefas'
-import ServicosPage from '@/pages/Servicos'
 import PropostasPage from '@/pages/Propostas'
 import ContratosPage from '@/pages/Contratos'
 import ComissoesPage from '@/pages/Comissoes'
@@ -35,11 +32,9 @@ import CampanhasPage from '@/pages/Campanhas'
 import MarketingPage from '@/pages/Marketing'
 import InteligenciaPage from '@/pages/Inteligencia'
 import RelatoriosPage from '@/pages/Relatorios'
-import AutomacoesPage from '@/pages/Automacoes'
 import IntegrationsPage from '@/pages/Integrations'
 import SettingsPage from '@/pages/Settings'
 import MeuPerfilPage from '@/pages/MeuPerfil'
-import KnowledgeBasePage from '@/pages/KnowledgeBase'
 import AuditLogPage from '@/pages/AuditLog'
 import TrashPage from '@/pages/Trash'
 import NotFound from '@/pages/NotFound'
@@ -74,14 +69,6 @@ export default function App() {
               }
             />
             <Route
-              path="servicos"
-              element={
-                <RequireRole allowedRoles={['admin', 'gestor']}>
-                  <ServicosPage />
-                </RequireRole>
-              }
-            />
-            <Route
               path="leads/:id"
               element={
                 <RequireRole allowedRoles={['admin', 'gestor', 'advogado']}>
@@ -106,28 +93,12 @@ export default function App() {
                 </RequireRole>
               }
             />
-            {/* Pessoas & Empresas — admin + gestor only */}
-            <Route
-              path="pessoas"
-              element={
-                <RequireRole allowedRoles={['admin', 'gestor']}>
-                  <PessoasPage />
-                </RequireRole>
-              }
-            />
+            {/* Detalhes de Pessoas & Empresas acessados a partir de clientes/leads */}
             <Route
               path="pessoas/:id"
               element={
                 <RequireRole allowedRoles={['admin', 'gestor']}>
                   <PessoaDetailPage />
-                </RequireRole>
-              }
-            />
-            <Route
-              path="empresas"
-              element={
-                <RequireRole allowedRoles={['admin', 'gestor']}>
-                  <EmpresasPage />
                 </RequireRole>
               }
             />
@@ -142,14 +113,6 @@ export default function App() {
             {/* Pipeline & Opportunities */}
             <Route
               path="pipeline"
-              element={
-                <RequireRole allowedRoles={['admin', 'gestor', 'advogado']}>
-                  <PipelinePage />
-                </RequireRole>
-              }
-            />
-            <Route
-              path="opportunities"
               element={
                 <RequireRole allowedRoles={['admin', 'gestor', 'advogado']}>
                   <PipelinePage />
@@ -246,14 +209,6 @@ export default function App() {
                 </RequireRole>
               }
             />
-            <Route
-              path="automacoes"
-              element={
-                <RequireRole allowedRoles={['admin', 'gestor']}>
-                  <AutomacoesPage />
-                </RequireRole>
-              }
-            />
             {/* System — admin only */}
             <Route
               path="integrations"
@@ -292,14 +247,6 @@ export default function App() {
               element={
                 <RequireRole allowedRoles={['admin']}>
                   <TrashPage />
-                </RequireRole>
-              }
-            />
-            <Route
-              path="base-conhecimento"
-              element={
-                <RequireRole allowedRoles={['admin', 'gestor', 'advogado']}>
-                  <KnowledgeBasePage />
                 </RequireRole>
               }
             />

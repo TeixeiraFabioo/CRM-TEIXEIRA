@@ -32,8 +32,6 @@ import {
   LogOut,
   UserCheck,
   UserCircle,
-  BookOpen,
-  FolderKanban,
   Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -100,18 +98,9 @@ export default function Layout() {
         { name: 'Dashboard Executivo', path: '/', icon: LayoutDashboard },
         { name: 'Leads Jurídicos', path: '/leads', icon: Users, badge: 'Novos' },
         { name: 'Funil & Kanban', path: '/pipeline', icon: Kanban },
+        { name: 'Tarefas & Reuniões', path: '/tarefas', icon: CheckSquare },
         { name: 'Clientes', path: '/clientes', icon: Briefcase },
         { name: 'Meu Perfil', path: '/meu-perfil', icon: UserCircle },
-      ],
-    },
-    {
-      title: 'CADASTROS & CONTATOS',
-      items: [
-        { name: 'Contatos-chave', path: '/pessoas', icon: UserCheck },
-        { name: 'Empresas', path: '/empresas', icon: Building2 },
-        { name: 'Catálogo de Serviços', path: '/servicos', icon: FolderKanban },
-        { name: 'Oportunidades', path: '/opportunities', icon: Target },
-        { name: 'Tarefas & Reuniões', path: '/tarefas', icon: CheckSquare },
       ],
     },
     {
@@ -130,9 +119,7 @@ export default function Layout() {
         { name: 'Campanhas de Tráfego', path: '/campanhas', icon: Megaphone },
         { name: 'Inteligência de Anúncios', path: '/marketing', icon: BarChart3 },
         { name: 'Inteligência Comercial IA', path: '/inteligencia', icon: Brain },
-        { name: 'Base de Conhecimento', path: '/base-conhecimento', icon: BookOpen, badge: 'IA' },
         { name: 'Relatórios Executivos', path: '/relatorios', icon: FileSpreadsheet },
-        { name: 'Automações & Regras', path: '/automacoes', icon: Zap },
       ],
     },
     {
@@ -170,12 +157,8 @@ export default function Layout() {
     '/',
     '/leads',
     '/pipeline',
-    '/clientes',
-    '/pessoas',
-    '/empresas',
-    '/servicos',
-    '/opportunities',
     '/tarefas',
+    '/clientes',
     '/propostas',
     '/contratos',
     '/relatorios',
@@ -185,8 +168,6 @@ export default function Layout() {
     '/metas',
     '/ranking',
     '/comissoes',
-    '/automacoes',
-    '/base-conhecimento',
     '/settings',
     '/meu-perfil',
   ])
@@ -194,9 +175,8 @@ export default function Layout() {
     '/',
     '/leads',
     '/pipeline',
-    '/clientes',
     '/tarefas',
-    '/base-conhecimento',
+    '/clientes',
     '/meu-perfil',
   ])
   const allowedPaths =

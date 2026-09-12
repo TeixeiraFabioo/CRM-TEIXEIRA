@@ -9,6 +9,7 @@ import {
   Target,
   BarChart,
   Eye,
+  Edit2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -40,8 +41,20 @@ export function CampanhasPage() {
   const [campaigns, setCampaigns] = useState<CampaignRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [createModalOpen, setCreateModalOpen] = useState(false)
+  const [editModalOpen, setEditModalOpen] = useState(false)
+  const [editingCampaignId, setEditingCampaignId] = useState<string | null>(null)
 
   const [formData, setFormData] = useState<Partial<CampaignRecord>>({
+    nome: '',
+    plataforma: 'meta_ads',
+    orcamento: 10000,
+    investimento: 4500,
+    status: 'ativa',
+    objetivo: 'Geração de Leads B2B Qualificados',
+    data_inicio: new Date().toISOString().slice(0, 10),
+  })
+
+  const [editFormData, setEditFormData] = useState<Partial<CampaignRecord>>({
     nome: '',
     plataforma: 'meta_ads',
     orcamento: 10000,
@@ -92,6 +105,36 @@ export function CampanhasPage() {
     }
   }
 
+  const handleOpenEdit = (camp: CampaignRecord) => {
+    setEditingCampaignId(camp.id)
+    setEditFormData({
+      nome: camp.nome || '',
+      plataforma: camp.plataforma || 'meta_ads',
+      orcamento: camp.orcamento ?? 10000,
+      investimento: camp.investimento ?? 4500,
+      status: camp.status || 'ativa',
+      objetivo: camp.objetivo || 'Geração de Leads B2B Qualificados',
+      data_inicio: camp.data_inicio
+        ? new Date(camp.data_inicio).toISOString().slice(0, 10)
+        : new Date().toISOString().slice(0, 10),
+    })
+    setEditModalOpen(true)
+  }
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingCampaignId || !editFormData.nome) return
+    try {
+      await CrmService.updateCampaign(editingCampaignId, editFormData)
+      toast({ title: 'Campanha de tráfego atualizada com sucesso!' })
+      setEditModalOpen(false)
+      setEditingCampaignId(null)
+      loadData()
+    } catch (err) {
+      toast({ title: 'Erro ao atualizar campanha', variant: 'destructive' })
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -126,9 +169,20 @@ export function CampanhasPage() {
                     {camp.plataforma} • {camp.objetivo}
                   </p>
                 </div>
-                <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px]">
-                  {camp.status}
-                </Badge>
+                <div className="flex items-center gap-1.5">
+                  <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px]">
+                    {camp.status}
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title="Editar Campanha"
+                    onClick={() => handleOpenEdit(camp)}
+                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                  >
+                    <Edit2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3 text-xs bg-muted/30 p-3 rounded-lg">
@@ -161,6 +215,112 @@ export function CampanhasPage() {
           )
         })}
       </div>
+
+      {/* MODAL DE EDIÇÃO DE CAMPANHA */}
+      <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-legal-serif">
+              Editar Campanha de Tráfego
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleUpdate} className="space-y-3 pt-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Nome da Campanha *</Label>
+              <Input
+                required
+                value={editFormData.nome}
+                onChange={(e) => setEditFormData({ ...editFormData, nome: e.target.value })}
+                placeholder="Ex: Meta Ads - Defesa Execução Fiscal"
+                className="h-9 text-xs"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Plataforma</Label>
+                <Select
+                  value={editFormData.plataforma}
+                  onValueChange={(val) => setEditFormData({ ...editFormData, plataforma: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="meta_ads">Meta Ads (Insta/FB)</SelectItem>
+                    <SelectItem value="google_ads">Google Ads</SelectItem>
+                    <SelectItem value="linkedin_ads">LinkedIn Ads</SelectItem>
+                    <SelectItem value="tiktok_ads">TikTok Ads</SelectItem>
+                    <SelectItem value="youtube">YouTube</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Status</Label>
+                <Select
+                  value={editFormData.status}
+                  onValueChange={(val) => setEditFormData({ ...editFormData, status: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ativa">Ativa</SelectItem>
+                    <SelectItem value="pausada">Pausada</SelectItem>
+                    <SelectItem value="encerrada">Encerrada</SelectItem>
+                    <SelectItem value="rascunho">Rascunho</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Orçamento Total (R$)</Label>
+                <Input
+                  type="number"
+                  value={editFormData.orcamento}
+                  onChange={(e) =>
+                    setEditFormData({ ...editFormData, orcamento: Number(e.target.value) })
+                  }
+                  className="h-9 text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Investimento Realizado (R$)</Label>
+                <Input
+                  type="number"
+                  value={editFormData.investimento}
+                  onChange={(e) =>
+                    setEditFormData({ ...editFormData, investimento: Number(e.target.value) })
+                  }
+                  className="h-9 text-xs"
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Objetivo Comercial</Label>
+              <Input
+                value={editFormData.objetivo}
+                onChange={(e) => setEditFormData({ ...editFormData, objetivo: e.target.value })}
+                placeholder="Ex: Geração de Leads B2B Qualificados"
+                className="h-9 text-xs"
+              />
+            </div>
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setEditModalOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" size="sm" className="bg-[#0A1F3F] text-white">
+                Salvar Alterações
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={createModalOpen} onOpenChange={setCreateModalOpen}>
         <DialogContent className="max-w-md">

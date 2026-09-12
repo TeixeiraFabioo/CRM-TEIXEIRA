@@ -23,7 +23,18 @@ import {
   Calendar,
   RotateCcw,
   Sparkles,
+  Trash2,
 } from 'lucide-react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -56,7 +67,8 @@ import {
 } from '@/types/platform'
 
 export function PipelinePage() {
-  const { tenant } = useTenant()
+  const { tenant, userRole } = useTenant()
+  const isAdmin = userRole === 'admin'
   const { toast } = useToast()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -94,6 +106,33 @@ export function PipelinePage() {
 
   // Drag state
   const [draggedOppId, setDraggedOppId] = useState<string | null>(null)
+
+  // Delete lead state (Admin only)
+  const [leadToDelete, setLeadToDelete] = useState<{ id: string; name: string } | null>(null)
+  const [deletingLead, setDeletingLead] = useState(false)
+
+  const handleConfirmDeleteLead = async () => {
+    if (!leadToDelete?.id || !isAdmin) return
+    setDeletingLead(true)
+    try {
+      await CrmService.softDeleteLead(leadToDelete.id)
+      toast({
+        title: 'Lead excluído com sucesso!',
+        description: `O lead "${leadToDelete.name}" foi movido para a lixeira.`,
+      })
+      setLeadToDelete(null)
+      loadPipelineData()
+    } catch (err: any) {
+      console.error(err)
+      toast({
+        title: 'Erro ao excluir lead',
+        description: err?.message || 'Falha ao processar exclusão.',
+        variant: 'destructive',
+      })
+    } finally {
+      setDeletingLead(false)
+    }
+  }
 
   const loadPipelineData = async () => {
     if (!tenant?.id) return
@@ -681,7 +720,32 @@ export function PipelinePage() {
                           </div>
                         )}
 
-                        <div className="mt-3 pt-2 border-t border-border/50 flex items-center justify-between text-[10px] text-muted-foreground">
+                        {opp.expand?.lead_id && (
+                          <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground bg-muted/30 px-2 py-1 rounded">
+                            <span className="truncate font-medium text-foreground">
+                              Lead: {opp.expand.lead_id.name}
+                            </span>
+                            {isAdmin && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                title="Excluir Lead associado (Admin)"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setLeadToDelete({
+                                    id: opp.expand!.lead_id!.id,
+                                    name: opp.expand!.lead_id!.name,
+                                  })
+                                }}
+                                className="h-5 w-5 text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10 shrink-0 ml-1"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="mt-2 pt-2 border-t border-border/50 flex items-center justify-between text-[10px] text-muted-foreground">
                           <div className="flex items-center gap-1">
                             <User className="h-3 w-3 text-muted-foreground" />
                             <span className="truncate max-w-[100px]">
@@ -863,9 +927,28 @@ export function PipelinePage() {
                     </td>
                     <td className="p-3">{opp.expand?.responsavel_id?.name || 'Geral'}</td>
                     <td className="p-3 pr-4 text-right">
-                      <Button variant="ghost" size="sm" className="h-7 text-xs">
-                        Abrir →
-                      </Button>
+                      <div className="flex items-center justify-end gap-1">
+                        {isAdmin && opp.expand?.lead_id && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Excluir Lead associado (Admin)"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setLeadToDelete({
+                                id: opp.expand!.lead_id!.id,
+                                name: opp.expand!.lead_id!.name,
+                              })
+                            }}
+                            className="h-7 w-7 text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="sm" className="h-7 text-xs">
+                          Abrir →
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 )
@@ -874,6 +957,39 @@ export function PipelinePage() {
           </table>
         </div>
       )}
+      {/* CONFIRMAÇÃO DE EXCLUSÃO DE LEAD - APENAS ADMIN */}
+      <AlertDialog
+        open={Boolean(leadToDelete)}
+        onOpenChange={(open) => !open && setLeadToDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-rose-600">
+              <Trash2 className="h-5 w-5" />
+              Excluir Lead do Funil (Admin)
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza de que deseja excluir o lead <strong>"{leadToDelete?.name}"</strong>? O
+              lead será movido para a lixeira do sistema e suas oportunidades associadas serão
+              arquivadas.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingLead}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault()
+                handleConfirmDeleteLead()
+              }}
+              disabled={deletingLead}
+              className="bg-rose-600 hover:bg-rose-700 text-white"
+            >
+              {deletingLead ? 'Excluindo...' : 'Sim, Excluir Lead'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* CREATE MODAL */}
       <Dialog open={createModalOpen} onOpenChange={setCreateModalOpen}>
         <DialogContent className="max-w-md">
