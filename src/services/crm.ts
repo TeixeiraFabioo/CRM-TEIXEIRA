@@ -424,6 +424,31 @@ export const CrmService = {
     }
   },
 
+  async createStage(data: {
+    pipeline_id: string
+    name: string
+    order: number
+    probability?: number
+    color?: string
+  }): Promise<PipelineStageRecord> {
+    return await pb.collection('pipeline_stages').create<PipelineStageRecord>({
+      probability: 50,
+      color: '#3b82f6',
+      ...data,
+    })
+  },
+
+  async updateStage(
+    stageId: string,
+    data: Partial<PipelineStageRecord>,
+  ): Promise<PipelineStageRecord> {
+    return await pb.collection('pipeline_stages').update<PipelineStageRecord>(stageId, data)
+  },
+
+  async deleteStage(stageId: string): Promise<boolean> {
+    return await pb.collection('pipeline_stages').delete(stageId)
+  },
+
   // --- OPPORTUNITIES (OPORTUNIDADES) ---
   async getOpportunities(tenantId: string): Promise<OpportunityRecord[]> {
     try {

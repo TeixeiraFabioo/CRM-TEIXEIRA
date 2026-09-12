@@ -11,6 +11,7 @@ import {
   Calendar,
   Send,
   Plus,
+  Pencil,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -40,7 +41,8 @@ import { OpportunityRecord, PipelineStageRecord } from '@/types/platform'
 
 export function OpportunityDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const { tenant } = useTenant()
+  const { tenant, userRole } = useTenant()
+  const canEditOpportunity = userRole === 'admin' || userRole === 'gestor'
   const { toast } = useToast()
   const navigate = useNavigate()
 
@@ -48,6 +50,16 @@ export function OpportunityDetailPage() {
   const [contract, setContract] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [sendingContract, setSendingContract] = useState(false)
+
+  const [editModalOpen, setEditModalOpen] = useState(false)
+  const [editFormData, setEditFormData] = useState({
+    title: '',
+    value: 20000,
+    servico: '',
+    probabilidade: 50,
+    observacoes: '',
+  })
+  const [savingEdit, setSavingEdit] = useState(false)
 
   const [wonModalOpen, setWonModalOpen] = useState(false)
   const [wonData, setWonData] = useState({
@@ -75,6 +87,13 @@ export function OpportunityDetailPage() {
           value: data.value || 20000,
           servico: data.servico || 'Honorários',
           observacoes: '',
+        })
+        setEditFormData({
+          title: data.title || '',
+          value: data.value || 0,
+          servico: data.servico || '',
+          probabilidade: data.probabilidade || 50,
+          observacoes: data.observacoes || '',
         })
       }
     } finally {
@@ -147,6 +166,32 @@ export function OpportunityDetailPage() {
     }
   }
 
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!id || !canEditOpportunity) return
+    setSavingEdit(true)
+    try {
+      await CrmService.updateOpportunity(id, {
+        title: editFormData.title,
+        value: Number(editFormData.value),
+        servico: editFormData.servico,
+        probabilidade: Number(editFormData.probabilidade),
+        observacoes: editFormData.observacoes,
+      })
+      toast({ title: 'Oportunidade atualizada com sucesso!' })
+      setEditModalOpen(false)
+      loadOpp()
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao salvar oportunidade',
+        description: err?.message,
+        variant: 'destructive',
+      })
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
   if (loading) return <div className="p-8 text-center">Carregando negócio...</div>
   if (!opp) return <div className="p-8 text-center">Oportunidade não encontrada</div>
 
@@ -170,6 +215,16 @@ export function OpportunityDetailPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          {canEditOpportunity && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setEditModalOpen(true)}
+              className="text-xs gap-1.5"
+            >
+              <Pencil className="h-3.5 w-3.5" /> Editar Oportunidade
+            </Button>
+          )}
           <Button
             size="sm"
             onClick={() => setWonModalOpen(true)}
@@ -331,6 +386,90 @@ export function OpportunityDetailPage() {
               </Button>
               <Button type="submit" size="sm" className="bg-emerald-600 text-white font-bold">
                 Confirmar Ganho
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* EDIT MODAL - GESTOR E ADMIN */}
+      <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-legal-serif">
+              Editar Oportunidade
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSaveEdit} className="space-y-3 pt-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Título do Negócio *</Label>
+              <Input
+                required
+                value={editFormData.title}
+                onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })}
+                className="h-9 text-xs"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Valor dos Honorários (R$)</Label>
+                <Input
+                  type="number"
+                  value={editFormData.value}
+                  onChange={(e) =>
+                    setEditFormData({ ...editFormData, value: Number(e.target.value) })
+                  }
+                  className="h-9 text-xs font-bold"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Probabilidade (%)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={editFormData.probabilidade}
+                  onChange={(e) =>
+                    setEditFormData({ ...editFormData, probabilidade: Number(e.target.value) })
+                  }
+                  className="h-9 text-xs"
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Serviço Jurídico</Label>
+              <Input
+                value={editFormData.servico}
+                onChange={(e) => setEditFormData({ ...editFormData, servico: e.target.value })}
+                className="h-9 text-xs"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Observações</Label>
+              <Textarea
+                rows={3}
+                value={editFormData.observacoes}
+                onChange={(e) => setEditFormData({ ...editFormData, observacoes: e.target.value })}
+                className="text-xs"
+              />
+            </div>
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setEditModalOpen(false)}
+                disabled={savingEdit}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={savingEdit}
+                className="bg-[#0A1F3F] text-white"
+              >
+                {savingEdit ? 'Salvando...' : 'Salvar Alterações'}
               </Button>
             </DialogFooter>
           </form>

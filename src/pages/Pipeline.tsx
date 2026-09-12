@@ -24,6 +24,10 @@ import {
   RotateCcw,
   Sparkles,
   Trash2,
+  Pencil,
+  Edit2,
+  Check as CheckIcon,
+  X as XIcon,
 } from 'lucide-react'
 import {
   AlertDialog,
@@ -53,6 +57,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { pb } from '@/lib/pocketbase/client'
 import { useToast } from '@/hooks/use-toast'
 import { useTenant } from '@/contexts/TenantContext'
 import { CrmService } from '@/services/crm'
@@ -107,30 +112,293 @@ export function PipelinePage() {
   // Drag state
   const [draggedOppId, setDraggedOppId] = useState<string | null>(null)
 
-  // Delete lead state (Admin only)
-  const [leadToDelete, setLeadToDelete] = useState<{ id: string; name: string } | null>(null)
-  const [deletingLead, setDeletingLead] = useState(false)
+  // Delete card / opportunity state (Admin only)
+  const [oppToDelete, setOppToDelete] = useState<{
+    id: string
+    title: string
+    leadId?: string
+  } | null>(null)
+  const [deletingOpp, setDeletingOpp] = useState(false)
 
-  const handleConfirmDeleteLead = async () => {
-    if (!leadToDelete?.id || !isAdmin) return
-    setDeletingLead(true)
+  // Edit Opportunity Modal state (Admin & Gestor)
+  const canEditOpportunity = isAdmin || userRole === 'gestor'
+  const [editOppModalOpen, setEditOppModalOpen] = useState(false)
+  const [editingOpp, setEditingOpp] = useState<OpportunityRecord | null>(null)
+  const [editFormData, setEditFormData] = useState<{
+    title: string
+    value: number
+    servico: string
+    probabilidade: number
+    stage_id: string
+    responsavel_id: string
+    lead_id: string
+    status: 'open' | 'won' | 'lost' | 'archived'
+    observacoes: string
+  }>({
+    title: '',
+    value: 20000,
+    servico: '',
+    probabilidade: 50,
+    stage_id: '',
+    responsavel_id: '',
+    lead_id: '',
+    status: 'open',
+    observacoes: '',
+  })
+  const [savingEditOpp, setSavingEditOpp] = useState(false)
+
+  // Column / Stage management (Admin only)
+  const [columnToEdit, setColumnToEdit] = useState<PipelineStageRecord | null>(null)
+  const [editColumnName, setEditColumnName] = useState('')
+  const [savingColumn, setSavingColumn] = useState(false)
+
+  const [columnToDelete, setColumnToDelete] = useState<PipelineStageRecord | null>(null)
+  const [targetMoveStageId, setTargetMoveStageId] = useState<string>('')
+  const [deletingColumn, setDeletingColumn] = useState(false)
+
+  const [createColumnModalOpen, setCreateColumnModalOpen] = useState(false)
+  const [newColumnName, setNewColumnName] = useState('')
+  const [newColumnProbability, setNewColumnProbability] = useState(50)
+  const [newColumnColor, setNewColumnColor] = useState('#3b82f6')
+  const [savingNewColumn, setSavingNewColumn] = useState(false)
+
+  // Updating card assignment in real-time
+  const [updatingAssigneeOppId, setUpdatingAssigneeOppId] = useState<string | null>(null)
+
+  const handleConfirmDeleteOpp = async () => {
+    if (!oppToDelete?.id || !isAdmin) return
+    setDeletingOpp(true)
     try {
-      await CrmService.softDeleteLead(leadToDelete.id)
+      // Soft-delete the opportunity
+      await CrmService.softDeleteOpportunity(oppToDelete.id)
+      // Also soft-delete the linked lead if available so both go to trash
+      if (oppToDelete.leadId) {
+        try {
+          await CrmService.softDeleteLead(oppToDelete.leadId)
+        } catch {
+          // ignore lead soft-delete if already deleted or permission
+        }
+      }
       toast({
-        title: 'Lead excluído com sucesso!',
-        description: `O lead "${leadToDelete.name}" foi movido para a lixeira.`,
+        title: 'Card excluído com sucesso!',
+        description: `A oportunidade "${oppToDelete.title}" foi movida para a lixeira.`,
       })
-      setLeadToDelete(null)
+      setOppToDelete(null)
       loadPipelineData()
     } catch (err: any) {
       console.error(err)
       toast({
-        title: 'Erro ao excluir lead',
+        title: 'Erro ao excluir card',
         description: err?.message || 'Falha ao processar exclusão.',
         variant: 'destructive',
       })
     } finally {
-      setDeletingLead(false)
+      setDeletingOpp(false)
+    }
+  }
+
+  const handleOpenEditOpp = (e: React.MouseEvent, opp: OpportunityRecord) => {
+    e.stopPropagation()
+    if (!canEditOpportunity) {
+      toast({
+        title: 'Acesso restrito',
+        description: 'Apenas Gestores e Administradores podem editar oportunidades.',
+        variant: 'destructive',
+      })
+      return
+    }
+    setEditingOpp(opp)
+    setEditFormData({
+      title: opp.title || '',
+      value: opp.value || 0,
+      servico: opp.servico || '',
+      probabilidade: opp.probabilidade || 50,
+      stage_id: opp.stage_id || opp.etapa_id || stages[0]?.id || '',
+      responsavel_id: opp.responsavel_id || '',
+      lead_id: opp.lead_id || '',
+      status: (opp.status as any) || 'open',
+      observacoes: opp.observacoes || '',
+    })
+    setEditOppModalOpen(true)
+  }
+
+  const handleSaveEditOpp = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingOpp || !canEditOpportunity) return
+    setSavingEditOpp(true)
+    try {
+      await CrmService.updateOpportunity(editingOpp.id, {
+        title: editFormData.title,
+        value: Number(editFormData.value),
+        servico: editFormData.servico,
+        probabilidade: Number(editFormData.probabilidade),
+        stage_id: editFormData.stage_id,
+        etapa_id: editFormData.stage_id,
+        responsavel_id: editFormData.responsavel_id || null,
+        lead_id: editFormData.lead_id || null,
+        status: editFormData.status,
+        observacoes: editFormData.observacoes,
+      })
+
+      // If responsavel was changed and lead is attached, also sync lead's responsavel_id
+      if (editFormData.lead_id && editFormData.responsavel_id) {
+        try {
+          await pb.collection('leads').update(editFormData.lead_id, {
+            responsavel_id: editFormData.responsavel_id || null,
+          })
+        } catch {
+          /* ignore sync failure */
+        }
+      }
+
+      toast({ title: 'Oportunidade atualizada com sucesso!' })
+      setEditOppModalOpen(false)
+      setEditingOpp(null)
+      loadPipelineData()
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao atualizar oportunidade',
+        description: err?.message || 'Falha ao salvar alterações.',
+        variant: 'destructive',
+      })
+    } finally {
+      setSavingEditOpp(false)
+    }
+  }
+
+  // Quick assignment from Kanban card (Admin only)
+  const handleAssignCard = async (oppId: string, leadId: string | undefined, newUserId: string) => {
+    if (!isAdmin) return
+    const actualUser = newUserId === '_unassigned_' ? '' : newUserId
+    setUpdatingAssigneeOppId(oppId)
+    try {
+      await CrmService.updateOpportunity(oppId, {
+        responsavel_id: actualUser || null,
+      })
+      if (leadId) {
+        await pb.collection('leads').update(leadId, {
+          responsavel_id: actualUser || null,
+        })
+      }
+      toast({
+        title: 'Responsável atribuído!',
+        description: actualUser ? 'Membro atribuído com sucesso.' : 'Card desatribuído.',
+      })
+      loadPipelineData()
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao atribuir responsável',
+        description: err?.message,
+        variant: 'destructive',
+      })
+    } finally {
+      setUpdatingAssigneeOppId(null)
+    }
+  }
+
+  // Column renaming (Admin only)
+  const handleSaveColumnName = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    if (!columnToEdit || !isAdmin || !editColumnName.trim()) return
+    setSavingColumn(true)
+    try {
+      await CrmService.updateStage(columnToEdit.id, {
+        name: editColumnName.trim(),
+      })
+      toast({ title: 'Coluna renomeada com sucesso!' })
+      setColumnToEdit(null)
+      setEditColumnName('')
+      loadPipelineData()
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao renomear coluna',
+        description: err?.message,
+        variant: 'destructive',
+      })
+    } finally {
+      setSavingColumn(false)
+    }
+  }
+
+  // Column creation (Admin only)
+  const handleCreateColumn = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!currentPipeline?.id || !isAdmin || !newColumnName.trim()) return
+    setSavingNewColumn(true)
+    try {
+      const nextOrder = stages.length > 0 ? Math.max(...stages.map((s) => s.order || 0)) + 1 : 1
+      await CrmService.createStage({
+        pipeline_id: currentPipeline.id,
+        name: newColumnName.trim(),
+        order: nextOrder,
+        probability: Number(newColumnProbability) || 50,
+        color: newColumnColor || '#3b82f6',
+      })
+      toast({ title: 'Nova coluna adicionada com sucesso!' })
+      setCreateColumnModalOpen(false)
+      setNewColumnName('')
+      setNewColumnProbability(50)
+      loadPipelineData()
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao criar coluna',
+        description: err?.message,
+        variant: 'destructive',
+      })
+    } finally {
+      setSavingNewColumn(false)
+    }
+  }
+
+  // Column deletion (Admin only)
+  const handleConfirmDeleteColumn = async () => {
+    if (!columnToDelete || !isAdmin) return
+    setDeletingColumn(true)
+    try {
+      const oppsInColumn = opportunities.filter(
+        (o) => o.stage_id === columnToDelete.id || o.etapa_id === columnToDelete.id,
+      )
+
+      // If cards exist, move them to target stage
+      if (oppsInColumn.length > 0) {
+        if (!targetMoveStageId) {
+          toast({
+            title: 'Selecione a coluna de destino',
+            description: 'Escolha para qual coluna mover os cards existentes.',
+            variant: 'destructive',
+          })
+          setDeletingColumn(false)
+          return
+        }
+        await Promise.all(
+          oppsInColumn.map((o) =>
+            CrmService.updateOpportunity(o.id, {
+              stage_id: targetMoveStageId,
+              etapa_id: targetMoveStageId,
+            }),
+          ),
+        )
+      }
+
+      await CrmService.deleteStage(columnToDelete.id)
+      toast({
+        title: 'Coluna excluída com sucesso!',
+        description:
+          oppsInColumn.length > 0
+            ? `${oppsInColumn.length} cards foram movidos para a coluna de destino.`
+            : 'A coluna vazia foi removida.',
+      })
+      setColumnToDelete(null)
+      setTargetMoveStageId('')
+      loadPipelineData()
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao excluir coluna',
+        description: err?.message,
+        variant: 'destructive',
+      })
+    } finally {
+      setDeletingColumn(false)
     }
   }
 
@@ -490,6 +758,21 @@ export function PipelinePage() {
             </Button>
           </div>
 
+          {isAdmin && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                setNewColumnName('')
+                setNewColumnProbability(50)
+                setNewColumnColor('#3b82f6')
+                setCreateColumnModalOpen(true)
+              }}
+              className="h-9 gap-1.5 text-xs font-semibold border-dashed"
+            >
+              <Plus className="h-3.5 w-3.5" /> Adicionar Coluna
+            </Button>
+          )}
+
           <Button
             onClick={() => {
               setTargetStageId(stages[0]?.id || '')
@@ -662,32 +945,118 @@ export function PipelinePage() {
               >
                 {/* Column Header */}
                 <div
-                  className="p-3 border-b bg-card flex items-center justify-between"
+                  className="p-3 border-b bg-card flex items-center justify-between gap-1"
                   style={{ borderTop: `3px solid ${stage.color || '#3b82f6'}` }}
                 >
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-bold text-xs text-foreground">{stage.name}</span>
-                      <span className="text-[10px] px-1.5 py-0.2 bg-muted rounded font-bold text-muted-foreground">
-                        {columnOpps.length}
-                      </span>
+                  {columnToEdit?.id === stage.id ? (
+                    <form
+                      onSubmit={handleSaveColumnName}
+                      className="flex items-center gap-1 flex-1"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Input
+                        autoFocus
+                        value={editColumnName}
+                        onChange={(e) => setEditColumnName(e.target.value)}
+                        className="h-7 text-xs font-semibold px-1.5"
+                        placeholder="Nome da coluna"
+                      />
+                      <Button
+                        type="submit"
+                        size="icon"
+                        variant="ghost"
+                        disabled={savingColumn}
+                        className="h-7 w-7 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10 shrink-0"
+                        title="Salvar nome"
+                      >
+                        <CheckIcon className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => {
+                          setColumnToEdit(null)
+                          setEditColumnName('')
+                        }}
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground shrink-0"
+                        title="Cancelar"
+                      >
+                        <XIcon className="h-3.5 w-3.5" />
+                      </Button>
+                    </form>
+                  ) : (
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`font-bold text-xs text-foreground truncate ${
+                            isAdmin ? 'cursor-pointer hover:underline' : ''
+                          }`}
+                          title={isAdmin ? 'Duplo clique para renomear' : undefined}
+                          onDoubleClick={() => {
+                            if (isAdmin) {
+                              setColumnToEdit(stage)
+                              setEditColumnName(stage.name)
+                            }
+                          }}
+                        >
+                          {stage.name}
+                        </span>
+                        <span className="text-[10px] px-1.5 py-0.2 bg-muted rounded font-bold text-muted-foreground shrink-0">
+                          {columnOpps.length}
+                        </span>
+                      </div>
+                      <div className="text-[11px] font-semibold text-muted-foreground mt-0.5">
+                        R$ {columnValue.toLocaleString('pt-BR')}
+                      </div>
                     </div>
-                    <div className="text-[11px] font-semibold text-muted-foreground mt-0.5">
-                      R$ {columnValue.toLocaleString('pt-BR')}
-                    </div>
-                  </div>
+                  )}
 
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => {
-                      setTargetStageId(stage.id)
-                      setCreateModalOpen(true)
-                    }}
-                    className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </Button>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    {isAdmin && columnToEdit?.id !== stage.id && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Editar nome da coluna (Admin)"
+                          onClick={() => {
+                            setColumnToEdit(stage)
+                            setEditColumnName(stage.name)
+                          }}
+                          className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Excluir coluna (Admin)"
+                          onClick={() => {
+                            setColumnToDelete(stage)
+                            // Default target move stage to another existing column
+                            const otherStage = stages.find((s) => s.id !== stage.id)
+                            setTargetMoveStageId(otherStage?.id || '')
+                          }}
+                          className="h-6 w-6 text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </>
+                    )}
+
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title="Adicionar oportunidade nesta coluna"
+                      onClick={() => {
+                        setTargetStageId(stage.id)
+                        setCreateModalOpen(true)
+                      }}
+                      className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </div>
 
                 {/* Cards Container */}
@@ -709,9 +1078,40 @@ export function PipelinePage() {
                           <h4 className="text-xs font-bold text-foreground group-hover:text-primary transition-colors line-clamp-2">
                             {opp.title}
                           </h4>
-                          <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 shrink-0">
-                            R$ {Number(opp.value || 0).toLocaleString('pt-BR')}
-                          </span>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                              R$ {Number(opp.value || 0).toLocaleString('pt-BR')}
+                            </span>
+                            {canEditOpportunity && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                title="Editar oportunidade (Gestor/Admin)"
+                                onClick={(e) => handleOpenEditOpp(e, opp)}
+                                className="h-5 w-5 text-muted-foreground hover:text-foreground shrink-0"
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </Button>
+                            )}
+                            {isAdmin && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                title="Excluir card (Admin)"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setOppToDelete({
+                                    id: opp.id,
+                                    title: opp.title,
+                                    leadId: opp.expand?.lead_id?.id || opp.lead_id,
+                                  })
+                                }}
+                                className="h-5 w-5 text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10 shrink-0"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            )}
+                          </div>
                         </div>
 
                         {opp.servico && (
@@ -729,12 +1129,13 @@ export function PipelinePage() {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                title="Excluir Lead associado (Admin)"
+                                title="Excluir card / lead (Admin)"
                                 onClick={(e) => {
                                   e.stopPropagation()
-                                  setLeadToDelete({
-                                    id: opp.expand!.lead_id!.id,
-                                    name: opp.expand!.lead_id!.name,
+                                  setOppToDelete({
+                                    id: opp.id,
+                                    title: opp.title,
+                                    leadId: opp.expand!.lead_id!.id,
                                   })
                                 }}
                                 className="h-5 w-5 text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10 shrink-0 ml-1"
@@ -745,15 +1146,56 @@ export function PipelinePage() {
                           </div>
                         )}
 
-                        <div className="mt-2 pt-2 border-t border-border/50 flex items-center justify-between text-[10px] text-muted-foreground">
-                          <div className="flex items-center gap-1">
-                            <User className="h-3 w-3 text-muted-foreground" />
-                            <span className="truncate max-w-[100px]">
-                              {opp.expand?.responsavel_id?.name || 'Não atribuído'}
-                            </span>
-                          </div>
+                        <div className="mt-2 pt-2 border-t border-border/50 flex items-center justify-between gap-1 text-[10px] text-muted-foreground">
+                          {/* Seletor ou exibição de Responsável no card */}
+                          {isAdmin ? (
+                            <div
+                              className="flex items-center gap-1 min-w-0"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <User className="h-3 w-3 text-muted-foreground shrink-0" />
+                              <Select
+                                value={opp.responsavel_id || '_unassigned_'}
+                                onValueChange={(val) =>
+                                  handleAssignCard(
+                                    opp.id,
+                                    opp.expand?.lead_id?.id || opp.lead_id,
+                                    val,
+                                  )
+                                }
+                                disabled={updatingAssigneeOppId === opp.id}
+                              >
+                                <SelectTrigger className="h-6 text-[10px] px-1.5 py-0 border-dashed max-w-[130px] font-medium truncate">
+                                  <SelectValue placeholder="Atribuir..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem
+                                    value="_unassigned_"
+                                    className="text-[11px] text-muted-foreground"
+                                  >
+                                    Não atribuído
+                                  </SelectItem>
+                                  {users.map((u) => (
+                                    <SelectItem key={u.id} value={u.id} className="text-[11px]">
+                                      {u.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 min-w-0">
+                              <User className="h-3 w-3 text-muted-foreground shrink-0" />
+                              <span
+                                className="truncate font-medium text-foreground max-w-[110px]"
+                                title={opp.expand?.responsavel_id?.name || 'Não atribuído'}
+                              >
+                                {opp.expand?.responsavel_id?.name || 'Não atribuído'}
+                              </span>
+                            </div>
+                          )}
 
-                          <div className="flex items-center gap-1 font-semibold text-foreground">
+                          <div className="flex items-center gap-1 font-semibold text-foreground shrink-0">
                             <span>{opp.probabilidade || stage.probability || 50}%</span>
                           </div>
                         </div>
@@ -928,16 +1370,28 @@ export function PipelinePage() {
                     <td className="p-3">{opp.expand?.responsavel_id?.name || 'Geral'}</td>
                     <td className="p-3 pr-4 text-right">
                       <div className="flex items-center justify-end gap-1">
-                        {isAdmin && opp.expand?.lead_id && (
+                        {canEditOpportunity && (
                           <Button
                             variant="ghost"
                             size="icon"
-                            title="Excluir Lead associado (Admin)"
+                            title="Editar Oportunidade"
+                            onClick={(e) => handleOpenEditOpp(e, opp)}
+                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {isAdmin && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Excluir Card (Admin)"
                             onClick={(e) => {
                               e.stopPropagation()
-                              setLeadToDelete({
-                                id: opp.expand!.lead_id!.id,
-                                name: opp.expand!.lead_id!.name,
+                              setOppToDelete({
+                                id: opp.id,
+                                title: opp.title,
+                                leadId: opp.expand?.lead_id?.id || opp.lead_id,
                               })
                             }}
                             className="h-7 w-7 text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10"
@@ -957,38 +1411,354 @@ export function PipelinePage() {
           </table>
         </div>
       )}
-      {/* CONFIRMAÇÃO DE EXCLUSÃO DE LEAD - APENAS ADMIN */}
+      {/* CONFIRMAÇÃO DE EXCLUSÃO DE CARD / OPORTUNIDADE - APENAS ADMIN */}
       <AlertDialog
-        open={Boolean(leadToDelete)}
-        onOpenChange={(open) => !open && setLeadToDelete(null)}
+        open={Boolean(oppToDelete)}
+        onOpenChange={(open) => !open && setOppToDelete(null)}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-rose-600">
               <Trash2 className="h-5 w-5" />
-              Excluir Lead do Funil (Admin)
+              Excluir Card do Funil (Admin)
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Tem certeza de que deseja excluir o lead <strong>"{leadToDelete?.name}"</strong>? O
-              lead será movido para a lixeira do sistema e suas oportunidades associadas serão
-              arquivadas.
+              Tem certeza de que deseja excluir o card <strong>"{oppToDelete?.title}"</strong>? O
+              card será movido para a lixeira do sistema com soft-delete e poderá ser restaurado
+              futuramente.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deletingLead}>Cancelar</AlertDialogCancel>
+            <AlertDialogCancel disabled={deletingOpp}>Cancelar</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 e.preventDefault()
-                handleConfirmDeleteLead()
+                handleConfirmDeleteOpp()
               }}
-              disabled={deletingLead}
+              disabled={deletingOpp}
               className="bg-rose-600 hover:bg-rose-700 text-white"
             >
-              {deletingLead ? 'Excluindo...' : 'Sim, Excluir Lead'}
+              {deletingOpp ? 'Excluindo...' : 'Sim, Excluir Card'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* CONFIRMAÇÃO DE EXCLUSÃO DE COLUNA - APENAS ADMIN */}
+      <AlertDialog
+        open={Boolean(columnToDelete)}
+        onOpenChange={(open) => !open && setColumnToDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-rose-600">
+              <Trash2 className="h-5 w-5" />
+              Excluir Coluna do Kanban
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3">
+              <span>
+                Tem certeza de que deseja excluir a coluna <strong>"{columnToDelete?.name}"</strong>
+                ?
+              </span>
+              {columnToDelete &&
+                (() => {
+                  const count = opportunities.filter(
+                    (o) => o.stage_id === columnToDelete.id || o.etapa_id === columnToDelete.id,
+                  ).length
+                  const remainingStages = stages.filter((s) => s.id !== columnToDelete.id)
+
+                  if (count > 0) {
+                    return (
+                      <div className="pt-2 text-xs text-foreground bg-amber-500/10 border border-amber-500/20 p-2.5 rounded-lg space-y-2">
+                        <p className="font-semibold text-amber-700 dark:text-amber-400">
+                          Atenção: Esta coluna possui {count} {count === 1 ? 'card' : 'cards'}.
+                          Selecione para onde deseja movê-los antes de excluir:
+                        </p>
+                        <Select value={targetMoveStageId} onValueChange={setTargetMoveStageId}>
+                          <SelectTrigger className="h-8 text-xs bg-card">
+                            <SelectValue placeholder="Mover cards para..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {remainingStages.map((s) => (
+                              <SelectItem key={s.id} value={s.id}>
+                                {s.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )
+                  }
+                  return (
+                    <span className="block text-xs text-muted-foreground">
+                      Esta coluna não possui cards no momento e pode ser excluída com segurança.
+                    </span>
+                  )
+                })()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingColumn}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault()
+                handleConfirmDeleteColumn()
+              }}
+              disabled={deletingColumn}
+              className="bg-rose-600 hover:bg-rose-700 text-white"
+            >
+              {deletingColumn ? 'Excluindo...' : 'Sim, Excluir Coluna'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ADICIONAR NOVA COLUNA - APENAS ADMIN */}
+      <Dialog open={createColumnModalOpen} onOpenChange={setCreateColumnModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-legal-serif">
+              Adicionar Nova Coluna ao Kanban
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleCreateColumn} className="space-y-3 pt-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Nome da Coluna *</Label>
+              <Input
+                required
+                value={newColumnName}
+                onChange={(e) => setNewColumnName(e.target.value)}
+                placeholder="Ex: Em Análise Pericial"
+                className="h-9 text-xs"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Probabilidade Sugerida (%)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={newColumnProbability}
+                  onChange={(e) => setNewColumnProbability(Number(e.target.value))}
+                  className="h-9 text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Cor de Destaque</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="color"
+                    value={newColumnColor}
+                    onChange={(e) => setNewColumnColor(e.target.value)}
+                    className="h-9 w-14 p-1 cursor-pointer"
+                  />
+                  <span className="text-xs font-mono text-muted-foreground">{newColumnColor}</span>
+                </div>
+              </div>
+            </div>
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setCreateColumnModalOpen(false)}
+                disabled={savingNewColumn}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={savingNewColumn}
+                className="bg-[#0A1F3F] text-white"
+              >
+                {savingNewColumn ? 'Criando...' : 'Criar Coluna'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* EDITAR OPORTUNIDADE - GESTOR E ADMIN */}
+      <Dialog open={editOppModalOpen} onOpenChange={setEditOppModalOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-legal-serif">
+              Editar Oportunidade
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSaveEditOpp} className="space-y-3 pt-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Título do Negócio *</Label>
+              <Input
+                required
+                value={editFormData.title}
+                onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })}
+                className="h-9 text-xs"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Valor dos Honorários (R$)</Label>
+                <Input
+                  type="number"
+                  value={editFormData.value}
+                  onChange={(e) =>
+                    setEditFormData({ ...editFormData, value: Number(e.target.value) })
+                  }
+                  className="h-9 text-xs font-bold"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Probabilidade (%)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={editFormData.probabilidade}
+                  onChange={(e) =>
+                    setEditFormData({ ...editFormData, probabilidade: Number(e.target.value) })
+                  }
+                  className="h-9 text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Coluna / Etapa</Label>
+                <Select
+                  value={editFormData.stage_id}
+                  onValueChange={(val) => setEditFormData({ ...editFormData, stage_id: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Selecione a etapa..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {stages.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Status do Negócio</Label>
+                <Select
+                  value={editFormData.status}
+                  onValueChange={(val: any) => setEditFormData({ ...editFormData, status: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="open">Em Aberto</SelectItem>
+                    <SelectItem value="won">Ganho / Fechado</SelectItem>
+                    <SelectItem value="lost">Perdido</SelectItem>
+                    <SelectItem value="archived">Arquivado</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Serviço Jurídico</Label>
+              <Input
+                value={editFormData.servico}
+                onChange={(e) => setEditFormData({ ...editFormData, servico: e.target.value })}
+                placeholder="Ex: Recuperação Tributária, Ação Bancária..."
+                className="h-9 text-xs"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Advogado Responsável</Label>
+                <Select
+                  value={editFormData.responsavel_id || '_unassigned_'}
+                  onValueChange={(val) =>
+                    setEditFormData({
+                      ...editFormData,
+                      responsavel_id: val === '_unassigned_' ? '' : val,
+                    })
+                  }
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Selecione..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_unassigned_">Não atribuído</SelectItem>
+                    {users.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Lead Associado</Label>
+                <Select
+                  value={editFormData.lead_id || '_none_'}
+                  onValueChange={(val) =>
+                    setEditFormData({
+                      ...editFormData,
+                      lead_id: val === '_none_' ? '' : val,
+                    })
+                  }
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Nenhum" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none_">Nenhum</SelectItem>
+                    {leads.map((l) => (
+                      <SelectItem key={l.id} value={l.id}>
+                        {l.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Observações Comerciais</Label>
+              <Input
+                value={editFormData.observacoes}
+                onChange={(e) => setEditFormData({ ...editFormData, observacoes: e.target.value })}
+                placeholder="Anotações internas sobre o andamento..."
+                className="h-9 text-xs"
+              />
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setEditOppModalOpen(false)}
+                disabled={savingEditOpp}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={savingEditOpp}
+                className="bg-[#0A1F3F] text-white"
+              >
+                {savingEditOpp ? 'Salvando...' : 'Salvar Alterações'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* CREATE MODAL */}
       <Dialog open={createModalOpen} onOpenChange={setCreateModalOpen}>

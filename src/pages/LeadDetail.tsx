@@ -196,7 +196,7 @@ export function LeadDetailPage() {
   const defaultUserTeam: TeamType =
     (user?.team as TeamType) || ((user?.settings as any)?.team as TeamType) || 'comercial'
   const [selectedTeam, setSelectedTeam] = useState<TeamType>(defaultUserTeam)
-  const [messageChannel, setMessageChannel] = useState<MessageChannelType>('whatsapp')
+  const [messageChannel, setMessageChannel] = useState<MessageChannelType>('internal')
   const [messageContent, setMessageContent] = useState('')
   const [mediaUrlInput, setMediaUrlInput] = useState('')
   const [mediaTypeSelect, setMediaTypeSelect] = useState<'text' | 'image' | 'document'>('text')
@@ -449,75 +449,7 @@ export function LeadDetailPage() {
 
     setSendingMessage(true)
 
-    // Se for canal WhatsApp oficial, disparar via WhatsAppService / backend endpoint
-    if (messageChannel === 'whatsapp') {
-      try {
-        const phone = lead?.whatsapp || lead?.phone || ''
-        if (!phone) {
-          toast({
-            title: 'Lead sem número cadastrado',
-            description: 'Insira um telefone/WhatsApp no lead para enviar mensagem.',
-            variant: 'destructive',
-          })
-          setSendingMessage(false)
-          return
-        }
-
-        const res = await WhatsAppService.sendMessage({
-          lead_id: id,
-          tenant_id: tenant.id,
-          to: phone,
-          message: messageContent.trim(),
-          media_type: mediaTypeSelect !== 'text' && mediaUrlInput ? mediaTypeSelect : 'text',
-          media_url: mediaUrlInput.trim() || undefined,
-          media_caption: messageContent.trim() || undefined,
-          team: selectedTeam,
-          template_name: templateName,
-        })
-
-        if (res.success) {
-          toast({
-            title: 'Mensagem WhatsApp enviada!',
-            description: 'Disparada com sucesso pela Meta Cloud API.',
-          })
-          setMessageContent('')
-          setMediaUrlInput('')
-          setShowMediaInput(false)
-          loadMessages(id)
-          loadAll()
-          setTimeout(() => {
-            chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-          }, 100)
-        } else {
-          if (res.is_window_expired) {
-            toast({
-              title: 'Janela de 24h da Meta Expirada',
-              description:
-                'O cliente não interagiu nas últimas 24h. Envie um Template Oficial aprovado pela Meta para reabrir a conversa.',
-              variant: 'destructive',
-            })
-          } else {
-            toast({
-              title: 'Falha no envio do WhatsApp',
-              description: res.error || 'Erro na Meta Cloud API.',
-              variant: 'destructive',
-            })
-          }
-        }
-      } catch (err: any) {
-        console.error('Erro ao enviar WhatsApp:', err)
-        toast({
-          title: 'Erro de envio',
-          description: err?.message || 'Falha de comunicação com o WhatsApp API.',
-          variant: 'destructive',
-        })
-      } finally {
-        setSendingMessage(false)
-      }
-      return
-    }
-
-    // Se for nota interna
+    // Envio direto como mensagem / nota interna entre equipes
     try {
       await pb.collection('lead_messages').create({
         lead_id: id,
@@ -537,8 +469,8 @@ export function LeadDetailPage() {
     } catch (err: any) {
       console.error(err)
       toast({
-        title: 'Erro ao salvar nota',
-        description: err?.message || 'Falha ao registrar no chat',
+        title: 'Erro ao salvar mensagem',
+        description: err?.message || 'Falha ao registrar mensagem no chat',
         variant: 'destructive',
       })
     } finally {
@@ -1783,8 +1715,8 @@ ${formattedHistory}
                 className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent font-semibold text-xs px-2 flex items-center gap-1.5"
               >
                 <div className="flex items-center gap-1.5">
-                  <div className="h-2 w-2 rounded-full bg-[#25D366]" />
-                  <span>WhatsApp &amp; Chat ({messages.length})</span>
+                  <div className="h-2 w-2 rounded-full bg-primary" />
+                  <span>Chat Interno das Equipes ({messages.length})</span>
                 </div>
               </TabsTrigger>
               <TabsTrigger
@@ -1814,28 +1746,19 @@ ${formattedHistory}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-border/60 gap-3">
                   <div>
                     <div className="flex items-center gap-2">
-                      <div className="h-6 w-6 rounded-md bg-[#25D366] text-white flex items-center justify-center shrink-0">
+                      <div className="h-6 w-6 rounded-md bg-primary text-primary-foreground flex items-center justify-center shrink-0">
                         <MessageSquare className="h-3.5 w-3.5" />
                       </div>
-                      <h4 className="text-sm font-bold">
-                        Central de Atendimento &amp; WhatsApp do Lead
-                      </h4>
-                      {waConnectedStatus ? (
-                        <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 text-[10px] gap-1 h-5">
-                          <Check className="h-3 w-3" /> WhatsApp API Ativo
-                        </Badge>
-                      ) : (
-                        <Badge
-                          variant="outline"
-                          className="text-[10px] text-amber-600 border-amber-500/30 gap-1 h-5"
-                        >
-                          <AlertCircleIcon className="h-3 w-3" /> WhatsApp Desconectado
-                        </Badge>
-                      )}
+                      <h4 className="text-sm font-bold">Chat Interno entre as Equipes do Lead</h4>
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] text-primary border-primary/30 h-5"
+                      >
+                        Comunicação Interna
+                      </Badge>
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Conversas de WhatsApp oficiais sincronizadas em tempo real e notas de
-                      alinhamento interno.
+                      Canal exclusivo para colaboração entre Comercial, Jurídico e Financeiro.
                     </p>
                   </div>
 
@@ -1857,29 +1780,6 @@ ${formattedHistory}
                   </div>
                 </div>
 
-                {/* Status da Janela de 24 horas da Meta */}
-                <div
-                  className={`my-3 p-2.5 rounded-lg border text-xs flex items-center justify-between gap-2 ${
-                    window24hStatus.isOpen
-                      ? window24hStatus.isExpiringSoon
-                        ? 'bg-amber-500/10 text-amber-800 dark:text-amber-300 border-amber-500/30'
-                        : 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 border-emerald-500/30'
-                      : 'bg-muted/80 text-muted-foreground border-border'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Clock className="h-3.5 w-3.5 shrink-0" />
-                    <span>
-                      <strong>Janela de Atendimento Meta:</strong> {window24hStatus.label}
-                    </span>
-                  </div>
-                  {!window24hStatus.isOpen && (
-                    <Badge variant="outline" className="text-[10px] bg-background">
-                      Use um Template de Mensagem para responder
-                    </Badge>
-                  )}
-                </div>
-
                 {/* Messages Container */}
                 <div className="flex-1 overflow-y-auto py-3 space-y-3.5 max-h-[480px] pr-1">
                   {messages.length === 0 ? (
@@ -1891,8 +1791,8 @@ ${formattedHistory}
                         Nenhuma mensagem ou nota registrada neste lead ainda.
                       </p>
                       <p className="text-[11px] text-muted-foreground/70 max-w-sm">
-                        Digite uma mensagem abaixo para enviar pelo WhatsApp oficial ou registrar
-                        uma nota interna.
+                        Digite uma mensagem abaixo para colaborar com os membros da equipe sobre
+                        este lead.
                       </p>
                     </div>
                   ) : (
@@ -2087,39 +1987,24 @@ ${formattedHistory}
                   className="pt-3 border-t border-border/60 space-y-2.5"
                 >
                   <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                    {/* Seletor de Canal (WhatsApp vs Nota Interna) */}
+                    {/* Canal Fixo: Chat Interno */}
                     <div className="flex items-center gap-2">
                       <Label className="text-xs font-semibold text-muted-foreground whitespace-nowrap">
                         Canal:
                       </Label>
-                      <Select
-                        value={messageChannel}
-                        onValueChange={(val: MessageChannelType) => setMessageChannel(val)}
+                      <Badge
+                        variant="outline"
+                        className="h-8 px-2.5 text-xs font-medium gap-1.5 bg-muted/40"
                       >
-                        <SelectTrigger className="h-8 text-xs font-semibold min-w-[140px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="whatsapp">
-                            <span className="flex items-center gap-1.5 text-[#25D366] font-medium">
-                              <MessageSquare className="h-3.5 w-3.5" />
-                              WhatsApp API
-                            </span>
-                          </SelectItem>
-                          <SelectItem value="internal">
-                            <span className="flex items-center gap-1.5 text-foreground font-medium">
-                              <FileText className="h-3.5 w-3.5 text-primary" />
-                              Nota Interna
-                            </span>
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
+                        <FileText className="h-3.5 w-3.5 text-primary" />
+                        Chat Interno entre Equipes
+                      </Badge>
                     </div>
 
                     {/* Equipe */}
                     <div className="flex items-center gap-2">
                       <Label className="text-xs font-semibold text-muted-foreground whitespace-nowrap">
-                        Equipe:
+                        Sua Equipe:
                       </Label>
                       <Select
                         value={selectedTeam}
@@ -2150,157 +2035,32 @@ ${formattedHistory}
                         </SelectContent>
                       </Select>
                     </div>
-
-                    <div className="flex items-center gap-2 ml-auto">
-                      {/* Botão de Anexo de Mídia */}
-                      {messageChannel === 'whatsapp' && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setShowMediaInput(!showMediaInput)}
-                          className={`h-8 text-xs gap-1 ${
-                            showMediaInput ? 'bg-primary/10 text-primary border-primary/40' : ''
-                          }`}
-                        >
-                          <Paperclip className="h-3.5 w-3.5" />
-                          Mídia
-                        </Button>
-                      )}
-
-                      {/* Botão de Templates */}
-                      <Popover open={templatePopoverOpen} onOpenChange={setTemplatePopoverOpen}>
-                        <PopoverTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-8 text-xs gap-1.5 text-primary border-primary/30 hover:bg-primary/5"
-                          >
-                            <MessageSquareText className="h-3.5 w-3.5" />
-                            Templates ({activeMessageTemplates.length})
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-80 p-2 shadow-lg" align="end">
-                          <div className="text-xs font-bold pb-2 mb-1 border-b flex items-center justify-between">
-                            <span>Modelos de Mensagem (WhatsApp / CRM)</span>
-                            <span className="text-[10px] text-muted-foreground font-normal">
-                              Clique para aplicar
-                            </span>
-                          </div>
-                          <div className="space-y-1.5 max-h-60 overflow-y-auto">
-                            {activeMessageTemplates.length === 0 ? (
-                              <div className="p-3 text-xs text-center text-muted-foreground">
-                                Nenhum template ativo cadastrado em Configurações.
-                              </div>
-                            ) : (
-                              activeMessageTemplates.map((t) => (
-                                <button
-                                  key={t.id}
-                                  type="button"
-                                  onClick={() => handleApplyTemplate(t.conteudo)}
-                                  className="w-full text-left p-2 rounded-lg border border-border/50 hover:border-primary/50 hover:bg-muted/40 transition-colors space-y-1"
-                                >
-                                  <div className="flex items-center justify-between">
-                                    <span className="font-semibold text-xs text-foreground truncate">
-                                      {t.nome}
-                                    </span>
-                                    <Badge
-                                      variant="outline"
-                                      className="text-[9px] uppercase px-1 py-0 h-4"
-                                    >
-                                      {t.tipo || 'outro'}
-                                    </Badge>
-                                  </div>
-                                  <p className="text-[11px] text-muted-foreground line-clamp-2 leading-tight">
-                                    {t.conteudo}
-                                  </p>
-                                </button>
-                              ))
-                            )}
-                          </div>
-                        </PopoverContent>
-                      </Popover>
-                    </div>
                   </div>
-
-                  {/* Campo de link de mídia se aberto */}
-                  {showMediaInput && messageChannel === 'whatsapp' && (
-                    <div className="p-2.5 bg-muted/40 border rounded-lg space-y-2 text-xs">
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-[11px] flex items-center gap-1 text-primary">
-                          <Paperclip className="h-3 w-3" /> Anexar Mídia (Link público / CDN)
-                        </span>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={mediaTypeSelect === 'image' ? 'default' : 'outline'}
-                            onClick={() => setMediaTypeSelect('image')}
-                            className="h-6 text-[10px] px-2"
-                          >
-                            Imagem
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={mediaTypeSelect === 'document' ? 'default' : 'outline'}
-                            onClick={() => setMediaTypeSelect('document')}
-                            className="h-6 text-[10px] px-2"
-                          >
-                            Documento PDF
-                          </Button>
-                        </div>
-                      </div>
-                      <Input
-                        placeholder="https://exemplo.com/documento.pdf ou URL da imagem..."
-                        value={mediaUrlInput}
-                        onChange={(e) => setMediaUrlInput(e.target.value)}
-                        className="h-8 text-xs font-mono"
-                      />
-                    </div>
-                  )}
 
                   <div className="flex items-end gap-2">
                     <Textarea
-                      required={!mediaUrlInput.trim()}
+                      required
                       rows={2}
                       value={messageContent}
                       onChange={(e) => setMessageContent(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) {
                           e.preventDefault()
-                          if (messageContent.trim() || mediaUrlInput.trim()) {
+                          if (messageContent.trim()) {
                             handleSendMessage(e)
                           }
                         }
                       }}
-                      placeholder={
-                        messageChannel === 'whatsapp'
-                          ? `Enviar mensagem de WhatsApp para ${lead.whatsapp || lead.phone || 'este lead'}...`
-                          : 'Escreva uma nota interna para o time...'
-                      }
+                      placeholder="Escreva uma mensagem interna para as equipes..."
                       className="text-xs resize-none min-h-[60px]"
                     />
                     <Button
                       type="submit"
-                      disabled={sendingMessage || (!messageContent.trim() && !mediaUrlInput.trim())}
-                      className={`h-10 px-4 gap-1.5 shrink-0 text-xs font-semibold text-white ${
-                        messageChannel === 'whatsapp'
-                          ? 'bg-[#25D366] hover:bg-[#20b859]'
-                          : 'bg-primary'
-                      }`}
+                      disabled={sendingMessage || !messageContent.trim()}
+                      className="h-10 px-4 gap-1.5 shrink-0 text-xs font-semibold text-white bg-primary hover:bg-primary/90"
                     >
-                      {messageChannel === 'whatsapp' ? (
-                        <MessageSquare className="h-3.5 w-3.5" />
-                      ) : (
-                        <Send className="h-3.5 w-3.5" />
-                      )}
-                      {sendingMessage
-                        ? 'Enviando...'
-                        : messageChannel === 'whatsapp'
-                          ? 'Enviar WhatsApp'
-                          : 'Salvar Nota'}
+                      <Send className="h-3.5 w-3.5" />
+                      {sendingMessage ? 'Enviando...' : 'Enviar Mensagem'}
                     </Button>
                   </div>
                 </form>
