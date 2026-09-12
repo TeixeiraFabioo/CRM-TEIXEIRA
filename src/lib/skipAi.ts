@@ -72,10 +72,7 @@ interface SseBlock {
   data: string
 }
 
-async function* readSseBlocks(
-  response: Response,
-  signal?: AbortSignal,
-): AsyncGenerator<SseBlock> {
+async function* readSseBlocks(response: Response, signal?: AbortSignal): AsyncGenerator<SseBlock> {
   if (!response.body) return
   const reader = response.body.getReader()
   // Wire abort directly into the reader. reader.cancel(reason) makes
@@ -351,4 +348,55 @@ export async function streamAgentChat(
   }
 
   return { content, conversation_id: conversationId, message_id: messageId, citations, toolCalls }
+}
+
+export interface GenerateChatResponsePayload {
+  messages: Array<{ role: string; content: string }>
+  prompt?: string
+  temperature?: number
+  leadContext?: string
+  public?: boolean
+  tenantId?: string
+}
+
+/**
+ * Chama o endpoint nativo do PocketBase registrado em hooks/ai_chat.js: POST /api/ai/chat
+ */
+export async function generateChatResponse(
+  params: GenerateChatResponsePayload | string,
+): Promise<string> {
+  const body =
+    typeof params === 'string'
+      ? { prompt: params, messages: [{ role: 'user', content: params }] }
+      : {
+          ...params,
+          prompt:
+            params.prompt ||
+            params.messages?.filter((m) => m.role === 'user').slice(-1)[0]?.content ||
+            '',
+        }
+
+  const res = await fetch('/api/ai/chat', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    let errorDetail = `AI chat failed: ${res.status}`
+    try {
+      const errJson = await res.json()
+      if (errJson.error || errJson.message) {
+        errorDetail = errJson.error || errJson.message
+      }
+    } catch {
+      // ignore
+    }
+    throw new Error(errorDetail)
+  }
+
+  const data = await res.json()
+  return data.text || data.response || data.content || data.answer || ''
 }

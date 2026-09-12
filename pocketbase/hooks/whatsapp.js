@@ -15,7 +15,78 @@
  */
 
 // Webhook GET: Verificação do webhook da Meta (hub.challenge)
-// Registrado em /backend/v1/whatsapp/webhook (padrão Skip Cloud para hooks customizados)
+// Registrado em /api/whatsapp/webhook (conforme chamado pela Meta) e mantendo alias /backend/v1/whatsapp/webhook
+function handleWhatsAppWebhookGet(c) {
+  try {
+    const challenge = c.queryParam('hub.challenge') || c.queryParam('hub_challenge') || ''
+    const mode = c.queryParam('hub.mode') || c.queryParam('hub_mode') || ''
+    const verifyToken = c.queryParam('hub.verify_token') || c.queryParam('hub_verify_token') || ''
+
+    if (mode === 'subscribe' && challenge) {
+      let isTokenValid = false
+      let hasAnyConfig = false
+
+      try {
+        const configs = $app.findRecordsByFilter(
+          'integration_configs',
+          'provider = "whatsapp"',
+          '-created',
+          50,
+          0,
+        )
+
+        if (configs && configs.length > 0) {
+          hasAnyConfig = true
+          for (let i = 0; i < configs.length; i++) {
+            const cfgRec = configs[i]
+            const expectedSecret =
+              cfgRec.getString('webhook_secret') ||
+              cfgRec.getString('api_token') ||
+              cfgRec.getString('api_key') ||
+              ''
+            const cfgJson = cfgRec.get('config_json') || cfgRec.get('config') || {}
+            const tokenInJson = cfgJson.verify_token || cfgJson.webhook_secret || ''
+
+            if (
+              (verifyToken && expectedSecret && verifyToken === expectedSecret) ||
+              (verifyToken && tokenInJson && verifyToken === tokenInJson)
+            ) {
+              isTokenValid = true
+              break
+            }
+          }
+        }
+      } catch (dbErr) {
+        console.log('[WhatsApp Webhook GET] Erro ao buscar configs:', dbErr)
+      }
+
+      // Se verify_token bater OU se não houver config ainda (permite primeira configuração / sandbox)
+      // Ou se o token default for enviado
+      const envSecret =
+        $os.getenv('WHATSAPP_VERIFY_TOKEN') ||
+        $os.getenv('META_VERIFY_TOKEN') ||
+        'skip_hub_crm_whatsapp_verify_token'
+      if (verifyToken && verifyToken === envSecret) {
+        isTokenValid = true
+      }
+
+      if (isTokenValid || !hasAnyConfig || !verifyToken) {
+        console.log('[WhatsApp Webhook GET] Webhook validado com sucesso. Challenge:', challenge)
+        return c.string(200, challenge)
+      }
+
+      console.warn('[WhatsApp Webhook GET] Verify token não coincidiu:', verifyToken)
+      return c.string(403, 'Forbidden')
+    }
+
+    return c.string(403, 'Forbidden')
+  } catch (err) {
+    console.error('[WhatsApp Webhook GET] Erro inesperado:', err)
+    return c.string(500, 'Internal Server Error')
+  }
+}
+
+routerAdd('GET', '/api/whatsapp/webhook', handleWhatsAppWebhookGet)
 routerAdd('GET', '/backend/v1/whatsapp/webhook', (c) => {
   try {
     const challenge = c.queryParam('hub.challenge') || c.queryParam('hub_challenge') || ''
@@ -87,7 +158,7 @@ routerAdd('GET', '/backend/v1/whatsapp/webhook', (c) => {
 })
 
 // Webhook POST: Recebimento de mensagens da Meta WhatsApp Cloud API
-routerAdd('POST', '/backend/v1/whatsapp/webhook', (c) => {
+function handleWhatsAppWebhookPost(c) {
   try {
     let body = null
     try {
