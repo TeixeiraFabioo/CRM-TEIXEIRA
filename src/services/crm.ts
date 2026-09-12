@@ -784,12 +784,29 @@ export const CrmService = {
   async createLeadMessage(data: {
     tenant_id: string
     lead_id: string
-    author_id: string
-    team: 'comercial' | 'juridico' | 'financeiro'
-    type: 'nota' | 'sistema'
+    author_id?: string
+    team?: 'comercial' | 'juridico' | 'financeiro'
+    type?: 'nota' | 'sistema' | 'mensagem' | 'whatsapp'
     content: string
+    channel?: 'internal' | 'whatsapp' | 'email' | 'sms'
+    direction?: 'inbound' | 'outbound'
+    media_type?: string
+    media_url?: string
+    media_caption?: string
+    metadata?: any
   }): Promise<LeadMessageRecord> {
-    return await pb.collection('lead_messages').create<LeadMessageRecord>(data)
+    if (!data.tenant_id) {
+      throw new Error('tenant_id is required to create a lead_message')
+    }
+    if (!data.lead_id) {
+      throw new Error('lead_id is required to create a lead_message')
+    }
+    return await pb.collection('lead_messages').create<LeadMessageRecord>({
+      channel: 'internal',
+      direction: 'outbound',
+      type: 'nota',
+      ...data,
+    })
   },
 
   // --- PROPOSALS (PROPOSTAS) ---

@@ -108,7 +108,7 @@ export function IntegrationsPage() {
   const backendBaseUrl =
     (import.meta as any).env?.VITE_POCKETBASE_URL ||
     (typeof window !== 'undefined' ? window.location.origin : '')
-  const waWebhookUrl = `${backendBaseUrl.replace(/\/$/, '')}/api/whatsapp/webhook`
+  const waWebhookUrl = `${backendBaseUrl.replace(/\/$/, '')}/backend/v1/whatsapp/webhook`
 
   const loadCalendlyState = async () => {
     if (!tenant?.id) return
@@ -822,7 +822,7 @@ export function IntegrationsPage() {
               <div className="bg-background/80 dark:bg-background/60 border border-blue-500/20 rounded p-2 font-mono text-[10px] space-y-1 text-foreground select-all">
                 <div>
                   <span className="text-muted-foreground">URL do Webhook:</span>{' '}
-                  https://teixeiranascimento.goskip.app/api/whatsapp/webhook
+                  https://teixeiranascimento.goskip.app/backend/v1/whatsapp/webhook
                 </div>
                 <div>
                   <span className="text-muted-foreground">Verify Token:</span>{' '}

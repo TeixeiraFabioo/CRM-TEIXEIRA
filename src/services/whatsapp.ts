@@ -278,25 +278,42 @@ export class WhatsAppService {
         return { success: false, error: 'tenant_id é obrigatório para envio de WhatsApp' }
       }
 
-      // 1. Grava no histórico de lead_messages
+      // 1. Grava no histórico de lead_messages apenas se lead_id estiver preenchido (ou busca lead_id por telefone)
+      let resolvedLeadId = params.lead_id || ''
+      if (!resolvedLeadId && (params.to || params.phone)) {
+        try {
+          const rawDigits = (params.to || params.phone || '').replace(/\D/g, '')
+          const found = await pb.collection('leads').getList(1, 1, {
+            filter: `tenant_id = "${tenantId}" && (whatsapp ~ "${rawDigits}" || phone ~ "${rawDigits}")`,
+          })
+          if (found.items.length > 0) {
+            resolvedLeadId = found.items[0].id
+          }
+        } catch {
+          /* intentionally ignored */
+        }
+      }
+
       let messageRec: any = null
-      try {
-        messageRec = await pb.collection('lead_messages').create({
-          tenant_id: tenantId,
-          lead_id: params.lead_id || '',
-          channel: 'whatsapp',
-          direction: 'outbound',
-          sender_type: 'agent',
-          content: params.message || params.content || '',
-          status_delivery: 'sending',
-          metadata: {
-            to: params.to || params.phone,
-            template_name: params.template_name,
-            team: params.team,
-          },
-        })
-      } catch (e) {
-        console.warn('Não foi possível gravar lead_messages pré-envio', e)
+      if (resolvedLeadId) {
+        try {
+          messageRec = await pb.collection('lead_messages').create({
+            tenant_id: tenantId,
+            lead_id: resolvedLeadId,
+            channel: 'whatsapp',
+            direction: 'outbound',
+            type: 'whatsapp',
+            content: params.message || params.content || '',
+            status_delivery: 'sending',
+            metadata: {
+              to: params.to || params.phone,
+              template_name: params.template_name,
+              team: params.team,
+            },
+          })
+        } catch (e) {
+          console.warn('Não foi possível gravar lead_messages pré-envio', e)
+        }
       }
 
       // 2. Aciona o envio via update no integration_configs

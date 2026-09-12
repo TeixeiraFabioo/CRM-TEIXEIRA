@@ -451,9 +451,12 @@ export function LeadDetailPage() {
 
     // Envio direto como mensagem / nota interna entre equipes
     try {
+      if (!tenant.id || !id) {
+        throw new Error('Tenant e Lead são obrigatórios')
+      }
       await pb.collection('lead_messages').create({
-        lead_id: id,
         tenant_id: tenant.id,
+        lead_id: id,
         author_id: authorId,
         team: selectedTeam,
         type: 'nota',
@@ -596,11 +599,13 @@ ${formattedHistory}
     try {
       // Create message of type 'nota' in lead_messages with AI content
       await pb.collection('lead_messages').create({
-        lead_id: id,
         tenant_id: tenant.id,
+        lead_id: id,
         author_id: authorId,
         team: selectedTeam,
         type: 'nota',
+        channel: 'internal',
+        direction: 'outbound',
         content: `🤖 [Assistente IA / Parecer]\n${aiMessageContent}`,
       })
 
@@ -699,11 +704,13 @@ ${formattedHistory}
           minute: '2-digit',
         })
         await pb.collection('lead_messages').create({
-          lead_id: id,
           tenant_id: tenant.id,
+          lead_id: id,
           author_id: operatorId,
           team: (lead.team_owner || lead.team || 'comercial') as any,
           type: 'sistema',
+          channel: 'internal',
+          direction: 'outbound',
           content: `👤 ${operatorName} reatribuiu o responsável do lead de "${fromName}" para "${toName}" em ${nowFormatted}`,
         })
         loadMessages(id)
@@ -812,11 +819,13 @@ ${formattedHistory}
 
       // 3. Inserir mensagem de sistema na thread
       await pb.collection('lead_messages').create({
-        lead_id: id,
         tenant_id: tenant.id,
+        lead_id: id,
         author_id: authorId,
         team: targetTeam,
         type: 'sistema',
+        channel: 'internal',
+        direction: 'outbound',
         content: systemContent,
       })
 
@@ -846,11 +855,13 @@ ${formattedHistory}
     try {
       // 1. Create in lead_messages so it appears in the chat thread
       await pb.collection('lead_messages').create({
-        lead_id: id,
         tenant_id: tenant.id,
+        lead_id: id,
         author_id: authorId,
         team: selectedTeam,
         type: 'nota',
+        channel: 'internal',
+        direction: 'outbound',
         content: noteContent.trim(),
       })
 
@@ -1030,11 +1041,12 @@ ${formattedHistory}
   })
 
   tasks.forEach((t) => {
+    const meetText = t.meet_link ? `\n🎥 Google Meet: ${t.meet_link}` : ''
     timelineItems.push({
       id: t.id,
       type: 'task',
-      title: `✅ Tarefa: ${t.titulo || (t as any).title}`,
-      description: `Status: ${t.status || 'pendente'} • ${t.tipo ? `Tipo: ${t.tipo} • ` : ''}Agendado: ${t.data || (t as any).due_date || 'Data não definida'} ${t.horario || ''}`,
+      title: `${t.meet_link ? '🎥' : '✅'} Tarefa: ${t.titulo || (t as any).title}`,
+      description: `Status: ${t.status || 'pendente'} • ${t.tipo ? `Tipo: ${t.tipo} • ` : ''}Agendado: ${t.data || (t as any).due_date || 'Data não definida'} ${t.horario || ''}${meetText}`,
       date: t.created || '',
       author: (t as any).expand?.responsavel_id?.name,
     })

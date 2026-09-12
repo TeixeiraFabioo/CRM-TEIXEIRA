@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
-  CheckSquare,
   Calendar as CalendarIcon,
   Plus,
   Search,
@@ -12,6 +11,14 @@ import {
   MessageSquare,
   FileText,
   AlertCircle,
+  Video,
+  ExternalLink,
+  ChevronLeft,
+  ChevronRight,
+  Users,
+  AlertTriangle,
+  CalendarDays,
+  ListTodo,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -35,22 +42,41 @@ import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
 import { useTenant } from '@/contexts/TenantContext'
 import { CrmService } from '@/services/crm'
-import { TaskRecord, UserRecord, LeadRecord } from '@/types/platform'
+import { TaskRecord, UserRecord, LeadRecord, OpportunityRecord } from '@/types/platform'
 
 export function TarefasPage() {
-  const { tenant } = useTenant()
+  const { tenant, user } = useTenant()
   const { toast } = useToast()
 
   const [tasks, setTasks] = useState<TaskRecord[]>([])
   const [users, setUsers] = useState<UserRecord[]>([])
   const [leads, setLeads] = useState<LeadRecord[]>([])
+  const [opportunities, setOpportunities] = useState<OpportunityRecord[]>([])
   const [loading, setLoading] = useState(true)
 
-  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [createModalOpen, setCreateModalOpen] = useState(false)
+  const [viewMode, setViewMode] = useState<'list' | 'weekly' | 'daily'>('list')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pendente' | 'concluida'>('all')
+  const [selectedUserFilter, setSelectedUserFilter] = useState<string>('all')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date())
 
-  const [formData, setFormData] = useState<Partial<TaskRecord>>({
+  const [createModalOpen, setCreateModalOpen] = useState(false)
+  const [savingTask, setSavingTask] = useState(false)
+
+  const [formData, setFormData] = useState<{
+    titulo: string
+    tipo: TaskRecord['tipo']
+    prioridade: TaskRecord['prioridade']
+    status: TaskRecord['status']
+    data: string
+    horario: string
+    descricao: string
+    lead_id: string
+    oportunidade_id: string
+    responsavel_id: string
+    participantes: string
+    meet_link: string
+  }>({
     titulo: '',
     tipo: 'reuniao',
     prioridade: 'alta',
@@ -59,21 +85,26 @@ export function TarefasPage() {
     horario: '10:00',
     descricao: '',
     lead_id: '',
+    oportunidade_id: '',
     responsavel_id: '',
+    participantes: '',
+    meet_link: '',
   })
 
   const loadData = async () => {
     if (!tenant?.id) return
     setLoading(true)
     try {
-      const [tList, uList, lList] = await Promise.all([
+      const [tList, uList, lList, oppList] = await Promise.all([
         CrmService.getTasks(tenant.id),
         CrmService.getUsers(tenant.id),
         CrmService.getLeads(tenant.id),
+        CrmService.getOpportunities(tenant.id),
       ])
       setTasks(tList)
       setUsers(uList)
       setLeads(lList)
+      setOpportunities(oppList)
     } finally {
       setLoading(false)
     }
@@ -83,12 +114,118 @@ export function TarefasPage() {
     loadData()
   }, [tenant?.id])
 
+  // Normalização de data para YYYY-MM-DD
+  const formatYmd = (d: Date): string => {
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
+
+  // Helper de parse de participantes
+  const getParticipantsList = (task: TaskRecord): string[] => {
+    if (!task.participantes) return []
+    if (Array.isArray(task.participantes)) {
+      return task.participantes.map(String).filter(Boolean)
+    }
+    if (typeof task.participantes === 'string') {
+      try {
+        const parsed = JSON.parse(task.participantes)
+        if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean)
+      } catch {
+        /* intentionally ignored */
+      }
+      return task.participantes
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    }
+    return []
+  }
+
+  // Detecção de conflito de agenda (mesmo responsável, mesma data e mesmo horário em tarefas pendentes/em_andamento)
+  const conflictMap = useMemo(() => {
+    const map = new Set<string>()
+    const activeTasks = tasks.filter(
+      (t) => t.status !== 'concluida' && t.status !== 'cancelada' && t.data && t.horario,
+    )
+
+    for (let i = 0; i < activeTasks.length; i++) {
+      for (let j = i + 1; j < activeTasks.length; j++) {
+        const a = activeTasks[i]
+        const b = activeTasks[j]
+        const aResp = a.responsavel_id || 'unassigned'
+        const bResp = b.responsavel_id || 'unassigned'
+        const aDate = (a.data || '').slice(0, 10)
+        const bDate = (b.data || '').slice(0, 10)
+        const aTime = (a.horario || '').slice(0, 5)
+        const bTime = (b.horario || '').slice(0, 5)
+
+        if (aResp === bResp && aDate === bDate && aTime === bTime) {
+          map.add(a.id)
+          map.add(b.id)
+        }
+      }
+    }
+    return map
+  }, [tasks])
+
+  // Contador de carga de trabalho por responsável (tarefas pendentes ativas)
+  const workloadByUser = useMemo(() => {
+    const counts: Record<
+      string,
+      { total: number; urgente: number; hoje: number; reunioes: number }
+    > = {}
+    const todayStr = formatYmd(new Date())
+
+    tasks.forEach((t) => {
+      if (t.status === 'concluida' || t.status === 'cancelada') return
+      const uId = t.responsavel_id || 'unassigned'
+      if (!counts[uId]) {
+        counts[uId] = { total: 0, urgente: 0, hoje: 0, reunioes: 0 }
+      }
+      counts[uId].total += 1
+      if (t.prioridade === 'urgente') counts[uId].urgente += 1
+      if ((t.data || '').slice(0, 10) === todayStr) counts[uId].hoje += 1
+      if (t.tipo === 'reuniao') counts[uId].reunioes += 1
+    })
+
+    return counts
+  }, [tasks])
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!tenant?.id || !formData.titulo) return
+    if (!tenant?.id || !formData.titulo.trim()) return
+
+    setSavingTask(true)
     try {
-      await CrmService.createTask(tenant.id, formData)
-      toast({ title: 'Tarefa/Compromisso agendado com sucesso!' })
+      const participantsArray = formData.participantes
+        ? formData.participantes
+            .split(',')
+            .map((p) => p.trim())
+            .filter(Boolean)
+        : []
+
+      await CrmService.createTask(tenant.id, {
+        titulo: formData.titulo.trim(),
+        tipo: formData.tipo,
+        prioridade: formData.prioridade,
+        status: formData.status,
+        data: formData.data || undefined,
+        horario: formData.horario || undefined,
+        descricao: formData.descricao?.trim() || undefined,
+        lead_id: formData.lead_id || undefined,
+        oportunidade_id: formData.oportunidade_id || undefined,
+        responsavel_id: formData.responsavel_id || undefined,
+        meet_link: formData.meet_link?.trim() || undefined,
+        participantes: participantsArray,
+      })
+
+      toast({
+        title: 'Tarefa / Reunião agendada com sucesso!',
+        description:
+          formData.tipo === 'reuniao' ? 'Se integrado, o link Google Meet será gerado.' : undefined,
+      })
       setCreateModalOpen(false)
       setFormData({
         titulo: '',
@@ -99,11 +236,20 @@ export function TarefasPage() {
         horario: '10:00',
         descricao: '',
         lead_id: '',
+        oportunidade_id: '',
         responsavel_id: '',
+        participantes: '',
+        meet_link: '',
       })
       loadData()
-    } catch (err) {
-      toast({ title: 'Erro ao criar tarefa', variant: 'destructive' })
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao criar tarefa',
+        description: err?.message || 'Falha ao gravar registro.',
+        variant: 'destructive',
+      })
+    } finally {
+      setSavingTask(false)
     }
   }
 
@@ -121,151 +267,711 @@ export function TarefasPage() {
     }
   }
 
-  const filteredTasks = tasks.filter((t) => {
-    if (statusFilter === 'all') return true
-    return t.status === statusFilter
-  })
+  // Filtragem
+  const filteredTasks = useMemo(() => {
+    return tasks.filter((t) => {
+      if (statusFilter !== 'all' && t.status !== statusFilter) return false
+      if (selectedUserFilter !== 'all') {
+        if (selectedUserFilter === 'unassigned') {
+          if (t.responsavel_id) return false
+        } else if (t.responsavel_id !== selectedUserFilter) {
+          return false
+        }
+      }
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase()
+        const matchTitle = t.titulo?.toLowerCase().includes(q)
+        const matchDesc = t.descricao?.toLowerCase().includes(q)
+        const matchLead = t.expand?.lead_id?.name?.toLowerCase().includes(q)
+        const matchResp = t.expand?.responsavel_id?.name?.toLowerCase().includes(q)
+        if (!matchTitle && !matchDesc && !matchLead && !matchResp) return false
+      }
+      return true
+    })
+  }, [tasks, statusFilter, selectedUserFilter, searchQuery])
+
+  // Cálculo da semana selecionada (Segunda a Domingo)
+  const currentWeekDays = useMemo(() => {
+    const curr = new Date(selectedDate)
+    const day = curr.getDay()
+    // Ajuste para começar na segunda-feira
+    const diffToMonday = curr.getDate() - day + (day === 0 ? -6 : 1)
+    const monday = new Date(curr.setDate(diffToMonday))
+
+    const days: Date[] = []
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday)
+      d.setDate(monday.getDate() + i)
+      days.push(d)
+    }
+    return days
+  }, [selectedDate])
+
+  const selectedDateYmd = formatYmd(selectedDate)
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold font-legal-serif">Tarefas &amp; Agenda Jurídica</h1>
-            <Badge variant="outline">{filteredTasks.length} tarefas</Badge>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-bold font-legal-serif text-foreground">
+              Tarefas &amp; Agenda Jurídica
+            </h1>
+            <Badge variant="outline" className="font-mono text-xs">
+              {filteredTasks.length} de {tasks.length}
+            </Badge>
+            {conflictMap.size > 0 && (
+              <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 gap-1 text-xs">
+                <AlertTriangle className="h-3 w-3" />
+                {conflictMap.size} conflitos de agenda
+              </Badge>
+            )}
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Acompanhamento de prazos, reuniões de fechamento, ligações e retornos.
+            Gestão de prazos, reuniões (Google Meet), audiências e contador de carga por
+            responsável.
           </p>
         </div>
 
-        <Button
-          onClick={() => setCreateModalOpen(true)}
-          className="h-9 gap-1.5 bg-[#0A1F3F] text-white text-xs font-semibold"
-        >
-          <Plus className="h-4 w-4" /> Nova Tarefa / Reunião
-        </Button>
-      </div>
-
-      <div className="bg-card border rounded-xl p-3 flex justify-between items-center text-xs">
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <Button
-            variant={statusFilter === 'all' ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={() => setStatusFilter('all')}
-            className="h-7 text-xs"
+            onClick={() => setCreateModalOpen(true)}
+            className="h-9 gap-1.5 bg-[#0A1F3F] text-white hover:bg-[#0e2a56] text-xs font-semibold shadow-2xs"
           >
-            Todas
-          </Button>
-          <Button
-            variant={statusFilter === 'pendente' ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={() => setStatusFilter('pendente')}
-            className="h-7 text-xs"
-          >
-            Pendentes
-          </Button>
-          <Button
-            variant={statusFilter === 'concluida' ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={() => setStatusFilter('concluida')}
-            className="h-7 text-xs"
-          >
-            Concluídas
+            <Plus className="h-4 w-4" /> Nova Tarefa / Reunião
           </Button>
         </div>
       </div>
 
-      <div className="bg-card border rounded-xl overflow-hidden">
-        <div className="divide-y text-xs">
-          {loading ? (
-            <div className="p-8 text-center text-muted-foreground">Carregando tarefas...</div>
-          ) : filteredTasks.length === 0 ? (
-            <div className="p-8 text-center text-muted-foreground">Nenhuma tarefa encontrada.</div>
-          ) : (
-            filteredTasks.map((t) => (
-              <div
-                key={t.id}
-                className={`p-4 flex items-center justify-between gap-3 hover:bg-muted/30 transition-colors ${
-                  t.status === 'concluida' ? 'opacity-60' : ''
+      {/* Carga de trabalho por Responsável (Cenário 2) */}
+      <div className="bg-card border rounded-xl p-4 shadow-2xs space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            <Users className="h-3.5 w-3.5 text-primary" />
+            <span>Distribuição de Carga de Trabalho (Tarefas Ativas)</span>
+          </div>
+          <span className="text-[11px] text-muted-foreground">
+            Clique no responsável para filtrar
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
+          <button
+            type="button"
+            onClick={() => setSelectedUserFilter('all')}
+            className={`p-2.5 rounded-lg border text-left transition-all ${
+              selectedUserFilter === 'all'
+                ? 'border-primary bg-primary/10 ring-1 ring-primary'
+                : 'border-border/70 hover:bg-muted/40'
+            }`}
+          >
+            <div className="text-[11px] font-medium text-muted-foreground truncate">
+              Todos os Responsáveis
+            </div>
+            <div className="text-lg font-bold mt-0.5 font-legal-serif">
+              {tasks.filter((t) => t.status !== 'concluida' && t.status !== 'cancelada').length}
+            </div>
+            <div className="text-[10px] text-muted-foreground">ativas no total</div>
+          </button>
+
+          {users.map((u) => {
+            const load = workloadByUser[u.id] || { total: 0, urgente: 0, hoje: 0, reunioes: 0 }
+            const isSelected = selectedUserFilter === u.id
+            const isOverloaded = load.total >= 8
+
+            return (
+              <button
+                key={u.id}
+                type="button"
+                onClick={() => setSelectedUserFilter(isSelected ? 'all' : u.id)}
+                className={`p-2.5 rounded-lg border text-left transition-all relative ${
+                  isSelected
+                    ? 'border-primary bg-primary/10 ring-1 ring-primary'
+                    : 'border-border/70 hover:bg-muted/40'
                 }`}
               >
-                <div className="flex items-start gap-3">
-                  <button
-                    onClick={() => toggleTaskStatus(t)}
-                    className={`mt-0.5 h-5 w-5 rounded border flex items-center justify-center transition-colors ${
-                      t.status === 'concluida'
-                        ? 'bg-emerald-600 border-emerald-600 text-white'
-                        : 'border-border hover:border-primary'
-                    }`}
-                  >
-                    {t.status === 'concluida' && <CheckCircle2 className="h-3.5 w-3.5" />}
-                  </button>
-                  <div>
-                    <div className="font-semibold text-sm flex items-center gap-2">
-                      <span className={t.status === 'concluida' ? 'line-through' : ''}>
-                        {t.titulo}
-                      </span>
-                      <Badge variant="outline" className="text-[10px] h-4">
-                        {t.tipo}
-                      </Badge>
-                      <Badge
-                        className={`text-[10px] h-4 ${
-                          t.prioridade === 'urgente'
-                            ? 'bg-rose-500/10 text-rose-600'
-                            : 'bg-blue-500/10 text-blue-600'
-                        }`}
-                      >
-                        {t.prioridade}
-                      </Badge>
-                    </div>
-                    <div className="text-[11px] text-muted-foreground mt-1 flex items-center gap-3">
-                      <span>
-                        Data: {t.data ? new Date(t.data).toLocaleDateString('pt-BR') : 'Hoje'} às{' '}
-                        {t.horario || '10:00'}
-                      </span>
-                      {t.expand?.lead_id && <span>Lead: {t.expand.lead_id.name}</span>}
-                      {t.expand?.responsavel_id && (
-                        <span>Resp: {t.expand.responsavel_id.name}</span>
-                      )}
-                    </div>
-                    {t.descricao && (
-                      <p className="text-xs text-muted-foreground mt-1">{t.descricao}</p>
-                    )}
-                  </div>
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-xs font-semibold truncate text-foreground">
+                    {u.name || u.email}
+                  </span>
+                  {isOverloaded && (
+                    <span
+                      title="Carga elevada: mais de 8 tarefas pendentes"
+                      className="h-2 w-2 rounded-full bg-rose-500 shrink-0"
+                    />
+                  )}
                 </div>
 
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => toggleTaskStatus(t)}
-                  className="h-7 text-xs"
-                >
-                  {t.status === 'concluida' ? 'Reabrir' : 'Concluir'}
-                </Button>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="text-lg font-bold font-legal-serif">{load.total}</span>
+                  <span className="text-[10px] text-muted-foreground">tarefas</span>
+                </div>
+
+                <div className="flex items-center gap-1.5 mt-1 text-[10px] text-muted-foreground">
+                  {load.urgente > 0 && (
+                    <span className="text-rose-600 font-semibold">{load.urgente} urgentes</span>
+                  )}
+                  {load.reunioes > 0 && <span>• {load.reunioes} reun.</span>}
+                </div>
+              </button>
+            )
+          })}
+
+          {workloadByUser['unassigned']?.total > 0 && (
+            <button
+              type="button"
+              onClick={() =>
+                setSelectedUserFilter(selectedUserFilter === 'unassigned' ? 'all' : 'unassigned')
+              }
+              className={`p-2.5 rounded-lg border text-left transition-all ${
+                selectedUserFilter === 'unassigned'
+                  ? 'border-primary bg-primary/10 ring-1 ring-primary'
+                  : 'border-border/70 hover:bg-muted/40'
+              }`}
+            >
+              <div className="text-[11px] font-medium text-amber-600 truncate">Sem Responsável</div>
+              <div className="text-lg font-bold mt-0.5 font-legal-serif text-amber-600">
+                {workloadByUser['unassigned'].total}
               </div>
-            ))
+              <div className="text-[10px] text-muted-foreground">pendentes de triagem</div>
+            </button>
           )}
         </div>
       </div>
 
+      {/* Barra de Filtros & Alternância de Visualização */}
+      <div className="bg-card border rounded-xl p-3 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs shadow-2xs">
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="relative min-w-[200px]">
+            <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Buscar por título, lead, responsável..."
+              className="h-8 pl-8 text-xs"
+            />
+          </div>
+
+          <div className="flex items-center gap-1 border-l pl-2">
+            <Button
+              variant={statusFilter === 'all' ? 'secondary' : 'ghost'}
+              size="sm"
+              onClick={() => setStatusFilter('all')}
+              className="h-7 text-xs px-2.5"
+            >
+              Todas
+            </Button>
+            <Button
+              variant={statusFilter === 'pendente' ? 'secondary' : 'ghost'}
+              size="sm"
+              onClick={() => setStatusFilter('pendente')}
+              className="h-7 text-xs px-2.5"
+            >
+              Pendentes
+            </Button>
+            <Button
+              variant={statusFilter === 'concluida' ? 'secondary' : 'ghost'}
+              size="sm"
+              onClick={() => setStatusFilter('concluida')}
+              className="h-7 text-xs px-2.5"
+            >
+              Concluídas
+            </Button>
+          </div>
+        </div>
+
+        {/* Modos de Visão */}
+        <div className="flex items-center gap-1.5 self-end md:self-auto">
+          <Button
+            variant={viewMode === 'list' ? 'secondary' : 'outline'}
+            size="sm"
+            onClick={() => setViewMode('list')}
+            className="h-7 text-xs gap-1.5"
+          >
+            <ListTodo className="h-3.5 w-3.5" /> Lista
+          </Button>
+          <Button
+            variant={viewMode === 'weekly' ? 'secondary' : 'outline'}
+            size="sm"
+            onClick={() => setViewMode('weekly')}
+            className="h-7 text-xs gap-1.5"
+          >
+            <CalendarDays className="h-3.5 w-3.5" /> Semanal
+          </Button>
+          <Button
+            variant={viewMode === 'daily' ? 'secondary' : 'outline'}
+            size="sm"
+            onClick={() => setViewMode('daily')}
+            className="h-7 text-xs gap-1.5"
+          >
+            <Clock className="h-3.5 w-3.5" /> Diária
+          </Button>
+        </div>
+      </div>
+
+      {/* Conteúdo: Lista, Semanal ou Diária */}
+      {viewMode === 'list' && (
+        <div className="bg-card border rounded-xl overflow-hidden shadow-2xs">
+          <div className="divide-y text-xs">
+            {loading ? (
+              <div className="p-8 text-center text-muted-foreground">Carregando tarefas...</div>
+            ) : filteredTasks.length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground">
+                Nenhuma tarefa encontrada para os filtros selecionados.
+              </div>
+            ) : (
+              filteredTasks.map((t) => {
+                const hasConflict = conflictMap.has(t.id)
+                const participants = getParticipantsList(t)
+                const isCompleted = t.status === 'concluida'
+
+                return (
+                  <div
+                    key={t.id}
+                    className={`p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-muted/30 transition-colors ${
+                      isCompleted ? 'opacity-60 bg-muted/10' : ''
+                    } ${hasConflict ? 'border-l-4 border-l-amber-500 bg-amber-500/5' : ''}`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <button
+                        type="button"
+                        onClick={() => toggleTaskStatus(t)}
+                        title={isCompleted ? 'Reabrir tarefa' : 'Concluir tarefa'}
+                        className={`mt-0.5 h-5 w-5 rounded border flex items-center justify-center transition-colors shrink-0 ${
+                          isCompleted
+                            ? 'bg-emerald-600 border-emerald-600 text-white'
+                            : 'border-border hover:border-primary'
+                        }`}
+                      >
+                        {isCompleted && <CheckCircle2 className="h-3.5 w-3.5" />}
+                      </button>
+
+                      <div className="space-y-1">
+                        <div className="font-semibold text-sm flex items-center gap-2 flex-wrap">
+                          <span className={isCompleted ? 'line-through text-muted-foreground' : ''}>
+                            {t.titulo}
+                          </span>
+                          <Badge variant="outline" className="text-[10px] h-4 uppercase">
+                            {t.tipo}
+                          </Badge>
+                          <Badge
+                            className={`text-[10px] h-4 ${
+                              t.prioridade === 'urgente'
+                                ? 'bg-rose-500/10 text-rose-600'
+                                : t.prioridade === 'alta'
+                                  ? 'bg-amber-500/10 text-amber-600'
+                                  : 'bg-blue-500/10 text-blue-600'
+                            }`}
+                          >
+                            {t.prioridade}
+                          </Badge>
+
+                          {hasConflict && (
+                            <Badge className="bg-amber-500 text-white text-[10px] h-4 gap-1">
+                              <AlertTriangle className="h-2.5 w-2.5" /> Conflito de Horário
+                            </Badge>
+                          )}
+
+                          {t.meet_link && (
+                            <a
+                              href={t.meet_link}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-medium bg-blue-500/10 px-2 py-0.5 rounded-md"
+                            >
+                              <Video className="h-3 w-3" /> Entrar no Google Meet
+                              <ExternalLink className="h-2.5 w-2.5" />
+                            </a>
+                          )}
+                        </div>
+
+                        <div className="text-[11px] text-muted-foreground flex items-center gap-3 flex-wrap">
+                          <span className="flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {t.data
+                              ? new Date(t.data).toLocaleDateString('pt-BR')
+                              : 'Data não definida'}{' '}
+                            às {t.horario || '10:00'}
+                          </span>
+
+                          {t.expand?.responsavel_id && (
+                            <span className="flex items-center gap-1">
+                              <User className="h-3 w-3" />
+                              Resp: <strong>{t.expand.responsavel_id.name}</strong>
+                            </span>
+                          )}
+
+                          {t.expand?.lead_id && (
+                            <span className="flex items-center gap-1">
+                              Lead: <strong>{t.expand.lead_id.name}</strong>
+                            </span>
+                          )}
+
+                          {participants.length > 0 && (
+                            <span className="flex items-center gap-1 text-primary">
+                              <Users className="h-3 w-3" />
+                              {participants.length} participante(s): {participants.join(', ')}
+                            </span>
+                          )}
+                        </div>
+
+                        {t.descricao && (
+                          <p className="text-xs text-muted-foreground pt-0.5">{t.descricao}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 self-end sm:self-center">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => toggleTaskStatus(t)}
+                        className="h-7 text-xs"
+                      >
+                        {isCompleted ? 'Reabrir' : 'Concluir'}
+                      </Button>
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Visão Semanal */}
+      {viewMode === 'weekly' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between bg-card border rounded-xl p-3 shadow-2xs">
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => {
+                  const d = new Date(selectedDate)
+                  d.setDate(d.getDate() - 7)
+                  setSelectedDate(d)
+                }}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => {
+                  const d = new Date(selectedDate)
+                  d.setDate(d.getDate() + 7)
+                  setSelectedDate(d)
+                }}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <span className="text-xs font-semibold text-foreground">
+                Semana de {currentWeekDays[0].toLocaleDateString('pt-BR')} a{' '}
+                {currentWeekDays[6].toLocaleDateString('pt-BR')}
+              </span>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedDate(new Date())}
+              className="h-7 text-xs"
+            >
+              Hoje
+            </Button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-7 gap-2.5">
+            {currentWeekDays.map((dayDate) => {
+              const dayYmd = formatYmd(dayDate)
+              const isToday = dayYmd === formatYmd(new Date())
+              const dayTasks = filteredTasks.filter((t) => (t.data || '').slice(0, 10) === dayYmd)
+
+              return (
+                <div
+                  key={dayYmd}
+                  className={`bg-card border rounded-xl p-2.5 min-h-[300px] flex flex-col shadow-2xs ${
+                    isToday ? 'border-primary ring-1 ring-primary/50' : ''
+                  }`}
+                >
+                  <div className="flex items-center justify-between pb-2 border-b mb-2">
+                    <span className="text-xs font-semibold capitalize">
+                      {dayDate.toLocaleDateString('pt-BR', { weekday: 'short' })}
+                    </span>
+                    <Badge
+                      variant={isToday ? 'default' : 'outline'}
+                      className="text-[10px] h-4 font-mono px-1.5"
+                    >
+                      {dayDate.getDate()}
+                    </Badge>
+                  </div>
+
+                  <div className="space-y-2 flex-1">
+                    {dayTasks.length === 0 ? (
+                      <span className="text-[11px] text-muted-foreground/60 italic block text-center pt-6">
+                        Sem tarefas
+                      </span>
+                    ) : (
+                      dayTasks.map((t) => {
+                        const hasConflict = conflictMap.has(t.id)
+                        const isDone = t.status === 'concluida'
+
+                        return (
+                          <div
+                            key={t.id}
+                            className={`p-2 rounded-lg border text-left text-xs space-y-1 transition-all ${
+                              isDone
+                                ? 'opacity-50 line-through bg-muted/20'
+                                : 'bg-background hover:border-primary'
+                            } ${hasConflict ? 'border-amber-500 bg-amber-500/10' : ''}`}
+                          >
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="font-semibold text-[11px] truncate">{t.titulo}</span>
+                              <span className="text-[10px] font-mono text-muted-foreground">
+                                {t.horario || '10:00'}
+                              </span>
+                            </div>
+
+                            {hasConflict && (
+                              <div className="text-[10px] text-amber-600 font-semibold flex items-center gap-1">
+                                <AlertTriangle className="h-2.5 w-2.5" /> Conflito
+                              </div>
+                            )}
+
+                            {t.expand?.responsavel_id && (
+                              <div className="text-[10px] text-muted-foreground truncate">
+                                👤 {t.expand.responsavel_id.name}
+                              </div>
+                            )}
+
+                            {t.meet_link && (
+                              <a
+                                href={t.meet_link}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[10px] text-blue-600 font-medium flex items-center gap-0.5 hover:underline"
+                              >
+                                <Video className="h-2.5 w-2.5" /> Meet
+                              </a>
+                            )}
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Visão Diária */}
+      {viewMode === 'daily' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between bg-card border rounded-xl p-3 shadow-2xs">
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => {
+                  const d = new Date(selectedDate)
+                  d.setDate(d.getDate() - 1)
+                  setSelectedDate(d)
+                }}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => {
+                  const d = new Date(selectedDate)
+                  d.setDate(d.getDate() + 1)
+                  setSelectedDate(d)
+                }}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <span className="text-xs font-semibold text-foreground">
+                {selectedDate.toLocaleDateString('pt-BR', {
+                  weekday: 'long',
+                  day: 'numeric',
+                  month: 'long',
+                  year: 'numeric',
+                })}
+              </span>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedDate(new Date())}
+              className="h-7 text-xs"
+            >
+              Hoje
+            </Button>
+          </div>
+
+          <div className="bg-card border rounded-xl divide-y text-xs shadow-2xs">
+            {(() => {
+              const dayTasks = filteredTasks.filter(
+                (t) => (t.data || '').slice(0, 10) === selectedDateYmd,
+              )
+              if (dayTasks.length === 0) {
+                return (
+                  <div className="p-12 text-center text-muted-foreground">
+                    Nenhum compromisso agendado para este dia.
+                  </div>
+                )
+              }
+              return dayTasks
+                .sort((a, b) => (a.horario || '').localeCompare(b.horario || ''))
+                .map((t) => {
+                  const hasConflict = conflictMap.has(t.id)
+                  const participants = getParticipantsList(t)
+                  const isDone = t.status === 'concluida'
+
+                  return (
+                    <div
+                      key={t.id}
+                      className={`p-4 flex items-center justify-between gap-3 ${
+                        isDone ? 'opacity-60 bg-muted/20' : ''
+                      } ${hasConflict ? 'bg-amber-500/10 border-l-4 border-l-amber-500' : ''}`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="font-mono text-sm font-bold text-muted-foreground w-14 shrink-0 pt-0.5">
+                          {t.horario || '10:00'}
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span
+                              className={`font-semibold text-sm ${isDone ? 'line-through' : ''}`}
+                            >
+                              {t.titulo}
+                            </span>
+                            <Badge variant="outline" className="text-[10px] h-4 uppercase">
+                              {t.tipo}
+                            </Badge>
+                            {hasConflict && (
+                              <Badge className="bg-amber-500 text-white text-[10px] h-4 gap-1">
+                                <AlertTriangle className="h-2.5 w-2.5" /> Conflito de Horário
+                              </Badge>
+                            )}
+                            {t.meet_link && (
+                              <a
+                                href={t.meet_link}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-[11px] text-blue-600 bg-blue-500/10 px-2 py-0.5 rounded font-medium hover:underline"
+                              >
+                                <Video className="h-3 w-3" /> Entrar Meet
+                              </a>
+                            )}
+                          </div>
+
+                          <div className="text-[11px] text-muted-foreground flex items-center gap-3 flex-wrap">
+                            {t.expand?.responsavel_id && (
+                              <span>Resp: {t.expand.responsavel_id.name}</span>
+                            )}
+                            {t.expand?.lead_id && <span>Lead: {t.expand.lead_id.name}</span>}
+                            {participants.length > 0 && (
+                              <span className="text-primary">
+                                Participantes: {participants.join(', ')}
+                              </span>
+                            )}
+                          </div>
+                          {t.descricao && (
+                            <p className="text-xs text-muted-foreground">{t.descricao}</p>
+                          )}
+                        </div>
+                      </div>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => toggleTaskStatus(t)}
+                        className="h-7 text-xs shrink-0"
+                      >
+                        {isDone ? 'Reabrir' : 'Concluir'}
+                      </Button>
+                    </div>
+                  )
+                })
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Criação */}
       <Dialog open={createModalOpen} onOpenChange={setCreateModalOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="text-base font-bold font-legal-serif">
-              Nova Tarefa / Reunião
+              Nova Tarefa / Reunião Jurídica
             </DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleCreate} className="space-y-3 pt-2">
+
+          <form onSubmit={handleCreate} className="space-y-3.5 pt-2">
             <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Título *</Label>
+              <Label className="text-xs font-semibold">Título do Compromisso *</Label>
               <Input
                 required
+                placeholder="Ex: Reunião de Fechamento com Lead"
                 value={formData.titulo}
                 onChange={(e) => setFormData({ ...formData, titulo: e.target.value })}
                 className="h-9 text-xs"
               />
             </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Tipo</Label>
+                <Select
+                  value={formData.tipo}
+                  onValueChange={(val: any) => setFormData({ ...formData, tipo: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="reuniao">Reunião (Google Meet)</SelectItem>
+                    <SelectItem value="ligacao">Ligação</SelectItem>
+                    <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                    <SelectItem value="email">E-mail</SelectItem>
+                    <SelectItem value="retorno">Retorno</SelectItem>
+                    <SelectItem value="proposta">Apresentação Proposta</SelectItem>
+                    <SelectItem value="documento">Análise Documental</SelectItem>
+                    <SelectItem value="acompanhamento">Acompanhamento</SelectItem>
+                    <SelectItem value="outro">Outro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Prioridade</Label>
+                <Select
+                  value={formData.prioridade}
+                  onValueChange={(val: any) => setFormData({ ...formData, prioridade: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="baixa">Baixa</SelectItem>
+                    <SelectItem value="media">Média</SelectItem>
+                    <SelectItem value="alta">Alta</SelectItem>
+                    <SelectItem value="urgente">Urgente</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold">Data</Label>
@@ -286,35 +992,103 @@ export function TarefasPage() {
                 />
               </div>
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Vincular a Lead</Label>
-              <Select
-                value={formData.lead_id}
-                onValueChange={(val) => setFormData({ ...formData, lead_id: val })}
-              >
-                <SelectTrigger className="h-9 text-xs">
-                  <SelectValue placeholder="Selecione..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {leads.map((l) => (
-                    <SelectItem key={l.id} value={l.id}>
-                      {l.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Responsável</Label>
+                <Select
+                  value={formData.responsavel_id}
+                  onValueChange={(val) => setFormData({ ...formData, responsavel_id: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Selecione..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {users.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.name || u.email}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Vincular Lead</Label>
+                <Select
+                  value={formData.lead_id}
+                  onValueChange={(val) => setFormData({ ...formData, lead_id: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Selecione..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {leads.map((l) => (
+                      <SelectItem key={l.id} value={l.id}>
+                        {l.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
+
+            {/* Participantes (e-mails ou nomes) */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">
+                Participantes Adicionais (separados por vírgula)
+              </Label>
+              <Input
+                placeholder="ex: cliente@empresa.com, socio@empresa.com"
+                value={formData.participantes}
+                onChange={(e) => setFormData({ ...formData, participantes: e.target.value })}
+                className="h-9 text-xs"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Serão adicionados como convidados no evento do Google Calendar e no registro da
+                tarefa.
+              </p>
+            </div>
+
+            {/* Meet link opcional ou automático */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Link do Google Meet (Opcional)</Label>
+              <Input
+                placeholder="https://meet.google.com/abc-defg-hij (ou deixe em branco para gerar via Google Calendar)"
+                value={formData.meet_link}
+                onChange={(e) => setFormData({ ...formData, meet_link: e.target.value })}
+                className="h-9 text-xs"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Pauta / Observações</Label>
+              <Textarea
+                rows={2}
+                placeholder="Detalhes e objetivos da reunião..."
+                value={formData.descricao}
+                onChange={(e) => setFormData({ ...formData, descricao: e.target.value })}
+                className="text-xs resize-none"
+              />
+            </div>
+
             <DialogFooter className="pt-2">
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 onClick={() => setCreateModalOpen(false)}
+                disabled={savingTask}
               >
                 Cancelar
               </Button>
-              <Button type="submit" size="sm" className="bg-[#0A1F3F] text-white">
-                Agendar
+              <Button
+                type="submit"
+                size="sm"
+                className="bg-[#0A1F3F] text-white hover:bg-[#0e2a56]"
+                disabled={savingTask}
+              >
+                {savingTask ? 'Agendando...' : 'Agendar Compromisso'}
               </Button>
             </DialogFooter>
           </form>
@@ -323,4 +1097,5 @@ export function TarefasPage() {
     </div>
   )
 }
+
 export default TarefasPage

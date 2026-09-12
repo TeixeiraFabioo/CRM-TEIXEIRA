@@ -319,6 +319,8 @@ export interface TaskRecord {
   status: 'pendente' | 'em_andamento' | 'concluida' | 'cancelada'
   recorrencia?: string
   data_conclusao?: string
+  meet_link?: string
+  participantes?: string[] | string
   expand?: {
     responsavel_id?: UserRecord
     lead_id?: LeadRecord

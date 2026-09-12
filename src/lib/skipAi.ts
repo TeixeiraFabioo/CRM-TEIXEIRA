@@ -376,7 +376,10 @@ export async function generateChatResponse(
             '',
         }
 
-  const res = await fetch('/api/ai/chat', {
+  const baseUrl = (import.meta as any).env?.VITE_POCKETBASE_URL || ''
+  const endpoint = baseUrl ? `${baseUrl.replace(/\/$/, '')}/api/ai/chat` : '/api/ai/chat'
+
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
