@@ -513,6 +513,14 @@ export function TarefasPage() {
                 Mensagem do Google / Sistema:{' '}
                 <span className="font-semibold">{googleMeetError}</span>
               </p>
+              {googleMeetError.toLowerCase().includes('client_secret') && (
+                <p className="text-[11px] text-muted-foreground bg-background/60 p-2 rounded-md border border-destructive/20 mt-1">
+                  💡 <strong>Como resolver:</strong> O <strong>Client Secret</strong> não foi
+                  preenchido ou não foi salvo na integração. Acesse a Central de Integrações,
+                  preencha o Client ID, o Client Secret (começado com <code>GOCSPX-</code>) e o
+                  Refresh Token, e salve novamente.
+                </p>
+              )}
               {(googleMeetError.toLowerCase().includes('invalid_grant') ||
                 googleMeetError.toLowerCase().includes('unauthorized') ||
                 googleMeetError.toLowerCase().includes('revogada') ||

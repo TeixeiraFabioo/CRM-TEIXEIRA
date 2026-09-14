@@ -158,6 +158,75 @@ onRecordCreate((e) => {
           .toString()
           .trim()
 
+        if (!clientSecret) {
+          try {
+            const allMeet = $app.findRecordsByFilter(
+              'integration_configs',
+              'provider = "google_meet"',
+              '-updated',
+              10,
+              0,
+            )
+            for (let i = 0; i < allMeet.length; i++) {
+              const r = allMeet[i]
+              const rCfg = Object.assign(
+                {},
+                parseConfigCandidate(r.get('config')),
+                parseConfigCandidate(r.getString('config')),
+                parseConfigCandidate(r.get('config_json')),
+                parseConfigCandidate(r.getString('config_json')),
+              )
+              const sec = (
+                rCfg.client_secret ||
+                rCfg.clientSecret ||
+                rCfg.google_client_secret ||
+                ''
+              )
+                .toString()
+                .trim()
+              if (sec) {
+                clientSecret = sec
+                break
+              }
+            }
+          } catch (_) {}
+        }
+
+        if (!clientSecret) {
+          // Busca em outros registros de integração se o client_secret foi salvo em outro momento
+          try {
+            const allMeet = $app.findRecordsByFilter(
+              'integration_configs',
+              'provider = "google_meet"',
+              '-updated',
+              10,
+              0,
+            )
+            for (let i = 0; i < allMeet.length; i++) {
+              const r = allMeet[i]
+              const rCfg = Object.assign(
+                {},
+                parseConfigCandidate(r.get('config')),
+                parseConfigCandidate(r.getString('config')),
+                parseConfigCandidate(r.get('config_json')),
+                parseConfigCandidate(r.getString('config_json')),
+              )
+              const sec = (
+                rCfg.client_secret ||
+                rCfg.clientSecret ||
+                rCfg.google_client_secret ||
+                ''
+              )
+                .toString()
+                .trim()
+              if (sec) {
+                clientSecret = sec
+                break
+              }
+            }
+          } catch (_) {}
+        }
+
         if (!clientId) {
           clientId = '407408718192.apps.googleusercontent.com'
         }
@@ -1097,7 +1166,7 @@ onRecordCreate((e) => {
       return {}
     }
 
-    // Mescla com valores existentes antes do update se available
+    // Mescla com valores existentes se available
     let existingCfg = {}
     try {
       const orig = record.original ? record.original() : null
@@ -1120,7 +1189,6 @@ onRecordCreate((e) => {
       parseConfigCandidate(record.get('config_json')),
       parseConfigCandidate(record.getString('config_json')),
     )
-
     if (!apiKey && cfg.api_token) apiKey = String(cfg.api_token).trim()
     if (!apiKey && cfg.api_key) apiKey = String(cfg.api_key).trim()
     if (!apiKey && cfg.apiKey) apiKey = String(cfg.apiKey).trim()
@@ -1185,6 +1253,10 @@ onRecordCreate((e) => {
       .toString()
       .trim()
 
+    if (!clientId && existingCfg.client_id) {
+      clientId = String(existingCfg.client_id).trim()
+    }
+
     let clientSecret = (
       cfg.client_secret ||
       cfg.clientSecret ||
@@ -1194,6 +1266,11 @@ onRecordCreate((e) => {
     )
       .toString()
       .trim()
+
+    // Se clientSecret estiver vazio no payload recebido, nunca sobrescrever se havia um no registro anterior
+    if (!clientSecret && existingCfg.client_secret) {
+      clientSecret = String(existingCfg.client_secret).trim()
+    }
 
     if (!clientId) {
       clientId = '407408718192.apps.googleusercontent.com'
@@ -1376,8 +1453,24 @@ onRecordUpdate((e) => {
       return {}
     }
 
+    // Preservar valores prévios do registro antes de serem sobrescritos
+    let existingCfg = {}
+    try {
+      const orig = record.original ? record.original() : null
+      if (orig) {
+        existingCfg = Object.assign(
+          {},
+          parseConfigCandidate(orig.get('config')),
+          parseConfigCandidate(orig.getString('config')),
+          parseConfigCandidate(orig.get('config_json')),
+          parseConfigCandidate(orig.getString('config_json')),
+        )
+      }
+    } catch (_) {}
+
     cfg = Object.assign(
       {},
+      existingCfg,
       parseConfigCandidate(record.get('config')),
       parseConfigCandidate(record.getString('config')),
       parseConfigCandidate(record.get('config_json')),

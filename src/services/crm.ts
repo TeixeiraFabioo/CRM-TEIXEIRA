@@ -1187,26 +1187,47 @@ export const CrmService = {
         filter: `tenant_id = "${tenantId}" && provider = "google_meet"`,
       })
 
+      const existingItem = list.items.length > 0 ? list.items[0] : null
+      const existingCfg = (existingItem?.config_json || existingItem?.config || {}) as Record<
+        string,
+        any
+      >
+
+      // Preservar valores prévios se novos não forem passados
+      const finalClientId = (oauthData.client_id || existingCfg.client_id || '').trim()
+      const finalClientSecret = (oauthData.client_secret || existingCfg.client_secret || '').trim()
+      const finalRefreshToken = (
+        oauthData.refresh_token ||
+        existingCfg.refresh_token ||
+        existingItem?.api_key ||
+        existingItem?.api_token ||
+        ''
+      ).trim()
+
+      const mergedConfig = {
+        ...existingCfg,
+        provider: 'google_meet',
+        calendar_id: existingCfg.calendar_id || 'primary',
+        client_id: finalClientId,
+        client_secret: finalClientSecret,
+        refresh_token: finalRefreshToken,
+        connected_at: new Date().toISOString(),
+      }
+
       const payload = {
         tenant_id: tenantId,
         provider: 'google_meet',
-        api_key: oauthData.refresh_token.trim(),
-        api_token: oauthData.refresh_token.trim(),
+        api_key: finalRefreshToken,
+        api_token: finalRefreshToken,
         is_active: true,
         error_message: '',
-        config_json: {
-          provider: 'google_meet',
-          calendar_id: 'primary',
-          client_id: oauthData.client_id.trim(),
-          client_secret: oauthData.client_secret.trim(),
-          refresh_token: oauthData.refresh_token.trim(),
-          connected_at: new Date().toISOString(),
-        },
+        config_json: mergedConfig,
+        config: mergedConfig,
       }
 
       let record: any
-      if (list.items.length > 0) {
-        record = await pb.collection('integration_configs').update(list.items[0].id, payload)
+      if (existingItem) {
+        record = await pb.collection('integration_configs').update(existingItem.id, payload)
       } else {
         record = await pb.collection('integration_configs').create(payload)
       }
@@ -1242,9 +1263,26 @@ export const CrmService = {
     error?: string
     config?: any
   }> {
+    // Busca dados existentes para nunca apagar client_id nem client_secret caso existam
+    let existingClientId = ''
+    let existingClientSecret = ''
+    try {
+      const list = await pb.collection('integration_configs').getList(1, 1, {
+        filter: `tenant_id = "${tenantId}" && provider = "google_meet"`,
+      })
+      if (list.items.length > 0) {
+        const item = list.items[0]
+        const cfg = (item.config_json || item.config || {}) as Record<string, any>
+        existingClientId = cfg.client_id || ''
+        existingClientSecret = cfg.client_secret || ''
+      }
+    } catch {
+      /* intentionally ignored */
+    }
+
     return this.connectGoogleMeetOAuth(tenantId, {
-      client_id: '',
-      client_secret: '',
+      client_id: existingClientId,
+      client_secret: existingClientSecret,
       refresh_token: token,
     })
   },
@@ -1302,20 +1340,26 @@ export const CrmService = {
           }
         }
 
-        // Garante que o config_json preserva client_id, client_secret e refresh_token
+        // Garante que o config_json preserva client_id, client_secret e refresh_token sem nunca limpá-los
+        const preservedClientId = (currentCfg.client_id || '').trim()
+        const preservedClientSecret = (currentCfg.client_secret || '').trim()
+
+        const updatedConfig = {
+          ...currentCfg,
+          provider: 'google_meet',
+          calendar_id: currentCfg.calendar_id || 'primary',
+          client_id: preservedClientId,
+          client_secret: preservedClientSecret,
+          refresh_token: rToken,
+          test_requested: true,
+          tested_at: new Date().toISOString(),
+        }
+
         const updated = await pb.collection('integration_configs').update(item.id, {
           api_key: keyVal,
           api_token: keyVal,
-          config_json: {
-            ...currentCfg,
-            provider: 'google_meet',
-            calendar_id: currentCfg.calendar_id || 'primary',
-            client_id: currentCfg.client_id || '',
-            client_secret: currentCfg.client_secret || '',
-            refresh_token: rToken,
-            test_requested: true,
-            tested_at: new Date().toISOString(),
-          },
+          config_json: updatedConfig,
+          config: updatedConfig,
         })
         const cfg = (updated.config_json || updated.config || {}) as Record<string, any>
         if (updated.status === 'active' && !updated.error_message) {

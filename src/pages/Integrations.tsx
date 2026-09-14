@@ -136,9 +136,16 @@ export function IntegrationsPage() {
       setGoogleMeetConnected(!!res.connected)
       setGoogleMeetConfig(res.config || null)
       if (res.config) {
-        setGoogleMeetClientId(res.config.client_id || '')
-        setGoogleMeetClientSecret(res.config.client_secret || '')
-        setGoogleMeetRefreshToken(res.config.refresh_token || '')
+        const cfg = res.config.config_json || res.config.config || {}
+        setGoogleMeetClientId(res.config.client_id || cfg.client_id || '')
+        setGoogleMeetClientSecret(res.config.client_secret || cfg.client_secret || '')
+        const rToken =
+          res.config.refresh_token ||
+          cfg.refresh_token ||
+          res.config.api_key ||
+          res.config.api_token ||
+          ''
+        setGoogleMeetRefreshToken(rToken)
       }
     } catch (err) {
       console.error('Erro ao consultar Google Meet:', err)
@@ -1243,6 +1250,14 @@ export function IntegrationsPage() {
                     <span className="font-medium">{googleMeetConfig.error_message}</span>
                   </div>
                 </div>
+                {googleMeetConfig.error_message.toLowerCase().includes('client_secret') && (
+                  <div className="text-[11px] bg-background/70 p-2 rounded border border-destructive/20 text-muted-foreground leading-relaxed mt-1">
+                    💡 <strong>Client Secret Ausente:</strong> Preencha o{' '}
+                    <strong>Client Secret</strong> (começa com <code>GOCSPX-</code>) no formulário
+                    abaixo junto com o Client ID e Refresh Token e clique em{' '}
+                    <em>Salvar Credenciais OAuth 2</em> para reativar a sincronização.
+                  </div>
+                )}
                 {(googleMeetConfig.error_message.toLowerCase().includes('invalid_grant') ||
                   googleMeetConfig.error_message.toLowerCase().includes('unauthorized') ||
                   googleMeetConfig.error_message.toLowerCase().includes('revogada') ||
@@ -1273,6 +1288,12 @@ export function IntegrationsPage() {
                     <span>Client ID:</span>
                     <span className="font-mono text-foreground truncate max-w-[180px]">
                       {googleMeetConfig?.config_json?.client_id || '••••••••'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Client Secret:</span>
+                    <span className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">
+                      Configurado (GOCSPX-••••)
                     </span>
                   </div>
                   <div className="flex items-center justify-between">

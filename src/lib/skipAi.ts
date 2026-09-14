@@ -350,47 +350,38 @@ export async function streamAgentChat(
   return { content, conversation_id: conversationId, message_id: messageId, citations, toolCalls }
 }
 
-/**
- * Direct call helper for non-streaming chat requests used by LandingChatWidget and LeadDetail.
- * Calls /api/ai/chat pb_hook or falls back gracefully.
- */
-export async function generateChatResponse(params: {
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+export interface GenerateChatResponseParams {
+  messages: Array<{ role: string; content: string }>
   temperature?: number
+  public?: boolean
   tenant_id?: string
   lead_id?: string
-  public?: boolean
-}): Promise<string> {
-  const backendBaseUrl =
-    (import.meta as any).env?.VITE_POCKETBASE_URL ||
-    (typeof window !== 'undefined' ? window.location.origin : '')
+}
 
-  const url = `${backendBaseUrl.replace(/\/$/, '')}/api/ai/chat`
-  const tenantId = params.tenant_id || 'jg95y0vbaums0ql'
-
+export async function generateChatResponse(params: GenerateChatResponseParams): Promise<string> {
+  const pbUrl = (import.meta.env.VITE_POCKETBASE_URL || '').replace(/\/$/, '')
   try {
-    const res = await fetch(url, {
+    const res = await fetch(`${pbUrl}/api/ai/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        tenant_id: tenantId,
-        messages: params.messages,
+        tenant_id: params.tenant_id || 'jg95y0vbaums0ql',
         lead_id: params.lead_id,
+        messages: params.messages,
       }),
     })
 
-    if (res.ok) {
-      const data = await res.json()
-      if (data && data.response) {
-        return typeof data.response === 'string' ? data.response : JSON.stringify(data.response)
-      }
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '')
+      throw new Error(`AI Chat request failed: ${res.status} ${errText}`)
     }
-  } catch (e) {
-    console.warn('generateChatResponse fallback error:', e)
-  }
 
-  // Fallback response if endpoint fails or network error occurs
-  return 'Obrigado pelo contato. Nossa equipe jurídica especializada do escritório Teixeira & Nascimento está à disposição para analisar seu caso detalhadamente.'
+    const data = await res.json()
+    return data.response || data.content || ''
+  } catch (err: any) {
+    console.warn('[skipAi generateChatResponse] Erro:', err)
+    throw err
+  }
 }
