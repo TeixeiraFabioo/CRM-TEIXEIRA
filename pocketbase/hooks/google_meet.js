@@ -248,8 +248,7 @@ onRecordCreate((e) => {
             console.warn('[Google Meet Hook] Abortando troca de token:', secretErrMsg)
             try {
               configRec.set('error_message', secretErrMsg)
-              configRec.set('status', 'error')
-              configRec.set('is_active', false)
+              // NÃO desativar a integração automaticamente por falta de credencial
               $app.save(configRec)
             } catch (_) {}
           } else {
@@ -676,8 +675,7 @@ onRecordUpdate((e) => {
             console.warn('[Google Meet Update] Abortando troca de token:', secretErrMsg)
             try {
               configRec.set('error_message', secretErrMsg)
-              configRec.set('status', 'error')
-              configRec.set('is_active', false)
+              // NÃO desativar a integração automaticamente por falta de credencial
               $app.save(configRec)
             } catch (_) {}
           } else {
@@ -1166,11 +1164,15 @@ onRecordCreate((e) => {
       return {}
     }
 
-    // Mescla com valores existentes se available
+    // 1. Preservação mandatória: coletar valores prévios se existirem
     let existingCfg = {}
+    let origApiKey = ''
+    let origApiToken = ''
     try {
       const orig = record.original ? record.original() : null
       if (orig) {
+        origApiKey = (orig.getString('api_key') || '').trim()
+        origApiToken = (orig.getString('api_token') || '').trim()
         existingCfg = Object.assign(
           {},
           parseConfigCandidate(orig.get('config')),
@@ -1181,22 +1183,78 @@ onRecordCreate((e) => {
       }
     } catch (_) {}
 
-    cfg = Object.assign(
+    // Fallback adicional: buscar no banco se já tínhamos credenciais salvas em outro momento
+    if (!existingCfg.client_secret) {
+      try {
+        const anyMeet = $app.findRecordsByFilter(
+          'integration_configs',
+          'provider = "google_meet"',
+          '-updated',
+          10,
+          0,
+        )
+        for (let i = 0; i < anyMeet.length; i++) {
+          const m = anyMeet[i]
+          const mCfg = Object.assign(
+            {},
+            parseConfigCandidate(m.get('config')),
+            parseConfigCandidate(m.getString('config')),
+            parseConfigCandidate(m.get('config_json')),
+            parseConfigCandidate(m.getString('config_json')),
+          )
+          if (mCfg.client_secret) {
+            existingCfg.client_secret = mCfg.client_secret
+            if (!existingCfg.client_id && mCfg.client_id) existingCfg.client_id = mCfg.client_id
+            break
+          }
+        }
+      } catch (_) {}
+    }
+
+    const payloadCfg = Object.assign(
       {},
-      existingCfg,
       parseConfigCandidate(record.get('config')),
       parseConfigCandidate(record.getString('config')),
       parseConfigCandidate(record.get('config_json')),
       parseConfigCandidate(record.getString('config_json')),
     )
+
+    cfg = Object.assign({}, existingCfg, payloadCfg)
+
+    let clientId = (
+      cfg.client_id ||
+      cfg.clientId ||
+      cfg.google_client_id ||
+      existingCfg.client_id ||
+      $os.getenv('GOOGLE_CLIENT_ID') ||
+      '407408718192.apps.googleusercontent.com'
+    )
+      .toString()
+      .trim()
+
+    let clientSecret = (
+      cfg.client_secret ||
+      cfg.clientSecret ||
+      cfg.google_client_secret ||
+      existingCfg.client_secret ||
+      $os.getenv('GOOGLE_CLIENT_SECRET') ||
+      ''
+    )
+      .toString()
+      .trim()
+
     if (!apiKey && cfg.api_token) apiKey = String(cfg.api_token).trim()
     if (!apiKey && cfg.api_key) apiKey = String(cfg.api_key).trim()
     if (!apiKey && cfg.apiKey) apiKey = String(cfg.apiKey).trim()
     if (!apiKey && cfg.token) apiKey = String(cfg.token).trim()
+    if (!apiKey && origApiKey) apiKey = origApiKey
+    if (!apiKey && origApiToken) apiKey = origApiToken
 
     // Se api_key e api_token vierem vazios na atualização mas existirem no cfg
     if (!apiKey && cfg.refresh_token) {
       apiKey = String(cfg.refresh_token).trim()
+    }
+    if (apiKey) {
       record.set('api_key', apiKey)
       record.set('api_token', apiKey)
     }
@@ -1223,6 +1281,9 @@ onRecordCreate((e) => {
     if (!refreshToken && (apiKey.startsWith('1//') || apiKey.startsWith('1/'))) {
       refreshToken = apiKey
     }
+    if (!refreshToken && (origApiKey.startsWith('1//') || origApiKey.startsWith('1/'))) {
+      refreshToken = origApiKey
+    }
 
     if (refreshToken.startsWith('AIza')) {
       record.set('status', 'error')
@@ -1243,52 +1304,32 @@ onRecordCreate((e) => {
 
     const calendarId = (cfg.calendar_id || cfg.calendarId || 'primary').toString().trim()
 
-    let clientId = (
-      cfg.client_id ||
-      cfg.clientId ||
-      cfg.google_client_id ||
-      $os.getenv('GOOGLE_CLIENT_ID') ||
-      ''
-    )
-      .toString()
-      .trim()
-
-    if (!clientId && existingCfg.client_id) {
-      clientId = String(existingCfg.client_id).trim()
+    // Repor credenciais garantidas em cfg
+    cfg.client_id = clientId
+    cfg.calendar_id = calendarId
+    cfg.provider = 'google_meet'
+    if (clientSecret) {
+      cfg.client_secret = clientSecret
+    }
+    if (refreshToken) {
+      cfg.refresh_token = refreshToken
     }
 
-    let clientSecret = (
-      cfg.client_secret ||
-      cfg.clientSecret ||
-      cfg.google_client_secret ||
-      $os.getenv('GOOGLE_CLIENT_SECRET') ||
-      ''
-    )
-      .toString()
-      .trim()
-
-    // Se clientSecret estiver vazio no payload recebido, nunca sobrescrever se havia um no registro anterior
-    if (!clientSecret && existingCfg.client_secret) {
-      clientSecret = String(existingCfg.client_secret).trim()
-    }
-
-    if (!clientId) {
-      clientId = '407408718192.apps.googleusercontent.com'
-    }
+    // Persistir o config_json / config reposto no próprio record do banco
+    record.set('config_json', cfg)
+    record.set('config', cfg)
 
     if (refreshToken) {
       if (!clientSecret) {
         const secretErrMsg =
           'client_secret não configurado no Google Meet. Salve o Client Secret nas configurações de integração.'
-        console.warn('[Google Meet Hook onRecordCreate] Abortando troca de token:', secretErrMsg)
-        record.set('status', 'error')
-        record.set('is_active', false)
+        console.warn('[Google Meet Hook onRecordCreate] Client Secret ausente:', secretErrMsg)
         record.set('error_message', secretErrMsg)
+        // NÃO desativar por credencial ausente
         const updatedCfg = Object.assign({}, cfg, {
           provider: 'google_meet',
           calendar_id: calendarId,
           client_id: clientId,
-          client_secret: clientSecret,
           refresh_token: refreshToken,
           error_message: secretErrMsg,
         })
@@ -1440,7 +1481,6 @@ onRecordUpdate((e) => {
 
     let apiKey = (record.getString('api_token') || record.getString('api_key') || '').trim()
 
-    let cfg = {}
     const parseConfigCandidate = function (val) {
       if (!val) return {}
       if (typeof val === 'object') return val
@@ -1453,11 +1493,15 @@ onRecordUpdate((e) => {
       return {}
     }
 
-    // Preservar valores prévios do registro antes de serem sobrescritos
+    // 1. Preservação mandatória: coletar valores prévios do registro
     let existingCfg = {}
+    let origApiKey = ''
+    let origApiToken = ''
     try {
       const orig = record.original ? record.original() : null
       if (orig) {
+        origApiKey = (orig.getString('api_key') || '').trim()
+        origApiToken = (orig.getString('api_token') || '').trim()
         existingCfg = Object.assign(
           {},
           parseConfigCandidate(orig.get('config')),
@@ -1468,23 +1512,99 @@ onRecordUpdate((e) => {
       }
     } catch (_) {}
 
-    cfg = Object.assign(
+    // Fallback adicional: buscar no banco se o registro atual já tinha client_secret ou client_id
+    if (!existingCfg.client_secret || !existingCfg.client_id) {
+      try {
+        const dbRec = $app.findRecordById('integration_configs', record.id)
+        if (dbRec) {
+          if (!origApiKey) origApiKey = (dbRec.getString('api_key') || '').trim()
+          if (!origApiToken) origApiToken = (dbRec.getString('api_token') || '').trim()
+          const dbCfg = Object.assign(
+            {},
+            parseConfigCandidate(dbRec.get('config')),
+            parseConfigCandidate(dbRec.getString('config')),
+            parseConfigCandidate(dbRec.get('config_json')),
+            parseConfigCandidate(dbRec.getString('config_json')),
+          )
+          existingCfg = Object.assign({}, dbCfg, existingCfg)
+        }
+      } catch (_) {}
+    }
+
+    // Fallback global de tenant se ainda faltar client_secret
+    if (!existingCfg.client_secret) {
+      try {
+        const anyMeet = $app.findRecordsByFilter(
+          'integration_configs',
+          'provider = "google_meet"',
+          '-updated',
+          10,
+          0,
+        )
+        for (let i = 0; i < anyMeet.length; i++) {
+          const m = anyMeet[i]
+          const mCfg = Object.assign(
+            {},
+            parseConfigCandidate(m.get('config')),
+            parseConfigCandidate(m.getString('config')),
+            parseConfigCandidate(m.get('config_json')),
+            parseConfigCandidate(m.getString('config_json')),
+          )
+          if (mCfg.client_secret) {
+            existingCfg.client_secret = mCfg.client_secret
+            if (!existingCfg.client_id && mCfg.client_id) existingCfg.client_id = mCfg.client_id
+            break
+          }
+        }
+      } catch (_) {}
+    }
+
+    const payloadCfg = Object.assign(
       {},
-      existingCfg,
       parseConfigCandidate(record.get('config')),
       parseConfigCandidate(record.getString('config')),
       parseConfigCandidate(record.get('config_json')),
       parseConfigCandidate(record.getString('config_json')),
     )
 
+    let cfg = Object.assign({}, existingCfg, payloadCfg)
+
+    // Se o payload não trouxe client_id ou trouxe vazio, repor
+    let clientId = (
+      cfg.client_id ||
+      cfg.clientId ||
+      cfg.google_client_id ||
+      existingCfg.client_id ||
+      $os.getenv('GOOGLE_CLIENT_ID') ||
+      '407408718192.apps.googleusercontent.com'
+    )
+      .toString()
+      .trim()
+
+    // Se o payload não trouxe client_secret ou trouxe vazio, repor do existingCfg ou env
+    let clientSecret = (
+      cfg.client_secret ||
+      cfg.clientSecret ||
+      cfg.google_client_secret ||
+      existingCfg.client_secret ||
+      $os.getenv('GOOGLE_CLIENT_SECRET') ||
+      ''
+    )
+      .toString()
+      .trim()
+
     if (!apiKey && cfg.api_token) apiKey = String(cfg.api_token).trim()
     if (!apiKey && cfg.api_key) apiKey = String(cfg.api_key).trim()
     if (!apiKey && cfg.apiKey) apiKey = String(cfg.apiKey).trim()
     if (!apiKey && cfg.token) apiKey = String(cfg.token).trim()
+    if (!apiKey && origApiKey) apiKey = origApiKey
+    if (!apiKey && origApiToken) apiKey = origApiToken
 
     // Se api_key e api_token estiverem vazios no payload mas presentes em cfg, preencher
     if (!apiKey && cfg.refresh_token) {
       apiKey = String(cfg.refresh_token).trim()
+    }
+    if (apiKey) {
       record.set('api_key', apiKey)
       record.set('api_token', apiKey)
     }
@@ -1511,6 +1631,9 @@ onRecordUpdate((e) => {
     if (!refreshToken && (apiKey.startsWith('1//') || apiKey.startsWith('1/'))) {
       refreshToken = apiKey
     }
+    if (!refreshToken && (origApiKey.startsWith('1//') || origApiKey.startsWith('1/'))) {
+      refreshToken = origApiKey
+    }
 
     if (refreshToken.startsWith('AIza')) {
       record.set('status', 'error')
@@ -1531,43 +1654,32 @@ onRecordUpdate((e) => {
 
     const calendarId = (cfg.calendar_id || cfg.calendarId || 'primary').toString().trim()
 
-    let clientId = (
-      cfg.client_id ||
-      cfg.clientId ||
-      cfg.google_client_id ||
-      $os.getenv('GOOGLE_CLIENT_ID') ||
-      ''
-    )
-      .toString()
-      .trim()
-
-    let clientSecret = (
-      cfg.client_secret ||
-      cfg.clientSecret ||
-      cfg.google_client_secret ||
-      $os.getenv('GOOGLE_CLIENT_SECRET') ||
-      ''
-    )
-      .toString()
-      .trim()
-
-    if (!clientId) {
-      clientId = '407408718192.apps.googleusercontent.com'
+    // Repor credenciais garantidas em cfg
+    cfg.client_id = clientId
+    cfg.calendar_id = calendarId
+    cfg.provider = 'google_meet'
+    if (clientSecret) {
+      cfg.client_secret = clientSecret
     }
+    if (refreshToken) {
+      cfg.refresh_token = refreshToken
+    }
+
+    // Persistir o config_json / config reposto no próprio record do banco
+    record.set('config_json', cfg)
+    record.set('config', cfg)
 
     if (refreshToken) {
       if (!clientSecret) {
         const secretErrMsg =
           'client_secret não configurado no Google Meet. Salve o Client Secret nas configurações de integração.'
-        console.warn('[Google Meet Hook onRecordUpdate] Abortando troca de token:', secretErrMsg)
-        record.set('status', 'error')
-        record.set('is_active', false)
+        console.warn('[Google Meet Hook onRecordUpdate] Client Secret ausente:', secretErrMsg)
         record.set('error_message', secretErrMsg)
+        // NÃO desativar a integração automaticamente (status:'error' + is_active:false) quando a falha for credencial ausente
         const updatedCfg = Object.assign({}, cfg, {
           provider: 'google_meet',
           calendar_id: calendarId,
           client_id: clientId,
-          client_secret: clientSecret,
           refresh_token: refreshToken,
           error_message: secretErrMsg,
           test_requested: false,

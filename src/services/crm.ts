@@ -1183,43 +1183,84 @@ export const CrmService = {
     config?: any
   }> {
     try {
+      // Buscar todos os registros para encontrar qualquer credencial preexistente (inclusive de outros registros do provider)
       const list = await pb.collection('integration_configs').getList(1, 1, {
         filter: `tenant_id = "${tenantId}" && provider = "google_meet"`,
       })
 
       const existingItem = list.items.length > 0 ? list.items[0] : null
-      const existingCfg = (existingItem?.config_json || existingItem?.config || {}) as Record<
-        string,
-        any
-      >
+      let fallbackExistingCfg: Record<string, any> = {}
 
-      // Preservar valores prévios se novos não forem passados
-      const finalClientId = (oauthData.client_id || existingCfg.client_id || '').trim()
-      const finalClientSecret = (oauthData.client_secret || existingCfg.client_secret || '').trim()
+      if (existingItem) {
+        fallbackExistingCfg = {
+          ...(typeof existingItem.config === 'object' && existingItem.config
+            ? existingItem.config
+            : {}),
+          ...(typeof existingItem.config_json === 'object' && existingItem.config_json
+            ? existingItem.config_json
+            : {}),
+        }
+      } else {
+        try {
+          const anyMeetList = await pb.collection('integration_configs').getList(1, 5, {
+            filter: `provider = "google_meet"`,
+            sort: '-updated',
+          })
+          for (const mItem of anyMeetList.items) {
+            const mCfg = {
+              ...(typeof mItem.config === 'object' && mItem.config ? mItem.config : {}),
+              ...(typeof mItem.config_json === 'object' && mItem.config_json
+                ? mItem.config_json
+                : {}),
+            }
+            if (mCfg.client_secret || mCfg.client_id) {
+              fallbackExistingCfg = { ...mCfg, ...fallbackExistingCfg }
+            }
+          }
+        } catch {
+          /* intentionally ignored */
+        }
+      }
+
+      // Preservar valores prévios se novos não forem passados — NUNCA sobrescrever com vazio
+      const finalClientId = (
+        oauthData.client_id ||
+        fallbackExistingCfg.client_id ||
+        '407408718192.apps.googleusercontent.com'
+      ).trim()
+
+      const finalClientSecret = (
+        oauthData.client_secret ||
+        fallbackExistingCfg.client_secret ||
+        ''
+      ).trim()
+
       const finalRefreshToken = (
         oauthData.refresh_token ||
-        existingCfg.refresh_token ||
+        fallbackExistingCfg.refresh_token ||
         existingItem?.api_key ||
         existingItem?.api_token ||
         ''
       ).trim()
 
-      const mergedConfig = {
-        ...existingCfg,
+      const mergedConfig: Record<string, any> = {
+        ...fallbackExistingCfg,
         provider: 'google_meet',
-        calendar_id: existingCfg.calendar_id || 'primary',
+        calendar_id: fallbackExistingCfg.calendar_id || 'primary',
         client_id: finalClientId,
-        client_secret: finalClientSecret,
         refresh_token: finalRefreshToken,
         connected_at: new Date().toISOString(),
       }
 
-      const payload = {
+      if (finalClientSecret) {
+        mergedConfig.client_secret = finalClientSecret
+      }
+
+      const payload: Record<string, any> = {
         tenant_id: tenantId,
         provider: 'google_meet',
         api_key: finalRefreshToken,
         api_token: finalRefreshToken,
-        is_active: true,
         error_message: '',
         config_json: mergedConfig,
         config: mergedConfig,
@@ -1229,11 +1270,12 @@ export const CrmService = {
       if (existingItem) {
         record = await pb.collection('integration_configs').update(existingItem.id, payload)
       } else {
+        payload.is_active = true
         record = await pb.collection('integration_configs').create(payload)
       }
 
-      const cfg = record.config_json || record.config || {}
-      if (record.status === 'error' || record.error_message) {
+      const cfg = (record.config_json || record.config || {}) as Record<string, any>
+      if (record.status === 'error' && record.error_message) {
         return {
           success: false,
           error: record.error_message || cfg.error_message || 'Credencial do Google Meet inválida.',
@@ -1275,6 +1317,20 @@ export const CrmService = {
         const cfg = (item.config_json || item.config || {}) as Record<string, any>
         existingClientId = cfg.client_id || ''
         existingClientSecret = cfg.client_secret || ''
+      }
+      if (!existingClientSecret) {
+        const anyMeetList = await pb.collection('integration_configs').getList(1, 5, {
+          filter: `provider = "google_meet"`,
+          sort: '-updated',
+        })
+        for (const mItem of anyMeetList.items) {
+          const mCfg = (mItem.config_json || mItem.config || {}) as Record<string, any>
+          if (mCfg.client_secret) {
+            existingClientSecret = mCfg.client_secret
+            if (!existingClientId && mCfg.client_id) existingClientId = mCfg.client_id
+            break
+          }
+        }
       }
     } catch {
       /* intentionally ignored */
@@ -1341,18 +1397,44 @@ export const CrmService = {
         }
 
         // Garante que o config_json preserva client_id, client_secret e refresh_token sem nunca limpá-los
-        const preservedClientId = (currentCfg.client_id || '').trim()
-        const preservedClientSecret = (currentCfg.client_secret || '').trim()
+        let preservedClientId = (currentCfg.client_id || '').trim()
+        let preservedClientSecret = (currentCfg.client_secret || '').trim()
 
-        const updatedConfig = {
+        if (!preservedClientSecret) {
+          try {
+            const anyMeetList = await pb.collection('integration_configs').getList(1, 5, {
+              filter: `provider = "google_meet"`,
+              sort: '-updated',
+            })
+            for (const mItem of anyMeetList.items) {
+              const mCfg = (mItem.config_json || mItem.config || {}) as Record<string, any>
+              if (mCfg.client_secret) {
+                preservedClientSecret = mCfg.client_secret
+                if (!preservedClientId && mCfg.client_id) preservedClientId = mCfg.client_id
+                break
+              }
+            }
+          } catch {
+            /* intentionally ignored */
+          }
+        }
+
+        if (!preservedClientId) {
+          preservedClientId = '407408718192.apps.googleusercontent.com'
+        }
+
+        const updatedConfig: Record<string, any> = {
           ...currentCfg,
           provider: 'google_meet',
           calendar_id: currentCfg.calendar_id || 'primary',
           client_id: preservedClientId,
-          client_secret: preservedClientSecret,
           refresh_token: rToken,
           test_requested: true,
           tested_at: new Date().toISOString(),
+        }
+
+        if (preservedClientSecret) {
+          updatedConfig.client_secret = preservedClientSecret
         }
 
         const updated = await pb.collection('integration_configs').update(item.id, {

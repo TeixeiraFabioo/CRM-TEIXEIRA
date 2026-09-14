@@ -351,7 +351,7 @@ export async function streamAgentChat(
 }
 
 export interface GenerateChatResponseParams {
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
   temperature?: number
   public?: boolean
   tenant_id?: string
@@ -359,29 +359,27 @@ export interface GenerateChatResponseParams {
 }
 
 export async function generateChatResponse(params: GenerateChatResponseParams): Promise<string> {
-  const pbUrl = (import.meta.env.VITE_POCKETBASE_URL || '').replace(/\/$/, '')
-  try {
-    const res = await fetch(`${pbUrl}/api/ai/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        tenant_id: params.tenant_id || 'jg95y0vbaums0ql',
-        lead_id: params.lead_id,
-        messages: params.messages,
-      }),
-    })
+  const backendUrl = import.meta.env.VITE_POCKETBASE_URL || ''
+  const base = backendUrl.endsWith('/') ? backendUrl.slice(0, -1) : backendUrl
 
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '')
-      throw new Error(`AI Chat request failed: ${res.status} ${errText}`)
-    }
+  const res = await fetch(`${base}/api/ai/chat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messages: params.messages,
+      tenant_id: params.tenant_id || 'jg95y0vbaums0ql',
+      lead_id: params.lead_id,
+      temperature: params.temperature,
+    }),
+  })
 
-    const data = await res.json()
-    return data.response || data.content || ''
-  } catch (err: any) {
-    console.warn('[skipAi generateChatResponse] Erro:', err)
-    throw err
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '')
+    throw new Error(`AI chat request failed: HTTP ${res.status} ${errText}`)
   }
+
+  const json = await res.json()
+  return json.response || json.content || json.message || ''
 }
