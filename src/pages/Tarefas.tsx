@@ -60,7 +60,7 @@ export function TarefasPage() {
   const { role: userRole } = useUserRole()
   const { toast } = useToast()
 
-  const canDeleteMeeting = userRole === 'admin' || userRole === 'gestor' || userRole === 'manager'
+  const canDeleteMeeting = userRole === 'admin' || userRole === 'gestor'
 
   const [tasks, setTasks] = useState<TaskRecord[]>([])
   const [users, setUsers] = useState<UserRecord[]>([])

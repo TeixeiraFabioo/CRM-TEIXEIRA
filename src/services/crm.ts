@@ -720,6 +720,10 @@ export const CrmService = {
     return await pb.collection('tasks').update<TaskRecord>(id, data)
   },
 
+  async deleteTask(id: string): Promise<boolean> {
+    return await pb.collection('tasks').delete(id)
+  },
+
   // --- NOTES (NOTAS INTERNAS) ---
   async getNotes(tenantId: string, relatedFilter?: string): Promise<NoteRecord[]> {
     try {

@@ -985,7 +985,7 @@ ${formattedHistory}
 
   const handleDeleteTask = async (task: TaskRecord) => {
     const isMeeting = task.tipo === 'reuniao'
-    const canDelete = userRole === 'admin' || userRole === 'gestor' || userRole === 'manager'
+    const canDelete = userRole === 'admin' || userRole === 'gestor'
     if (isMeeting && !canDelete) {
       toast({
         title: 'Permissão negada',
@@ -2296,8 +2296,7 @@ ${formattedHistory}
                         {/* Botão Excluir: apenas admin e gestor para reuniões */}
                         {(task.tipo !== 'reuniao' ||
                           userRole === 'admin' ||
-                          userRole === 'gestor' ||
-                          userRole === 'manager') && (
+                          userRole === 'gestor') && (
                           <Button
                             variant="ghost"
                             size="sm"

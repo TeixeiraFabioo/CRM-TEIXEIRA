@@ -2,6 +2,8 @@
 // $ai.agent(slug).chat (Skip-shape). Don't hand-roll the SSE reader —
 // past attempts shipped "undefinedundefined…" and "[object Object]…".
 
+import pb from '@/lib/pocketbase/client'
+
 export interface OpenAIChatResult {
   id: string
   model: string
@@ -265,6 +267,125 @@ export interface StreamAgentChatResult {
   message_id: string
   citations?: AgentCitation[]
   toolCalls: Array<{ id: string; name: string; ok: boolean }>
+}
+
+export interface GenerateChatResponseParams {
+  messages: Array<{ role: 'system' | 'user' | 'assistant' | string; content: string }>
+  tenant_id?: string
+  lead_id?: string
+  temperature?: number
+  public?: boolean
+  signal?: AbortSignal
+}
+
+/**
+ * Calls the backend `/api/ai/chat` hook to generate AI chat response
+ * with context from the knowledge base and lead details.
+ */
+export async function generateChatResponse(params: GenerateChatResponseParams): Promise<string> {
+  const { messages, temperature, public: isPublic, signal } = params
+  let tenantId = params.tenant_id
+  let leadId = params.lead_id
+
+  // Auto-resolve tenant_id if not explicitly provided
+  if (!tenantId) {
+    try {
+      const storedTenant = localStorage.getItem('teixeira_hub_tenant')
+      if (storedTenant) {
+        const parsed = JSON.parse(storedTenant)
+        tenantId = parsed?.id || parsed?.tenant_id
+      }
+    } catch {
+      // Ignore localStorage read errors
+    }
+  }
+
+  // If still missing, query pb or fallback to first active tenant
+  if (!tenantId) {
+    try {
+      const authRecord = pb.authStore.record as { tenant_id?: string } | null
+      if (authRecord?.tenant_id) {
+        tenantId = authRecord.tenant_id
+      }
+    } catch {
+      // Ignore authStore errors
+    }
+  }
+
+  // Fallback for public landing chat if tenantId still missing
+  if (!tenantId) {
+    try {
+      const firstTenant = await pb.collection('tenants').getFirstListItem('')
+      if (firstTenant?.id) {
+        tenantId = firstTenant.id
+      }
+    } catch {
+      // Fallback default tenant id if fetch fails
+      tenantId = 'jg95y0vbaums0ql'
+    }
+  }
+
+  const baseUrl = (pb.baseUrl || '').replace(/\/$/, '')
+  const endpoint = `${baseUrl}/api/ai/chat`
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+
+  if (pb.authStore.token) {
+    headers['Authorization'] = pb.authStore.token
+  }
+
+  const bodyPayload = {
+    tenant_id: tenantId,
+    messages,
+    lead_id: leadId,
+    temperature: temperature ?? 0.7,
+    public: !!isPublic,
+  }
+
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(bodyPayload),
+      signal,
+    })
+
+    if (!res.ok) {
+      let errorMsg = `Erro na resposta da IA (${res.status})`
+      try {
+        const errorJson = await res.json()
+        if (errorJson?.error) {
+          errorMsg = errorJson.error
+        }
+      } catch {
+        // Fall back to default error text
+      }
+      throw new Error(errorMsg)
+    }
+
+    const data = await res.json()
+    if (data?.response) {
+      return typeof data.response === 'string' ? data.response : String(data.response)
+    }
+
+    if (data?.text) {
+      return String(data.text)
+    }
+
+    if (data?.message) {
+      return String(data.message)
+    }
+
+    return ''
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw err
+    }
+    const message = err?.message || 'Falha ao processar solicitação com a IA. Tente novamente.'
+    throw new Error(message)
+  }
 }
 
 // Drive an agent stream end-to-end. Resolves only after `done` (turn fully persisted);
