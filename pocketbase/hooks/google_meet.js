@@ -96,15 +96,30 @@ onRecordCreate((e) => {
       }
 
       if (configRec) {
-        const cfg = configRec.get('config_json') || configRec.get('config') || {}
+        let rawCfg = configRec.get('config_json')
+        if (rawCfg === undefined || rawCfg === null || rawCfg === '') {
+          rawCfg = configRec.get('config')
+        }
+        let cfg = {}
+        if (typeof rawCfg === 'string') {
+          try {
+            cfg = JSON.parse(rawCfg) || {}
+          } catch (_) {
+            cfg = {}
+          }
+        } else if (rawCfg && typeof rawCfg === 'object') {
+          cfg = rawCfg
+        }
 
-        // Busca refresh token de api_key, api_token ou config_json
+        // Busca refresh token de config_json, api_key ou api_token
         let refreshToken = (
           cfg.refresh_token ||
           cfg.refreshToken ||
           $os.getenv('GOOGLE_REFRESH_TOKEN') ||
           ''
-        ).trim()
+        )
+          .toString()
+          .trim()
 
         const rawApiKey = (configRec.getString('api_key') || '').trim()
         const rawApiToken = (configRec.getString('api_token') || '').trim()
@@ -118,19 +133,18 @@ onRecordCreate((e) => {
         }
 
         // Busca client_id e client_secret
-        let clientId = (
-          cfg.client_id ||
-          cfg.clientId ||
-          $os.getenv('GOOGLE_CLIENT_ID') ||
-          ''
-        ).trim()
+        let clientId = (cfg.client_id || cfg.clientId || $os.getenv('GOOGLE_CLIENT_ID') || '')
+          .toString()
+          .trim()
 
         let clientSecret = (
           cfg.client_secret ||
           cfg.clientSecret ||
           $os.getenv('GOOGLE_CLIENT_SECRET') ||
           ''
-        ).trim()
+        )
+          .toString()
+          .trim()
 
         // Fallback padrão se não configurado
         if (!clientId) {
@@ -482,14 +496,29 @@ onRecordUpdate((e) => {
       }
 
       if (configRec) {
-        const cfg = configRec.get('config_json') || configRec.get('config') || {}
+        let rawCfg = configRec.get('config_json')
+        if (rawCfg === undefined || rawCfg === null || rawCfg === '') {
+          rawCfg = configRec.get('config')
+        }
+        let cfg = {}
+        if (typeof rawCfg === 'string') {
+          try {
+            cfg = JSON.parse(rawCfg) || {}
+          } catch (_) {
+            cfg = {}
+          }
+        } else if (rawCfg && typeof rawCfg === 'object') {
+          cfg = rawCfg
+        }
 
         let refreshToken = (
           cfg.refresh_token ||
           cfg.refreshToken ||
           $os.getenv('GOOGLE_REFRESH_TOKEN') ||
           ''
-        ).trim()
+        )
+          .toString()
+          .trim()
 
         const rawApiKey = (configRec.getString('api_key') || '').trim()
         const rawApiToken = (configRec.getString('api_token') || '').trim()
@@ -502,19 +531,18 @@ onRecordUpdate((e) => {
           }
         }
 
-        let clientId = (
-          cfg.client_id ||
-          cfg.clientId ||
-          $os.getenv('GOOGLE_CLIENT_ID') ||
-          ''
-        ).trim()
+        let clientId = (cfg.client_id || cfg.clientId || $os.getenv('GOOGLE_CLIENT_ID') || '')
+          .toString()
+          .trim()
 
         let clientSecret = (
           cfg.client_secret ||
           cfg.clientSecret ||
           $os.getenv('GOOGLE_CLIENT_SECRET') ||
           ''
-        ).trim()
+        )
+          .toString()
+          .trim()
 
         if (!clientId) {
           clientId = '407408718192.apps.googleusercontent.com'
@@ -872,7 +900,21 @@ onRecordDelete((e) => {
         )
         if (list && list.length > 0) {
           const configRec = list[0]
-          const cfg = configRec.get('config_json') || configRec.get('config') || {}
+          let rawCfg = configRec.get('config_json')
+          if (rawCfg === undefined || rawCfg === null || rawCfg === '') {
+            rawCfg = configRec.get('config')
+          }
+          let cfg = {}
+          if (typeof rawCfg === 'string') {
+            try {
+              cfg = JSON.parse(rawCfg) || {}
+            } catch (_) {
+              cfg = {}
+            }
+          } else if (rawCfg && typeof rawCfg === 'object') {
+            cfg = rawCfg
+          }
+
           const nowMs = Date.now()
           const cachedToken = cfg.access_token || ''
           const cachedExpiresAt = Number(cfg.access_token_expires_at) || 0
@@ -882,20 +924,30 @@ onRecordDelete((e) => {
           } else {
             let refreshToken = (
               cfg.refresh_token ||
+              cfg.refreshToken ||
               configRec.getString('api_key') ||
               configRec.getString('api_token') ||
+              $os.getenv('GOOGLE_REFRESH_TOKEN') ||
               ''
-            ).trim()
+            )
+              .toString()
+              .trim()
             let clientId = (
               cfg.client_id ||
+              cfg.clientId ||
               $os.getenv('GOOGLE_CLIENT_ID') ||
               '407408718192.apps.googleusercontent.com'
-            ).trim()
+            )
+              .toString()
+              .trim()
             let clientSecret = (
               cfg.client_secret ||
+              cfg.clientSecret ||
               $os.getenv('GOOGLE_CLIENT_SECRET') ||
               ''
-            ).trim()
+            )
+              .toString()
+              .trim()
 
             if (refreshToken) {
               let postBody =
@@ -958,7 +1010,21 @@ onRecordCreate((e) => {
     if (provider !== 'google_meet') return e.next()
 
     let apiKey = (record.getString('api_token') || record.getString('api_key') || '').trim()
-    const cfg = record.get('config_json') || record.get('config') || {}
+    let rawCfg = record.get('config_json')
+    if (rawCfg === undefined || rawCfg === null || rawCfg === '') {
+      rawCfg = record.get('config')
+    }
+    let cfg = {}
+    if (typeof rawCfg === 'string') {
+      try {
+        cfg = JSON.parse(rawCfg) || {}
+      } catch (_) {
+        cfg = {}
+      }
+    } else if (rawCfg && typeof rawCfg === 'object') {
+      cfg = rawCfg
+    }
+
     if (!apiKey && cfg.api_token) apiKey = String(cfg.api_token).trim()
     if (!apiKey && cfg.api_key) apiKey = String(cfg.api_key).trim()
     if (!apiKey && cfg.apiKey) apiKey = String(cfg.apiKey).trim()
@@ -982,7 +1048,7 @@ onRecordCreate((e) => {
       return e.next()
     }
 
-    let refreshToken = (cfg.refresh_token || cfg.refreshToken || '').trim()
+    let refreshToken = (cfg.refresh_token || cfg.refreshToken || '').toString().trim()
     if (!refreshToken && (apiKey.startsWith('1//') || apiKey.startsWith('1/'))) {
       refreshToken = apiKey
     }
@@ -1004,15 +1070,20 @@ onRecordCreate((e) => {
       return e.next()
     }
 
-    const calendarId = (cfg.calendar_id || cfg.calendarId || 'primary').trim()
+    const calendarId = (cfg.calendar_id || cfg.calendarId || 'primary').toString().trim()
 
-    let clientId = (cfg.client_id || cfg.clientId || $os.getenv('GOOGLE_CLIENT_ID') || '').trim()
+    let clientId = (cfg.client_id || cfg.clientId || $os.getenv('GOOGLE_CLIENT_ID') || '')
+      .toString()
+      .trim()
+
     let clientSecret = (
       cfg.client_secret ||
       cfg.clientSecret ||
       $os.getenv('GOOGLE_CLIENT_SECRET') ||
       ''
-    ).trim()
+    )
+      .toString()
+      .trim()
 
     if (!clientId) {
       clientId = '407408718192.apps.googleusercontent.com'
@@ -1136,7 +1207,21 @@ onRecordUpdate((e) => {
     if (provider !== 'google_meet') return e.next()
 
     let apiKey = (record.getString('api_token') || record.getString('api_key') || '').trim()
-    const cfg = record.get('config_json') || record.get('config') || {}
+    let rawCfg = record.get('config_json')
+    if (rawCfg === undefined || rawCfg === null || rawCfg === '') {
+      rawCfg = record.get('config')
+    }
+    let cfg = {}
+    if (typeof rawCfg === 'string') {
+      try {
+        cfg = JSON.parse(rawCfg) || {}
+      } catch (_) {
+        cfg = {}
+      }
+    } else if (rawCfg && typeof rawCfg === 'object') {
+      cfg = rawCfg
+    }
+
     if (!apiKey && cfg.api_token) apiKey = String(cfg.api_token).trim()
     if (!apiKey && cfg.api_key) apiKey = String(cfg.api_key).trim()
     if (!apiKey && cfg.apiKey) apiKey = String(cfg.apiKey).trim()
@@ -1160,7 +1245,7 @@ onRecordUpdate((e) => {
       return e.next()
     }
 
-    let refreshToken = (cfg.refresh_token || cfg.refreshToken || '').trim()
+    let refreshToken = (cfg.refresh_token || cfg.refreshToken || '').toString().trim()
     if (!refreshToken && (apiKey.startsWith('1//') || apiKey.startsWith('1/'))) {
       refreshToken = apiKey
     }
@@ -1182,15 +1267,20 @@ onRecordUpdate((e) => {
       return e.next()
     }
 
-    const calendarId = (cfg.calendar_id || cfg.calendarId || 'primary').trim()
+    const calendarId = (cfg.calendar_id || cfg.calendarId || 'primary').toString().trim()
 
-    let clientId = (cfg.client_id || cfg.clientId || $os.getenv('GOOGLE_CLIENT_ID') || '').trim()
+    let clientId = (cfg.client_id || cfg.clientId || $os.getenv('GOOGLE_CLIENT_ID') || '')
+      .toString()
+      .trim()
+
     let clientSecret = (
       cfg.client_secret ||
       cfg.clientSecret ||
       $os.getenv('GOOGLE_CLIENT_SECRET') ||
       ''
-    ).trim()
+    )
+      .toString()
+      .trim()
 
     if (!clientId) {
       clientId = '407408718192.apps.googleusercontent.com'
