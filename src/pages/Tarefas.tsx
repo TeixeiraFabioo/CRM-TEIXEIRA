@@ -502,22 +502,38 @@ export function TarefasPage() {
 
       {/* Banner de erro da integração com Google Calendar se houver erro */}
       {googleMeetError && (
-        <div className="p-3.5 rounded-xl border border-destructive/30 bg-destructive/10 text-destructive flex items-start justify-between gap-3 text-xs">
-          <div className="flex items-start gap-2.5">
-            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-destructive" />
-            <div>
-              <p className="font-semibold">Atenção na sincronização com o Google Calendar:</p>
-              <p className="text-destructive/90 mt-0.5">
-                Evento não criado no Google Calendar:{' '}
-                <span className="font-medium">{googleMeetError}</span>
+        <div className="p-4 rounded-xl border border-destructive/30 bg-destructive/10 text-destructive flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-xs">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 shrink-0 mt-0.5 text-destructive" />
+            <div className="space-y-1">
+              <p className="font-bold text-sm">
+                Falha na integração com Google Meet &amp; Calendar
               </p>
+              <p className="text-destructive/90 leading-relaxed">
+                Mensagem do Google / Sistema:{' '}
+                <span className="font-semibold">{googleMeetError}</span>
+              </p>
+              {(googleMeetError.toLowerCase().includes('invalid_grant') ||
+                googleMeetError.toLowerCase().includes('unauthorized') ||
+                googleMeetError.toLowerCase().includes('revogada') ||
+                googleMeetError.toLowerCase().includes('expirada')) && (
+                <p className="text-[11px] text-muted-foreground bg-background/60 p-2 rounded-md border border-destructive/20 mt-1">
+                  💡 <strong>Como resolver:</strong> O Refresh Token informado foi revogado ou
+                  expirou. Gere um novo Refresh Token através do Google OAuth 2.0 Playground com o
+                  escopo{' '}
+                  <code className="font-mono text-foreground font-semibold">
+                    https://www.googleapis.com/auth/calendar.events
+                  </code>{' '}
+                  e atualize na Central de Integrações.
+                </p>
+              )}
             </div>
           </div>
           <a
             href="/integracoes"
-            className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold underline hover:opacity-80"
+            className="shrink-0 self-start sm:self-center inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-destructive text-destructive-foreground text-xs font-semibold hover:opacity-90 transition-opacity"
           >
-            Ajustar credenciais OAuth →
+            Reconfigurar Credenciais OAuth →
           </a>
         </div>
       )}

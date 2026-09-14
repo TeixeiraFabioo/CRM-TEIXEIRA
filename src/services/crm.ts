@@ -1283,9 +1283,15 @@ export const CrmService = {
 
       if (list.items.length > 0) {
         const item = list.items[0]
-        const currentCfg = item.config_json || item.config || {}
-        const keyVal = (token || item.api_key || item.api_token || '').trim()
-        const rToken = (currentCfg.refresh_token || '').trim()
+        const currentCfg = (item.config_json || item.config || {}) as Record<string, any>
+        const keyVal = (
+          token ||
+          item.api_key ||
+          item.api_token ||
+          currentCfg.refresh_token ||
+          ''
+        ).trim()
+        const rToken = (currentCfg.refresh_token || keyVal || '').trim()
 
         if (keyVal.startsWith('AIza') || rToken.startsWith('AIza')) {
           return {
@@ -1296,16 +1302,22 @@ export const CrmService = {
           }
         }
 
+        // Garante que o config_json preserva client_id, client_secret e refresh_token
         const updated = await pb.collection('integration_configs').update(item.id, {
           api_key: keyVal,
           api_token: keyVal,
           config_json: {
             ...currentCfg,
+            provider: 'google_meet',
+            calendar_id: currentCfg.calendar_id || 'primary',
+            client_id: currentCfg.client_id || '',
+            client_secret: currentCfg.client_secret || '',
+            refresh_token: rToken,
             test_requested: true,
             tested_at: new Date().toISOString(),
           },
         })
-        const cfg = updated.config_json || updated.config || {}
+        const cfg = (updated.config_json || updated.config || {}) as Record<string, any>
         if (updated.status === 'active' && !updated.error_message) {
           return {
             success: true,

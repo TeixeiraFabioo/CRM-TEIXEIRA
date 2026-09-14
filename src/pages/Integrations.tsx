@@ -1235,12 +1235,24 @@ export function IntegrationsPage() {
 
             {/* ALERTA DE ERRO REAL DO REGISTRO (INTEGRATION_CONFIGS) */}
             {googleMeetConfig?.error_message && (
-              <div className="p-2.5 rounded-lg text-xs bg-destructive/10 text-destructive border border-destructive/20 flex items-start gap-2">
-                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-destructive" />
-                <div className="space-y-0.5 leading-snug">
-                  <span className="font-semibold block">Erro na Integração:</span>
-                  <span>{googleMeetConfig.error_message}</span>
+              <div className="p-3 rounded-lg text-xs bg-destructive/10 text-destructive border border-destructive/20 space-y-1.5">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-destructive" />
+                  <div className="space-y-0.5 leading-snug">
+                    <span className="font-semibold block">Erro na Integração com Google:</span>
+                    <span className="font-medium">{googleMeetConfig.error_message}</span>
+                  </div>
                 </div>
+                {(googleMeetConfig.error_message.toLowerCase().includes('invalid_grant') ||
+                  googleMeetConfig.error_message.toLowerCase().includes('unauthorized') ||
+                  googleMeetConfig.error_message.toLowerCase().includes('revogada') ||
+                  googleMeetConfig.error_message.toLowerCase().includes('expirada')) && (
+                  <div className="text-[11px] bg-background/70 p-2 rounded border border-destructive/20 text-muted-foreground leading-relaxed mt-1">
+                    💡 <strong>Credencial revogada/expirada:</strong> O Google invalidou o Refresh
+                    Token. Siga o passo a passo abaixo para gerar um novo Refresh Token no OAuth
+                    Playground e salvar novamente.
+                  </div>
+                )}
               </div>
             )}
 

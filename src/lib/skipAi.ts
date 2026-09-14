@@ -350,45 +350,47 @@ export async function streamAgentChat(
   return { content, conversation_id: conversationId, message_id: messageId, citations, toolCalls }
 }
 
-export interface GenerateChatResponseOptions {
-  messages: Array<{ role: string; content: string }>
+/**
+ * Direct call helper for non-streaming chat requests used by LandingChatWidget and LeadDetail.
+ * Calls /api/ai/chat pb_hook or falls back gracefully.
+ */
+export async function generateChatResponse(params: {
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  temperature?: number
   tenant_id?: string
   lead_id?: string
-  temperature?: number
   public?: boolean
-}
+}): Promise<string> {
+  const backendBaseUrl =
+    (import.meta as any).env?.VITE_POCKETBASE_URL ||
+    (typeof window !== 'undefined' ? window.location.origin : '')
 
-export async function generateChatResponse(options: GenerateChatResponseOptions): Promise<string> {
-  const { messages, tenant_id, lead_id } = options
+  const url = `${backendBaseUrl.replace(/\/$/, '')}/api/ai/chat`
+  const tenantId = params.tenant_id || 'jg95y0vbaums0ql'
+
   try {
-    const pbUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_POCKETBASE_URL) || ''
-    const endpoint = pbUrl ? `${pbUrl.replace(/\/$/, '')}/api/ai/chat` : '/api/ai/chat'
-    const res = await fetch(endpoint, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        tenant_id: tenant_id || 'default',
-        lead_id,
-        messages,
+        tenant_id: tenantId,
+        messages: params.messages,
+        lead_id: params.lead_id,
       }),
     })
 
-    if (!res.ok) {
-      throw new Error(`AI Chat HTTP ${res.status}`)
+    if (res.ok) {
+      const data = await res.json()
+      if (data && data.response) {
+        return typeof data.response === 'string' ? data.response : JSON.stringify(data.response)
+      }
     }
-
-    const data = await res.json()
-    if (typeof data.response === 'string') {
-      return data.response
-    }
-    if (data.response && typeof data.response.content === 'string') {
-      return data.response.content
-    }
-    return data.response ? String(data.response) : ''
-  } catch (err) {
-    console.warn('generateChatResponse fallback:', err)
-    return ''
+  } catch (e) {
+    console.warn('generateChatResponse fallback error:', e)
   }
+
+  // Fallback response if endpoint fails or network error occurs
+  return 'Obrigado pelo contato. Nossa equipe jurídica especializada do escritório Teixeira & Nascimento está à disposição para analisar seu caso detalhadamente.'
 }

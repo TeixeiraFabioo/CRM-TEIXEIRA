@@ -229,13 +229,22 @@ onRecordCreate((e) => {
                 }
               } else {
                 const errJson = tokenRes.json || {}
-                const errMsg =
+                let errMsg =
                   errJson.error_description ||
                   errJson.error ||
                   'Erro OAuth HTTP ' + tokenRes.statusCode
+
+                if (errJson.error === 'invalid_grant') {
+                  errMsg =
+                    'Credencial revogada ou expirada no Google (invalid_grant). Por favor, gere um novo Refresh Token no OAuth 2.0 Playground.'
+                } else if (errJson.error === 'invalid_client') {
+                  errMsg =
+                    'Client ID ou Client Secret incorretos no Google (invalid_client). Verifique as credenciais no Google Cloud Console.'
+                }
+
                 console.warn('[Google Meet Hook] Falha ao trocar refresh token:', errMsg)
                 try {
-                  configRec.set('error_message', 'Erro na renovação do token Google: ' + errMsg)
+                  configRec.set('error_message', errMsg)
                   configRec.set('status', 'error')
                   configRec.set('is_active', false)
                   $app.save(configRec)
@@ -648,13 +657,22 @@ onRecordUpdate((e) => {
                 }
               } else {
                 const errJson = tokenRes.json || {}
-                const errMsg =
+                let errMsg =
                   errJson.error_description ||
                   errJson.error ||
                   'Erro OAuth HTTP ' + tokenRes.statusCode
+
+                if (errJson.error === 'invalid_grant') {
+                  errMsg =
+                    'Credencial revogada ou expirada no Google (invalid_grant). Por favor, gere um novo Refresh Token no OAuth 2.0 Playground.'
+                } else if (errJson.error === 'invalid_client') {
+                  errMsg =
+                    'Client ID ou Client Secret incorretos no Google (invalid_client). Verifique as credenciais no Google Cloud Console.'
+                }
+
                 console.warn('[Google Meet Update] Falha ao renovar refresh token:', errMsg)
                 try {
-                  configRec.set('error_message', 'Erro na renovação do token Google: ' + errMsg)
+                  configRec.set('error_message', errMsg)
                   configRec.set('status', 'error')
                   configRec.set('is_active', false)
                   $app.save(configRec)
@@ -1079,8 +1097,24 @@ onRecordCreate((e) => {
       return {}
     }
 
+    // Mescla com valores existentes antes do update se available
+    let existingCfg = {}
+    try {
+      const orig = record.original ? record.original() : null
+      if (orig) {
+        existingCfg = Object.assign(
+          {},
+          parseConfigCandidate(orig.get('config')),
+          parseConfigCandidate(orig.getString('config')),
+          parseConfigCandidate(orig.get('config_json')),
+          parseConfigCandidate(orig.getString('config_json')),
+        )
+      }
+    } catch (_) {}
+
     cfg = Object.assign(
       {},
+      existingCfg,
       parseConfigCandidate(record.get('config')),
       parseConfigCandidate(record.getString('config')),
       parseConfigCandidate(record.get('config_json')),
@@ -1091,6 +1125,13 @@ onRecordCreate((e) => {
     if (!apiKey && cfg.api_key) apiKey = String(cfg.api_key).trim()
     if (!apiKey && cfg.apiKey) apiKey = String(cfg.apiKey).trim()
     if (!apiKey && cfg.token) apiKey = String(cfg.token).trim()
+
+    // Se api_key e api_token vierem vazios na atualização mas existirem no cfg
+    if (!apiKey && cfg.refresh_token) {
+      apiKey = String(cfg.refresh_token).trim()
+      record.set('api_key', apiKey)
+      record.set('api_token', apiKey)
+    }
 
     // Validação estrita: Calendar API exige OAuth 2, não API Key
     if (apiKey.startsWith('AIza')) {
@@ -1219,8 +1260,17 @@ onRecordCreate((e) => {
           return e.next()
         } else {
           const errJson = tokenRes.json || {}
-          const errMsg =
+          let errMsg =
             errJson.error_description || errJson.error || 'Erro OAuth HTTP ' + tokenRes.statusCode
+
+          if (errJson.error === 'invalid_grant') {
+            errMsg =
+              'Credencial revogada ou expirada no Google (invalid_grant). Por favor, gere um novo Refresh Token no OAuth 2.0 Playground.'
+          } else if (errJson.error === 'invalid_client') {
+            errMsg =
+              'Client ID ou Client Secret incorretos no Google (invalid_client). Verifique as credenciais no Google Cloud Console.'
+          }
+
           record.set('status', 'error')
           record.set('is_active', false)
           record.set('error_message', errMsg)
@@ -1338,6 +1388,13 @@ onRecordUpdate((e) => {
     if (!apiKey && cfg.api_key) apiKey = String(cfg.api_key).trim()
     if (!apiKey && cfg.apiKey) apiKey = String(cfg.apiKey).trim()
     if (!apiKey && cfg.token) apiKey = String(cfg.token).trim()
+
+    // Se api_key e api_token estiverem vazios no payload mas presentes em cfg, preencher
+    if (!apiKey && cfg.refresh_token) {
+      apiKey = String(cfg.refresh_token).trim()
+      record.set('api_key', apiKey)
+      record.set('api_token', apiKey)
+    }
 
     // Validação estrita: Calendar API exige OAuth 2, não API Key
     if (apiKey.startsWith('AIza')) {
@@ -1468,8 +1525,17 @@ onRecordUpdate((e) => {
           return e.next()
         } else {
           const errJson = tokenRes.json || {}
-          const errMsg =
+          let errMsg =
             errJson.error_description || errJson.error || 'Erro OAuth HTTP ' + tokenRes.statusCode
+
+          if (errJson.error === 'invalid_grant') {
+            errMsg =
+              'Credencial revogada ou expirada no Google (invalid_grant). Por favor, gere um novo Refresh Token no OAuth 2.0 Playground.'
+          } else if (errJson.error === 'invalid_client') {
+            errMsg =
+              'Client ID ou Client Secret incorretos no Google (invalid_client). Verifique as credenciais no Google Cloud Console.'
+          }
+
           record.set('status', 'error')
           record.set('is_active', false)
           record.set('error_message', errMsg)
