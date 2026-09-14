@@ -96,22 +96,31 @@ onRecordCreate((e) => {
       }
 
       if (configRec) {
-        let rawCfg = configRec.get('config_json')
-        if (rawCfg === undefined || rawCfg === null || rawCfg === '') {
-          rawCfg = configRec.get('config')
-        }
+        // Leitura normalizada e robusta de config_json / config (objeto, JSON string ou fallback)
         let cfg = {}
-        if (typeof rawCfg === 'string') {
-          try {
-            cfg = JSON.parse(rawCfg) || {}
-          } catch (_) {
-            cfg = {}
+        const parseConfigCandidate = function (val) {
+          if (!val) return {}
+          if (typeof val === 'object') return val
+          if (typeof val === 'string') {
+            try {
+              const parsed = JSON.parse(val.trim())
+              if (parsed && typeof parsed === 'object') return parsed
+            } catch (_) {}
           }
-        } else if (rawCfg && typeof rawCfg === 'object') {
-          cfg = rawCfg
+          return {}
         }
 
-        // Busca refresh token de config_json, api_key ou api_token
+        cfg = Object.assign(
+          {},
+          parseConfigCandidate(configRec.get('config')),
+          parseConfigCandidate(configRec.getString('config')),
+          parseConfigCandidate(configRec.get('config_json')),
+          parseConfigCandidate(configRec.getString('config_json')),
+        )
+
+        const rawApiKey = (configRec.getString('api_key') || '').trim()
+        const rawApiToken = (configRec.getString('api_token') || '').trim()
+
         let refreshToken = (
           cfg.refresh_token ||
           cfg.refreshToken ||
@@ -121,9 +130,6 @@ onRecordCreate((e) => {
           .toString()
           .trim()
 
-        const rawApiKey = (configRec.getString('api_key') || '').trim()
-        const rawApiToken = (configRec.getString('api_token') || '').trim()
-
         if (!refreshToken) {
           if (rawApiKey.startsWith('1//') || rawApiKey.startsWith('1/')) {
             refreshToken = rawApiKey
@@ -132,103 +138,119 @@ onRecordCreate((e) => {
           }
         }
 
-        // Busca client_id e client_secret
-        let clientId = (cfg.client_id || cfg.clientId || $os.getenv('GOOGLE_CLIENT_ID') || '')
+        let clientId = (
+          cfg.client_id ||
+          cfg.clientId ||
+          cfg.google_client_id ||
+          $os.getenv('GOOGLE_CLIENT_ID') ||
+          ''
+        )
           .toString()
           .trim()
 
         let clientSecret = (
           cfg.client_secret ||
           cfg.clientSecret ||
+          cfg.google_client_secret ||
           $os.getenv('GOOGLE_CLIENT_SECRET') ||
           ''
         )
           .toString()
           .trim()
 
-        // Fallback padrão se não configurado
         if (!clientId) {
           clientId = '407408718192.apps.googleusercontent.com'
         }
 
         // Cache persistido no próprio registro config_json
         const nowMs = Date.now()
-        const cachedToken = cfg.access_token || ''
+        const cachedToken = (cfg.access_token || '').toString().trim()
         const cachedExpiresAt = Number(cfg.access_token_expires_at) || 0
 
         if (cachedToken && cachedExpiresAt > nowMs + 60000) {
           accessToken = cachedToken
         }
 
-        // Se não tem access token válido em cache, renovar via POST https://oauth2.googleapis.com/token
+        // Se não tem access token em cache, validar se possui client_secret antes de chamar o Google
         if (!accessToken && refreshToken) {
-          try {
-            let postBody =
-              'client_id=' +
-              encodeURIComponent(clientId) +
-              '&refresh_token=' +
-              encodeURIComponent(refreshToken) +
-              '&grant_type=refresh_token'
+          if (!clientSecret) {
+            const secretErrMsg =
+              'client_secret não configurado no Google Meet. Salve o Client Secret nas configurações de integração.'
+            console.warn('[Google Meet Hook] Abortando troca de token:', secretErrMsg)
+            try {
+              configRec.set('error_message', secretErrMsg)
+              configRec.set('status', 'error')
+              configRec.set('is_active', false)
+              $app.save(configRec)
+            } catch (_) {}
+          } else {
+            try {
+              const postBody =
+                'client_id=' +
+                encodeURIComponent(clientId) +
+                '&client_secret=' +
+                encodeURIComponent(clientSecret) +
+                '&refresh_token=' +
+                encodeURIComponent(refreshToken) +
+                '&grant_type=refresh_token'
 
-            if (clientSecret) {
-              postBody += '&client_secret=' + encodeURIComponent(clientSecret)
-            }
+              const tokenRes = $http.send({
+                url: 'https://oauth2.googleapis.com/token',
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: postBody,
+                timeout: 15,
+              })
 
-            const tokenRes = $http.send({
-              url: 'https://oauth2.googleapis.com/token',
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-              },
-              body: postBody,
-              timeout: 15,
-            })
-
-            if (tokenRes.statusCode >= 200 && tokenRes.statusCode < 300) {
-              const tokenJson = tokenRes.json || {}
-              if (tokenJson.access_token) {
-                accessToken = tokenJson.access_token
-                const expiresInSecs = Number(tokenJson.expires_in) || 3600
-                const updatedCfg = Object.assign({}, cfg, {
-                  client_id: clientId,
-                  client_secret: clientSecret,
-                  refresh_token: refreshToken,
-                  access_token: accessToken,
-                  access_token_expires_at: nowMs + expiresInSecs * 1000,
-                  token_refreshed_at: new Date().toISOString(),
-                })
-                configRec.set('config_json', updatedCfg)
-                configRec.set('config', updatedCfg)
-                configRec.set('status', 'active')
-                configRec.set('is_active', true)
-                configRec.set('error_message', '')
+              if (tokenRes.statusCode >= 200 && tokenRes.statusCode < 300) {
+                const tokenJson = tokenRes.json || {}
+                if (tokenJson.access_token) {
+                  accessToken = tokenJson.access_token
+                  const expiresInSecs = Number(tokenJson.expires_in) || 3600
+                  const updatedCfg = Object.assign({}, cfg, {
+                    client_id: clientId,
+                    client_secret: clientSecret,
+                    refresh_token: refreshToken,
+                    access_token: accessToken,
+                    access_token_expires_at: nowMs + expiresInSecs * 1000,
+                    token_refreshed_at: new Date().toISOString(),
+                    error_message: '',
+                  })
+                  configRec.set('config_json', updatedCfg)
+                  configRec.set('config', updatedCfg)
+                  configRec.set('status', 'active')
+                  configRec.set('is_active', true)
+                  configRec.set('error_message', '')
+                  try {
+                    $app.save(configRec)
+                  } catch (_) {}
+                }
+              } else {
+                const errJson = tokenRes.json || {}
+                const errMsg =
+                  errJson.error_description ||
+                  errJson.error ||
+                  'Erro OAuth HTTP ' + tokenRes.statusCode
+                console.warn('[Google Meet Hook] Falha ao trocar refresh token:', errMsg)
                 try {
+                  configRec.set('error_message', 'Erro na renovação do token Google: ' + errMsg)
+                  configRec.set('status', 'error')
+                  configRec.set('is_active', false)
                   $app.save(configRec)
                 } catch (_) {}
               }
-            } else {
-              const errJson = tokenRes.json || {}
-              const errMsg =
-                errJson.error_description ||
-                errJson.error ||
-                'Erro OAuth HTTP ' + tokenRes.statusCode
-              console.warn('[Google Meet Hook] Falha ao trocar refresh token:', errMsg)
+            } catch (refreshErr) {
+              console.warn('[Google Meet Hook] Erro de rede ao trocar refresh token:', refreshErr)
               try {
-                configRec.set('error_message', 'Erro na renovação do token Google: ' + errMsg)
-                configRec.set('status', 'error')
-                configRec.set('is_active', false)
+                configRec.set(
+                  'error_message',
+                  'Erro de conexão ao renovar token: ' + (refreshErr.message || String(refreshErr)),
+                )
                 $app.save(configRec)
               } catch (_) {}
             }
-          } catch (refreshErr) {
-            console.warn('[Google Meet Hook] Erro de rede ao trocar refresh token:', refreshErr)
-            try {
-              configRec.set(
-                'error_message',
-                'Erro de conexão ao renovar token: ' + (refreshErr.message || String(refreshErr)),
-              )
-              $app.save(configRec)
-            } catch (_) {}
           }
         }
 
@@ -496,20 +518,29 @@ onRecordUpdate((e) => {
       }
 
       if (configRec) {
-        let rawCfg = configRec.get('config_json')
-        if (rawCfg === undefined || rawCfg === null || rawCfg === '') {
-          rawCfg = configRec.get('config')
-        }
         let cfg = {}
-        if (typeof rawCfg === 'string') {
-          try {
-            cfg = JSON.parse(rawCfg) || {}
-          } catch (_) {
-            cfg = {}
+        const parseConfigCandidate = function (val) {
+          if (!val) return {}
+          if (typeof val === 'object') return val
+          if (typeof val === 'string') {
+            try {
+              const parsed = JSON.parse(val.trim())
+              if (parsed && typeof parsed === 'object') return parsed
+            } catch (_) {}
           }
-        } else if (rawCfg && typeof rawCfg === 'object') {
-          cfg = rawCfg
+          return {}
         }
+
+        cfg = Object.assign(
+          {},
+          parseConfigCandidate(configRec.get('config')),
+          parseConfigCandidate(configRec.getString('config')),
+          parseConfigCandidate(configRec.get('config_json')),
+          parseConfigCandidate(configRec.getString('config_json')),
+        )
+
+        const rawApiKey = (configRec.getString('api_key') || '').trim()
+        const rawApiToken = (configRec.getString('api_token') || '').trim()
 
         let refreshToken = (
           cfg.refresh_token ||
@@ -520,9 +551,6 @@ onRecordUpdate((e) => {
           .toString()
           .trim()
 
-        const rawApiKey = (configRec.getString('api_key') || '').trim()
-        const rawApiToken = (configRec.getString('api_token') || '').trim()
-
         if (!refreshToken) {
           if (rawApiKey.startsWith('1//') || rawApiKey.startsWith('1/')) {
             refreshToken = rawApiKey
@@ -531,13 +559,20 @@ onRecordUpdate((e) => {
           }
         }
 
-        let clientId = (cfg.client_id || cfg.clientId || $os.getenv('GOOGLE_CLIENT_ID') || '')
+        let clientId = (
+          cfg.client_id ||
+          cfg.clientId ||
+          cfg.google_client_id ||
+          $os.getenv('GOOGLE_CLIENT_ID') ||
+          ''
+        )
           .toString()
           .trim()
 
         let clientSecret = (
           cfg.client_secret ||
           cfg.clientSecret ||
+          cfg.google_client_secret ||
           $os.getenv('GOOGLE_CLIENT_SECRET') ||
           ''
         )
@@ -549,7 +584,7 @@ onRecordUpdate((e) => {
         }
 
         const nowMs = Date.now()
-        const cachedToken = cfg.access_token || ''
+        const cachedToken = (cfg.access_token || '').toString().trim()
         const cachedExpiresAt = Number(cfg.access_token_expires_at) || 0
 
         if (cachedToken && cachedExpiresAt > nowMs + 60000) {
@@ -557,65 +592,76 @@ onRecordUpdate((e) => {
         }
 
         if (!accessToken && refreshToken) {
-          try {
-            let postBody =
-              'client_id=' +
-              encodeURIComponent(clientId) +
-              '&refresh_token=' +
-              encodeURIComponent(refreshToken) +
-              '&grant_type=refresh_token'
+          if (!clientSecret) {
+            const secretErrMsg =
+              'client_secret não configurado no Google Meet. Salve o Client Secret nas configurações de integração.'
+            console.warn('[Google Meet Update] Abortando troca de token:', secretErrMsg)
+            try {
+              configRec.set('error_message', secretErrMsg)
+              configRec.set('status', 'error')
+              configRec.set('is_active', false)
+              $app.save(configRec)
+            } catch (_) {}
+          } else {
+            try {
+              const postBody =
+                'client_id=' +
+                encodeURIComponent(clientId) +
+                '&client_secret=' +
+                encodeURIComponent(clientSecret) +
+                '&refresh_token=' +
+                encodeURIComponent(refreshToken) +
+                '&grant_type=refresh_token'
 
-            if (clientSecret) {
-              postBody += '&client_secret=' + encodeURIComponent(clientSecret)
-            }
+              const tokenRes = $http.send({
+                url: 'https://oauth2.googleapis.com/token',
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: postBody,
+                timeout: 15,
+              })
 
-            const tokenRes = $http.send({
-              url: 'https://oauth2.googleapis.com/token',
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-              },
-              body: postBody,
-              timeout: 15,
-            })
-
-            if (tokenRes.statusCode >= 200 && tokenRes.statusCode < 300) {
-              const tokenJson = tokenRes.json || {}
-              if (tokenJson.access_token) {
-                accessToken = tokenJson.access_token
-                const expiresInSecs = Number(tokenJson.expires_in) || 3600
-                const updatedCfg = Object.assign({}, cfg, {
-                  client_id: clientId,
-                  client_secret: clientSecret,
-                  refresh_token: refreshToken,
-                  access_token: accessToken,
-                  access_token_expires_at: nowMs + expiresInSecs * 1000,
-                  token_refreshed_at: new Date().toISOString(),
-                })
-                configRec.set('config_json', updatedCfg)
-                configRec.set('config', updatedCfg)
-                configRec.set('status', 'active')
-                configRec.set('is_active', true)
-                configRec.set('error_message', '')
+              if (tokenRes.statusCode >= 200 && tokenRes.statusCode < 300) {
+                const tokenJson = tokenRes.json || {}
+                if (tokenJson.access_token) {
+                  accessToken = tokenJson.access_token
+                  const expiresInSecs = Number(tokenJson.expires_in) || 3600
+                  const updatedCfg = Object.assign({}, cfg, {
+                    client_id: clientId,
+                    client_secret: clientSecret,
+                    refresh_token: refreshToken,
+                    access_token: accessToken,
+                    access_token_expires_at: nowMs + expiresInSecs * 1000,
+                    token_refreshed_at: new Date().toISOString(),
+                    error_message: '',
+                  })
+                  configRec.set('config_json', updatedCfg)
+                  configRec.set('config', updatedCfg)
+                  configRec.set('status', 'active')
+                  configRec.set('is_active', true)
+                  configRec.set('error_message', '')
+                  try {
+                    $app.save(configRec)
+                  } catch (_) {}
+                }
+              } else {
+                const errJson = tokenRes.json || {}
+                const errMsg =
+                  errJson.error_description ||
+                  errJson.error ||
+                  'Erro OAuth HTTP ' + tokenRes.statusCode
+                console.warn('[Google Meet Update] Falha ao renovar refresh token:', errMsg)
                 try {
+                  configRec.set('error_message', 'Erro na renovação do token Google: ' + errMsg)
+                  configRec.set('status', 'error')
+                  configRec.set('is_active', false)
                   $app.save(configRec)
                 } catch (_) {}
               }
-            } else {
-              const errJson = tokenRes.json || {}
-              const errMsg =
-                errJson.error_description ||
-                errJson.error ||
-                'Erro OAuth HTTP ' + tokenRes.statusCode
-              console.warn('[Google Meet Update] Falha ao renovar refresh token:', errMsg)
-              try {
-                configRec.set('error_message', 'Erro na renovação do token Google: ' + errMsg)
-                configRec.set('status', 'error')
-                configRec.set('is_active', false)
-                $app.save(configRec)
-              } catch (_) {}
-            }
-          } catch (_) {}
+            } catch (_) {}
+          }
         }
 
         if (!accessToken) {
@@ -900,23 +946,29 @@ onRecordDelete((e) => {
         )
         if (list && list.length > 0) {
           const configRec = list[0]
-          let rawCfg = configRec.get('config_json')
-          if (rawCfg === undefined || rawCfg === null || rawCfg === '') {
-            rawCfg = configRec.get('config')
-          }
           let cfg = {}
-          if (typeof rawCfg === 'string') {
-            try {
-              cfg = JSON.parse(rawCfg) || {}
-            } catch (_) {
-              cfg = {}
+          const parseConfigCandidate = function (val) {
+            if (!val) return {}
+            if (typeof val === 'object') return val
+            if (typeof val === 'string') {
+              try {
+                const parsed = JSON.parse(val.trim())
+                if (parsed && typeof parsed === 'object') return parsed
+              } catch (_) {}
             }
-          } else if (rawCfg && typeof rawCfg === 'object') {
-            cfg = rawCfg
+            return {}
           }
 
+          cfg = Object.assign(
+            {},
+            parseConfigCandidate(configRec.get('config')),
+            parseConfigCandidate(configRec.getString('config')),
+            parseConfigCandidate(configRec.get('config_json')),
+            parseConfigCandidate(configRec.getString('config_json')),
+          )
+
           const nowMs = Date.now()
-          const cachedToken = cfg.access_token || ''
+          const cachedToken = (cfg.access_token || '').toString().trim()
           const cachedExpiresAt = Number(cfg.access_token_expires_at) || 0
 
           if (cachedToken && cachedExpiresAt > nowMs + 60000) {
@@ -935,6 +987,7 @@ onRecordDelete((e) => {
             let clientId = (
               cfg.client_id ||
               cfg.clientId ||
+              cfg.google_client_id ||
               $os.getenv('GOOGLE_CLIENT_ID') ||
               '407408718192.apps.googleusercontent.com'
             )
@@ -943,20 +996,22 @@ onRecordDelete((e) => {
             let clientSecret = (
               cfg.client_secret ||
               cfg.clientSecret ||
+              cfg.google_client_secret ||
               $os.getenv('GOOGLE_CLIENT_SECRET') ||
               ''
             )
               .toString()
               .trim()
 
-            if (refreshToken) {
-              let postBody =
+            if (refreshToken && clientSecret) {
+              const postBody =
                 'client_id=' +
                 encodeURIComponent(clientId) +
+                '&client_secret=' +
+                encodeURIComponent(clientSecret) +
                 '&refresh_token=' +
                 encodeURIComponent(refreshToken) +
                 '&grant_type=refresh_token'
-              if (clientSecret) postBody += '&client_secret=' + encodeURIComponent(clientSecret)
 
               const tokenRes = $http.send({
                 url: 'https://oauth2.googleapis.com/token',
@@ -1010,20 +1065,27 @@ onRecordCreate((e) => {
     if (provider !== 'google_meet') return e.next()
 
     let apiKey = (record.getString('api_token') || record.getString('api_key') || '').trim()
-    let rawCfg = record.get('config_json')
-    if (rawCfg === undefined || rawCfg === null || rawCfg === '') {
-      rawCfg = record.get('config')
-    }
+
     let cfg = {}
-    if (typeof rawCfg === 'string') {
-      try {
-        cfg = JSON.parse(rawCfg) || {}
-      } catch (_) {
-        cfg = {}
+    const parseConfigCandidate = function (val) {
+      if (!val) return {}
+      if (typeof val === 'object') return val
+      if (typeof val === 'string') {
+        try {
+          const parsed = JSON.parse(val.trim())
+          if (parsed && typeof parsed === 'object') return parsed
+        } catch (_) {}
       }
-    } else if (rawCfg && typeof rawCfg === 'object') {
-      cfg = rawCfg
+      return {}
     }
+
+    cfg = Object.assign(
+      {},
+      parseConfigCandidate(record.get('config')),
+      parseConfigCandidate(record.getString('config')),
+      parseConfigCandidate(record.get('config_json')),
+      parseConfigCandidate(record.getString('config_json')),
+    )
 
     if (!apiKey && cfg.api_token) apiKey = String(cfg.api_token).trim()
     if (!apiKey && cfg.api_key) apiKey = String(cfg.api_key).trim()
@@ -1072,13 +1134,20 @@ onRecordCreate((e) => {
 
     const calendarId = (cfg.calendar_id || cfg.calendarId || 'primary').toString().trim()
 
-    let clientId = (cfg.client_id || cfg.clientId || $os.getenv('GOOGLE_CLIENT_ID') || '')
+    let clientId = (
+      cfg.client_id ||
+      cfg.clientId ||
+      cfg.google_client_id ||
+      $os.getenv('GOOGLE_CLIENT_ID') ||
+      ''
+    )
       .toString()
       .trim()
 
     let clientSecret = (
       cfg.client_secret ||
       cfg.clientSecret ||
+      cfg.google_client_secret ||
       $os.getenv('GOOGLE_CLIENT_SECRET') ||
       ''
     )
@@ -1090,17 +1159,35 @@ onRecordCreate((e) => {
     }
 
     if (refreshToken) {
+      if (!clientSecret) {
+        const secretErrMsg =
+          'client_secret não configurado no Google Meet. Salve o Client Secret nas configurações de integração.'
+        console.warn('[Google Meet Hook onRecordCreate] Abortando troca de token:', secretErrMsg)
+        record.set('status', 'error')
+        record.set('is_active', false)
+        record.set('error_message', secretErrMsg)
+        const updatedCfg = Object.assign({}, cfg, {
+          provider: 'google_meet',
+          calendar_id: calendarId,
+          client_id: clientId,
+          client_secret: clientSecret,
+          refresh_token: refreshToken,
+          error_message: secretErrMsg,
+        })
+        record.set('config_json', updatedCfg)
+        record.set('config', updatedCfg)
+        return e.next()
+      }
+
       try {
-        let postBody =
+        const postBody =
           'client_id=' +
           encodeURIComponent(clientId) +
+          '&client_secret=' +
+          encodeURIComponent(clientSecret) +
           '&refresh_token=' +
           encodeURIComponent(refreshToken) +
           '&grant_type=refresh_token'
-
-        if (clientSecret) {
-          postBody += '&client_secret=' + encodeURIComponent(clientSecret)
-        }
 
         const tokenRes = $http.send({
           url: 'https://oauth2.googleapis.com/token',
@@ -1137,15 +1224,33 @@ onRecordCreate((e) => {
           record.set('status', 'error')
           record.set('is_active', false)
           record.set('error_message', errMsg)
+          const updatedCfg = Object.assign({}, cfg, {
+            provider: 'google_meet',
+            calendar_id: calendarId,
+            client_id: clientId,
+            client_secret: clientSecret,
+            refresh_token: refreshToken,
+            error_message: errMsg,
+          })
+          record.set('config_json', updatedCfg)
+          record.set('config', updatedCfg)
           return e.next()
         }
       } catch (httpErr) {
         record.set('status', 'error')
         record.set('is_active', false)
-        record.set(
-          'error_message',
-          'Falha de conexão com Google OAuth: ' + (httpErr.message || String(httpErr)),
-        )
+        const errMsg = 'Falha de conexão com Google OAuth: ' + (httpErr.message || String(httpErr))
+        record.set('error_message', errMsg)
+        const updatedCfg = Object.assign({}, cfg, {
+          provider: 'google_meet',
+          calendar_id: calendarId,
+          client_id: clientId,
+          client_secret: clientSecret,
+          refresh_token: refreshToken,
+          error_message: errMsg,
+        })
+        record.set('config_json', updatedCfg)
+        record.set('config', updatedCfg)
         return e.next()
       }
     }
@@ -1207,20 +1312,27 @@ onRecordUpdate((e) => {
     if (provider !== 'google_meet') return e.next()
 
     let apiKey = (record.getString('api_token') || record.getString('api_key') || '').trim()
-    let rawCfg = record.get('config_json')
-    if (rawCfg === undefined || rawCfg === null || rawCfg === '') {
-      rawCfg = record.get('config')
-    }
+
     let cfg = {}
-    if (typeof rawCfg === 'string') {
-      try {
-        cfg = JSON.parse(rawCfg) || {}
-      } catch (_) {
-        cfg = {}
+    const parseConfigCandidate = function (val) {
+      if (!val) return {}
+      if (typeof val === 'object') return val
+      if (typeof val === 'string') {
+        try {
+          const parsed = JSON.parse(val.trim())
+          if (parsed && typeof parsed === 'object') return parsed
+        } catch (_) {}
       }
-    } else if (rawCfg && typeof rawCfg === 'object') {
-      cfg = rawCfg
+      return {}
     }
+
+    cfg = Object.assign(
+      {},
+      parseConfigCandidate(record.get('config')),
+      parseConfigCandidate(record.getString('config')),
+      parseConfigCandidate(record.get('config_json')),
+      parseConfigCandidate(record.getString('config_json')),
+    )
 
     if (!apiKey && cfg.api_token) apiKey = String(cfg.api_token).trim()
     if (!apiKey && cfg.api_key) apiKey = String(cfg.api_key).trim()
@@ -1269,13 +1381,20 @@ onRecordUpdate((e) => {
 
     const calendarId = (cfg.calendar_id || cfg.calendarId || 'primary').toString().trim()
 
-    let clientId = (cfg.client_id || cfg.clientId || $os.getenv('GOOGLE_CLIENT_ID') || '')
+    let clientId = (
+      cfg.client_id ||
+      cfg.clientId ||
+      cfg.google_client_id ||
+      $os.getenv('GOOGLE_CLIENT_ID') ||
+      ''
+    )
       .toString()
       .trim()
 
     let clientSecret = (
       cfg.client_secret ||
       cfg.clientSecret ||
+      cfg.google_client_secret ||
       $os.getenv('GOOGLE_CLIENT_SECRET') ||
       ''
     )
@@ -1287,17 +1406,36 @@ onRecordUpdate((e) => {
     }
 
     if (refreshToken) {
+      if (!clientSecret) {
+        const secretErrMsg =
+          'client_secret não configurado no Google Meet. Salve o Client Secret nas configurações de integração.'
+        console.warn('[Google Meet Hook onRecordUpdate] Abortando troca de token:', secretErrMsg)
+        record.set('status', 'error')
+        record.set('is_active', false)
+        record.set('error_message', secretErrMsg)
+        const updatedCfg = Object.assign({}, cfg, {
+          provider: 'google_meet',
+          calendar_id: calendarId,
+          client_id: clientId,
+          client_secret: clientSecret,
+          refresh_token: refreshToken,
+          error_message: secretErrMsg,
+          test_requested: false,
+        })
+        record.set('config_json', updatedCfg)
+        record.set('config', updatedCfg)
+        return e.next()
+      }
+
       try {
-        let postBody =
+        const postBody =
           'client_id=' +
           encodeURIComponent(clientId) +
+          '&client_secret=' +
+          encodeURIComponent(clientSecret) +
           '&refresh_token=' +
           encodeURIComponent(refreshToken) +
           '&grant_type=refresh_token'
-
-        if (clientSecret) {
-          postBody += '&client_secret=' + encodeURIComponent(clientSecret)
-        }
 
         const tokenRes = $http.send({
           url: 'https://oauth2.googleapis.com/token',
@@ -1335,15 +1473,35 @@ onRecordUpdate((e) => {
           record.set('status', 'error')
           record.set('is_active', false)
           record.set('error_message', errMsg)
+          const updatedCfg = Object.assign({}, cfg, {
+            provider: 'google_meet',
+            calendar_id: calendarId,
+            client_id: clientId,
+            client_secret: clientSecret,
+            refresh_token: refreshToken,
+            error_message: errMsg,
+            test_requested: false,
+          })
+          record.set('config_json', updatedCfg)
+          record.set('config', updatedCfg)
           return e.next()
         }
       } catch (httpErr) {
         record.set('status', 'error')
         record.set('is_active', false)
-        record.set(
-          'error_message',
-          'Falha de conexão com Google OAuth: ' + (httpErr.message || String(httpErr)),
-        )
+        const errMsg = 'Falha de conexão com Google OAuth: ' + (httpErr.message || String(httpErr))
+        record.set('error_message', errMsg)
+        const updatedCfg = Object.assign({}, cfg, {
+          provider: 'google_meet',
+          calendar_id: calendarId,
+          client_id: clientId,
+          client_secret: clientSecret,
+          refresh_token: refreshToken,
+          error_message: errMsg,
+          test_requested: false,
+        })
+        record.set('config_json', updatedCfg)
+        record.set('config', updatedCfg)
         return e.next()
       }
     }

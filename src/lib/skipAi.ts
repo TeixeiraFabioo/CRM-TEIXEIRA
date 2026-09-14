@@ -350,34 +350,45 @@ export async function streamAgentChat(
   return { content, conversation_id: conversationId, message_id: messageId, citations, toolCalls }
 }
 
-export async function generateChatResponse(params: {
+export interface GenerateChatResponseOptions {
   messages: Array<{ role: string; content: string }>
+  tenant_id?: string
+  lead_id?: string
   temperature?: number
   public?: boolean
-  lead_id?: string
-  tenant_id?: string
-}): Promise<string> {
-  const basePbUrl = import.meta.env.VITE_POCKETBASE_URL || ''
-  const url = `${basePbUrl.replace(/\/+$/, '')}/api/ai/chat`
+}
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      tenant_id: params.tenant_id || 'default',
-      messages: params.messages,
-      lead_id: params.lead_id,
-      temperature: params.temperature,
-    }),
-  })
+export async function generateChatResponse(options: GenerateChatResponseOptions): Promise<string> {
+  const { messages, tenant_id, lead_id } = options
+  try {
+    const pbUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_POCKETBASE_URL) || ''
+    const endpoint = pbUrl ? `${pbUrl.replace(/\/$/, '')}/api/ai/chat` : '/api/ai/chat'
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tenant_id: tenant_id || 'default',
+        lead_id,
+        messages,
+      }),
+    })
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '')
-    throw new Error(errText || `Erro na chamada de IA (HTTP ${res.status})`)
+    if (!res.ok) {
+      throw new Error(`AI Chat HTTP ${res.status}`)
+    }
+
+    const data = await res.json()
+    if (typeof data.response === 'string') {
+      return data.response
+    }
+    if (data.response && typeof data.response.content === 'string') {
+      return data.response.content
+    }
+    return data.response ? String(data.response) : ''
+  } catch (err) {
+    console.warn('generateChatResponse fallback:', err)
+    return ''
   }
-
-  const data = await res.json()
-  return data.response || ''
 }
