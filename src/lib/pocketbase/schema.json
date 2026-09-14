@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-12T17:56:09.870Z",
+  "generatedAt": "2026-09-14T14:31:00.614Z",
   "collections": [
     {
       "name": "users",
@@ -2176,7 +2176,7 @@
         "view": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
         "create": "@request.auth.id != ''",
         "update": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')",
-        "delete": "@request.auth.id != '' && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')"
+        "delete": "@request.auth.id != '' && (@request.auth.role = 'admin' || @request.auth.role = 'gestor' || @request.auth.role = 'manager') && (tenant_id = @request.auth.tenant_id || @request.auth.tenant_id = '' || tenant_id = '')"
       },
       "fields": [
         {
@@ -2294,6 +2294,12 @@
           "required": false,
           "system": false,
           "collectionRef": "users"
+        },
+        {
+          "name": "google_event_id",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": ["CREATE INDEX idx_tasks_tenant ON tasks (tenant_id)"]

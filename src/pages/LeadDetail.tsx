@@ -28,6 +28,9 @@ import {
   Bot,
   User,
   Trash2,
+  Edit2,
+  Video,
+  ExternalLink,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -241,9 +244,15 @@ export function LeadDetailPage() {
     prioridade: 'alta',
     data: new Date().toISOString().slice(0, 10),
     horario: '14:00',
+    participantes: [],
     descricao: '',
     responsavel_id: user?.id || '',
   })
+
+  // Estado para edição de tarefas na tab de tarefas do lead
+  const [editingTask, setEditingTask] = useState<TaskRecord | null>(null)
+  const [editTaskModalOpen, setEditTaskModalOpen] = useState(false)
+  const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null)
 
   const [oppModalOpen, setOppModalOpen] = useState(false)
   const [oppData, setOppData] = useState<Partial<OpportunityRecord>>({
@@ -907,16 +916,103 @@ ${formattedHistory}
       return
     }
     try {
+      const validUserIds = users.map((u) => u.id)
+      const rawParts = Array.isArray(taskData.participantes) ? taskData.participantes : []
+      const sanitizedParts = rawParts.filter((p: string) => validUserIds.includes(p))
+
       await CrmService.createTask(tenant.id, {
         ...taskData,
         responsavel_id: finalRespId || undefined,
         lead_id: id,
+        participantes: sanitizedParts,
       })
       setTaskModalOpen(false)
       toast({ title: 'Tarefa jurídica agendada com sucesso' })
       loadAll()
     } catch (err: any) {
       toast({ title: 'Erro ao agendar tarefa', variant: 'destructive' })
+    }
+  }
+
+  const handleOpenEditTask = (task: TaskRecord) => {
+    setEditingTask(task)
+    setTaskData({
+      titulo: task.titulo,
+      tipo: task.tipo,
+      prioridade: task.prioridade,
+      status: task.status,
+      data: task.data ? task.data.slice(0, 10) : new Date().toISOString().slice(0, 10),
+      horario: task.horario ? task.horario.slice(0, 5) : '14:00',
+      descricao: task.descricao || '',
+      responsavel_id: task.responsavel_id || user?.id,
+      meet_link: task.meet_link || '',
+      participantes: Array.isArray(task.participantes) ? task.participantes : [],
+    })
+    setEditTaskModalOpen(true)
+  }
+
+  const handleUpdateTask = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingTask?.id) return
+    const finalRespId = taskData.responsavel_id || lead?.responsavel_id || user?.id
+    if (taskData.tipo === 'reuniao' && !finalRespId) {
+      toast({
+        title: 'Responsável obrigatório',
+        description: 'Selecione um responsável para a reunião.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    try {
+      const validUserIds = users.map((u) => u.id)
+      const rawParts = Array.isArray(taskData.participantes) ? taskData.participantes : []
+      const sanitizedParts = rawParts.filter((p: string) => validUserIds.includes(p))
+
+      await CrmService.updateTask(editingTask.id, {
+        ...taskData,
+        responsavel_id: finalRespId || undefined,
+        participantes: sanitizedParts,
+      })
+      setEditTaskModalOpen(false)
+      setEditingTask(null)
+      toast({ title: 'Tarefa / Reunião atualizada com sucesso!' })
+      loadAll()
+    } catch (err: any) {
+      toast({ title: 'Erro ao atualizar tarefa', variant: 'destructive' })
+    }
+  }
+
+  const handleDeleteTask = async (task: TaskRecord) => {
+    const isMeeting = task.tipo === 'reuniao'
+    const canDelete = userRole === 'admin' || userRole === 'gestor' || userRole === 'manager'
+    if (isMeeting && !canDelete) {
+      toast({
+        title: 'Permissão negada',
+        description: 'Apenas administradores e gestores podem excluir reuniões.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setDeletingTaskId(task.id)
+    try {
+      await CrmService.deleteTask(task.id)
+      toast({
+        title: 'Compromisso excluído',
+        description: isMeeting
+          ? 'A reunião foi removida e cancelada no Calendar.'
+          : 'Tarefa removida com sucesso.',
+      })
+      loadAll()
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao excluir compromisso',
+        description: err?.message || 'Falha ao excluir registro.',
+        variant: 'destructive',
+      })
+    } finally {
+      setDeletingTaskId(null)
     }
   }
 
@@ -2131,8 +2227,8 @@ ${formattedHistory}
                       key={task.id}
                       className="p-3.5 bg-card border border-border/80 rounded-xl flex items-center justify-between gap-3"
                     >
-                      <div>
-                        <div className="font-semibold text-xs flex items-center gap-2">
+                      <div className="space-y-1">
+                        <div className="font-semibold text-xs flex items-center gap-2 flex-wrap">
                           {task.titulo}
                           <Badge variant="outline" className="text-[10px] h-4">
                             {task.tipo}
@@ -2146,8 +2242,20 @@ ${formattedHistory}
                           >
                             {task.prioridade}
                           </Badge>
+
+                          {task.meet_link && (
+                            <a
+                              href={task.meet_link}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-[11px] text-blue-600 bg-blue-500/10 px-2 py-0.5 rounded font-medium hover:underline"
+                            >
+                              <Video className="h-3 w-3" /> Entrar Meet
+                              <ExternalLink className="h-2.5 w-2.5" />
+                            </a>
+                          )}
                         </div>
-                        <div className="text-[11px] text-muted-foreground mt-1">
+                        <div className="text-[11px] text-muted-foreground">
                           Data:{' '}
                           <strong>
                             {task.data || 'Hoje'} às {task.horario || '14:00'}
@@ -2155,22 +2263,53 @@ ${formattedHistory}
                           • Status: {task.status}
                         </div>
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={async () => {
-                          await CrmService.updateTask(task.id, {
-                            status: task.status === 'concluida' ? 'pendente' : 'concluida',
-                            data_conclusao:
-                              task.status === 'concluida' ? undefined : new Date().toISOString(),
-                          })
-                          toast({ title: 'Status da tarefa atualizado' })
-                          loadAll()
-                        }}
-                        className="h-8 text-xs"
-                      >
-                        {task.status === 'concluida' ? 'Reabrir' : 'Concluir'}
-                      </Button>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={async () => {
+                            await CrmService.updateTask(task.id, {
+                              status: task.status === 'concluida' ? 'pendente' : 'concluida',
+                              data_conclusao:
+                                task.status === 'concluida' ? undefined : new Date().toISOString(),
+                            })
+                            toast({ title: 'Status da tarefa atualizado' })
+                            loadAll()
+                          }}
+                          className="h-8 text-xs"
+                        >
+                          {task.status === 'concluida' ? 'Reabrir' : 'Concluir'}
+                        </Button>
+
+                        {/* Botão Editar: visível a todos os perfis */}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleOpenEditTask(task)}
+                          title="Editar compromisso"
+                          className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                        >
+                          <Edit2 className="h-3.5 w-3.5" />
+                        </Button>
+
+                        {/* Botão Excluir: apenas admin e gestor para reuniões */}
+                        {(task.tipo !== 'reuniao' ||
+                          userRole === 'admin' ||
+                          userRole === 'gestor' ||
+                          userRole === 'manager') && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={deletingTaskId === task.id}
+                            onClick={() => handleDeleteTask(task)}
+                            title="Excluir compromisso"
+                            className="h-8 w-8 p-0 text-muted-foreground hover:text-rose-600"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   ))
                 )}
@@ -2562,6 +2701,44 @@ ${formattedHistory}
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Participantes (Usuários válidos selecionados) */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">
+                Participantes Adicionais (Usuários da Equipe)
+              </Label>
+              <div className="grid grid-cols-2 gap-2 p-2 border rounded-md max-h-28 overflow-y-auto bg-muted/20">
+                {users.map((u) => {
+                  const currentParts = Array.isArray(taskData.participantes)
+                    ? taskData.participantes
+                    : []
+                  const isChecked = currentParts.includes(u.id)
+                  return (
+                    <label
+                      key={u.id}
+                      className="flex items-center gap-2 text-xs cursor-pointer select-none"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          let nextParts: string[]
+                          if (e.target.checked) {
+                            nextParts = [...currentParts, u.id]
+                          } else {
+                            nextParts = currentParts.filter((p) => p !== u.id)
+                          }
+                          setTaskData({ ...taskData, participantes: nextParts })
+                        }}
+                        className="rounded"
+                      />
+                      <span className="truncate">{u.name || u.email}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+
             <DialogFooter className="pt-2">
               <Button
                 type="button"
@@ -2573,6 +2750,173 @@ ${formattedHistory}
               </Button>
               <Button type="submit" size="sm" className="bg-[#0A1F3F] text-white">
                 Agendar Tarefa
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* EDIT TASK MODAL (LeadDetail) */}
+      <Dialog open={editTaskModalOpen} onOpenChange={setEditTaskModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-legal-serif">
+              Editar Tarefa / Reunião
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleUpdateTask} className="space-y-3 pt-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Título do Compromisso *</Label>
+              <Input
+                required
+                value={taskData.titulo}
+                onChange={(e) => setTaskData({ ...taskData, titulo: e.target.value })}
+                className="h-9 text-xs"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Tipo</Label>
+                <Select
+                  value={taskData.tipo}
+                  onValueChange={(val: any) => setTaskData({ ...taskData, tipo: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="reuniao">Reunião / Demo</SelectItem>
+                    <SelectItem value="whatsapp">Mensagem WhatsApp</SelectItem>
+                    <SelectItem value="ligacao">Ligação Telefônica</SelectItem>
+                    <SelectItem value="proposta">Enviar Proposta</SelectItem>
+                    <SelectItem value="acompanhamento">Follow-up</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Prioridade</Label>
+                <Select
+                  value={taskData.prioridade}
+                  onValueChange={(val: any) => setTaskData({ ...taskData, prioridade: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="urgente">🚨 Urgente</SelectItem>
+                    <SelectItem value="alta">⚡ Alta</SelectItem>
+                    <SelectItem value="media">Média</SelectItem>
+                    <SelectItem value="baixa">Baixa</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Data</Label>
+                <Input
+                  type="date"
+                  value={taskData.data}
+                  onChange={(e) => setTaskData({ ...taskData, data: e.target.value })}
+                  className="h-9 text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Horário</Label>
+                <Input
+                  type="time"
+                  value={taskData.horario}
+                  onChange={(e) => setTaskData({ ...taskData, horario: e.target.value })}
+                  className="h-9 text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">
+                Responsável{' '}
+                {taskData.tipo === 'reuniao' && <span className="text-rose-500">*</span>}
+              </Label>
+              <Select
+                value={taskData.responsavel_id || user?.id || ''}
+                onValueChange={(val) => setTaskData({ ...taskData, responsavel_id: val })}
+              >
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue placeholder="Selecione o responsável..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {users.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.name || u.email}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Link do Meet */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Link do Google Meet</Label>
+              <Input
+                placeholder="https://meet.google.com/..."
+                value={taskData.meet_link || ''}
+                onChange={(e) => setTaskData({ ...taskData, meet_link: e.target.value })}
+                className="h-9 text-xs"
+              />
+            </div>
+
+            {/* Participantes (Usuários válidos selecionados) */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">
+                Participantes Adicionais (Usuários da Equipe)
+              </Label>
+              <div className="grid grid-cols-2 gap-2 p-2 border rounded-md max-h-28 overflow-y-auto bg-muted/20">
+                {users.map((u) => {
+                  const currentParts = Array.isArray(taskData.participantes)
+                    ? taskData.participantes
+                    : []
+                  const isChecked = currentParts.includes(u.id)
+                  return (
+                    <label
+                      key={u.id}
+                      className="flex items-center gap-2 text-xs cursor-pointer select-none"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          let nextParts: string[]
+                          if (e.target.checked) {
+                            nextParts = [...currentParts, u.id]
+                          } else {
+                            nextParts = currentParts.filter((p) => p !== u.id)
+                          }
+                          setTaskData({ ...taskData, participantes: nextParts })
+                        }}
+                        className="rounded"
+                      />
+                      <span className="truncate">{u.name || u.email}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setEditTaskModalOpen(false)
+                  setEditingTask(null)
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" size="sm" className="bg-[#0A1F3F] text-white">
+                Salvar Alterações
               </Button>
             </DialogFooter>
           </form>

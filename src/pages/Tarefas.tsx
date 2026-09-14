@@ -40,13 +40,27 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
-import { useTenant } from '@/contexts/TenantContext'
+import { useTenant, useUserRole } from '@/contexts/TenantContext'
 import { CrmService } from '@/services/crm'
 import { TaskRecord, UserRecord, LeadRecord, OpportunityRecord } from '@/types/platform'
+import { Edit2, Trash2 } from 'lucide-react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 export function TarefasPage() {
   const { tenant, user } = useTenant()
+  const { role: userRole } = useUserRole()
   const { toast } = useToast()
+
+  const canDeleteMeeting = userRole === 'admin' || userRole === 'gestor' || userRole === 'manager'
 
   const [tasks, setTasks] = useState<TaskRecord[]>([])
   const [users, setUsers] = useState<UserRecord[]>([])
@@ -63,6 +77,14 @@ export function TarefasPage() {
 
   const [createModalOpen, setCreateModalOpen] = useState(false)
   const [savingTask, setSavingTask] = useState(false)
+
+  // Estados de Edição e Exclusão
+  const [editModalOpen, setEditModalOpen] = useState(false)
+  const [editingTask, setEditingTask] = useState<TaskRecord | null>(null)
+  const [updatingTask, setUpdatingTask] = useState(false)
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
+  const [taskToDelete, setTaskToDelete] = useState<TaskRecord | null>(null)
+  const [deletingTask, setDeletingTask] = useState(false)
 
   // Quando o modal abre ou o usuário logado carrega, pré-seleciona o responsavel_id se vazio
   useEffect(() => {
@@ -218,11 +240,13 @@ export function TarefasPage() {
 
     setSavingTask(true)
     try {
+      // Sanitização de participantes: o backend espera ids de usuários válidos
+      const userIdsList = users.map((u) => u.id)
       const participantsArray = formData.participantes
         ? formData.participantes
             .split(',')
             .map((p) => p.trim())
-            .filter(Boolean)
+            .filter((p) => userIdsList.includes(p))
         : []
 
       await CrmService.createTask(tenant.id, {
@@ -269,6 +293,119 @@ export function TarefasPage() {
       })
     } finally {
       setSavingTask(false)
+    }
+  }
+
+  const openEditModal = (task: TaskRecord) => {
+    setEditingTask(task)
+    setFormData({
+      titulo: task.titulo || '',
+      tipo: task.tipo || 'reuniao',
+      prioridade: task.prioridade || 'alta',
+      status: task.status || 'pendente',
+      data: task.data ? task.data.slice(0, 10) : new Date().toISOString().slice(0, 10),
+      horario: task.horario ? task.horario.slice(0, 5) : '10:00',
+      descricao: task.descricao || '',
+      lead_id: task.lead_id || '',
+      oportunidade_id: task.oportunidade_id || '',
+      responsavel_id: task.responsavel_id || user?.id || '',
+      participantes: Array.isArray(task.participantes)
+        ? task.participantes.join(', ')
+        : typeof task.participantes === 'string'
+          ? task.participantes
+          : '',
+      meet_link: task.meet_link || '',
+    })
+    setEditModalOpen(true)
+  }
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingTask?.id || !formData.titulo.trim()) return
+
+    if (formData.tipo === 'reuniao' && !formData.responsavel_id) {
+      toast({
+        title: 'Responsável obrigatório',
+        description: 'Selecione um responsável para a reunião.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setUpdatingTask(true)
+    try {
+      const userIdsList = users.map((u) => u.id)
+      const participantsArray = formData.participantes
+        ? formData.participantes
+            .split(',')
+            .map((p) => p.trim())
+            .filter((p) => userIdsList.includes(p))
+        : []
+
+      await CrmService.updateTask(editingTask.id, {
+        titulo: formData.titulo.trim(),
+        tipo: formData.tipo,
+        prioridade: formData.prioridade,
+        status: formData.status,
+        data: formData.data || undefined,
+        horario: formData.horario || undefined,
+        descricao: formData.descricao?.trim() || undefined,
+        lead_id: formData.lead_id || undefined,
+        oportunidade_id: formData.oportunidade_id || undefined,
+        responsavel_id: formData.responsavel_id || undefined,
+        meet_link: formData.meet_link?.trim() || undefined,
+        participantes: participantsArray,
+      })
+
+      toast({
+        title: 'Compromisso atualizado!',
+        description:
+          formData.tipo === 'reuniao'
+            ? 'Alterações sincronizadas com o Google Calendar se integrado.'
+            : undefined,
+      })
+      setEditModalOpen(false)
+      setEditingTask(null)
+      loadData()
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao atualizar tarefa',
+        description: err?.message || 'Falha ao atualizar registro.',
+        variant: 'destructive',
+      })
+    } finally {
+      setUpdatingTask(false)
+    }
+  }
+
+  const confirmDeleteTask = (task: TaskRecord) => {
+    setTaskToDelete(task)
+    setDeleteModalOpen(true)
+  }
+
+  const handleDelete = async () => {
+    if (!taskToDelete?.id) return
+    setDeletingTask(true)
+    try {
+      await CrmService.deleteTask(taskToDelete.id)
+      toast({
+        title: 'Compromisso excluído',
+        description:
+          taskToDelete.tipo === 'reuniao'
+            ? 'A reunião foi removida e o evento cancelado no Calendar.'
+            : 'Tarefa removida com sucesso.',
+      })
+      setDeleteModalOpen(false)
+      setTaskToDelete(null)
+      loadData()
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao excluir compromisso',
+        description: err?.message || 'Apenas administradores e gestores podem excluir reuniões.',
+        variant: 'destructive',
+      })
+    } finally {
+      setDeletingTask(false)
     }
   }
 
@@ -683,6 +820,30 @@ export function TarefasPage() {
                       >
                         {isCompleted ? 'Reabrir' : 'Concluir'}
                       </Button>
+
+                      {/* Botão Editar visível a todos os perfis */}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openEditModal(t)}
+                        title="Editar compromisso"
+                        className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                      >
+                        <Edit2 className="h-3.5 w-3.5" />
+                      </Button>
+
+                      {/* Botão Excluir apenas para admin e gestor */}
+                      {(t.tipo !== 'reuniao' || canDeleteMeeting) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => confirmDeleteTask(t)}
+                          title="Excluir compromisso"
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 )
@@ -799,26 +960,48 @@ export function TarefasPage() {
                               </div>
                             )}
 
-                            {t.meet_link ? (
-                              <a
-                                href={t.meet_link}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-[10px] text-blue-600 font-medium flex items-center gap-0.5 hover:underline"
-                              >
-                                <Video className="h-2.5 w-2.5" /> Meet
-                              </a>
-                            ) : (
-                              t.tipo === 'reuniao' &&
-                              googleMeetError && (
+                            <div className="flex items-center justify-between pt-1">
+                              {t.meet_link ? (
+                                <a
+                                  href={t.meet_link}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-[10px] text-blue-600 font-medium flex items-center gap-0.5 hover:underline"
+                                >
+                                  <Video className="h-2.5 w-2.5" /> Meet
+                                </a>
+                              ) : t.tipo === 'reuniao' && googleMeetError ? (
                                 <span
                                   title={`Evento não criado no Google Calendar: ${googleMeetError}`}
                                   className="text-[9px] text-rose-600 font-medium flex items-center gap-1 bg-rose-500/10 px-1 py-0.5 rounded truncate"
                                 >
                                   <AlertCircle className="h-2.5 w-2.5 shrink-0" /> Não sincronizado
                                 </span>
-                              )
-                            )}
+                              ) : (
+                                <div />
+                              )}
+
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => openEditModal(t)}
+                                  title="Editar compromisso"
+                                  className="text-muted-foreground hover:text-foreground p-0.5"
+                                >
+                                  <Edit2 className="h-3 w-3" />
+                                </button>
+                                {(t.tipo !== 'reuniao' || canDeleteMeeting) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => confirmDeleteTask(t)}
+                                    title="Excluir compromisso"
+                                    className="text-muted-foreground hover:text-rose-600 p-0.5"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
                           </div>
                         )
                       })
@@ -967,14 +1150,36 @@ export function TarefasPage() {
                         </div>
                       </div>
 
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => toggleTaskStatus(t)}
-                        className="h-7 text-xs shrink-0"
-                      >
-                        {isDone ? 'Reabrir' : 'Concluir'}
-                      </Button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => toggleTaskStatus(t)}
+                          className="h-7 text-xs"
+                        >
+                          {isDone ? 'Reabrir' : 'Concluir'}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openEditModal(t)}
+                          title="Editar compromisso"
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                        >
+                          <Edit2 className="h-3.5 w-3.5" />
+                        </Button>
+                        {(t.tipo !== 'reuniao' || canDeleteMeeting) && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => confirmDeleteTask(t)}
+                            title="Excluir compromisso"
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   )
                 })
@@ -1122,17 +1327,41 @@ export function TarefasPage() {
             {/* Participantes (e-mails ou nomes) */}
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold">
-                Participantes Adicionais (separados por vírgula)
+                Participantes Adicionais (Usuários da Equipe)
               </Label>
-              <Input
-                placeholder="ex: cliente@empresa.com, socio@empresa.com"
-                value={formData.participantes}
-                onChange={(e) => setFormData({ ...formData, participantes: e.target.value })}
-                className="h-9 text-xs"
-              />
+              <div className="grid grid-cols-2 gap-2 p-2 border rounded-md max-h-32 overflow-y-auto bg-muted/20">
+                {users.map((u) => {
+                  const parts = formData.participantes
+                    .split(',')
+                    .map((p) => p.trim())
+                    .filter(Boolean)
+                  const isChecked = parts.includes(u.id)
+                  return (
+                    <label
+                      key={u.id}
+                      className="flex items-center gap-2 text-xs cursor-pointer select-none"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          let nextParts: string[]
+                          if (e.target.checked) {
+                            nextParts = [...parts, u.id]
+                          } else {
+                            nextParts = parts.filter((p) => p !== u.id)
+                          }
+                          setFormData({ ...formData, participantes: nextParts.join(', ') })
+                        }}
+                        className="rounded"
+                      />
+                      <span className="truncate">{u.name || u.email}</span>
+                    </label>
+                  )
+                })}
+              </div>
               <p className="text-[10px] text-muted-foreground">
-                Serão adicionados como convidados no evento do Google Calendar e no registro da
-                tarefa.
+                Selecione os membros da equipe que participarão da reunião / compromisso.
               </p>
             </div>
 
@@ -1180,6 +1409,256 @@ export function TarefasPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Modal de Edição de Tarefa / Reunião (acessível a todos os perfis) */}
+      <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-legal-serif">
+              Editar Tarefa / Reunião Jurídica
+            </DialogTitle>
+          </DialogHeader>
+
+          <form onSubmit={handleUpdate} className="space-y-3.5 pt-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Título do Compromisso *</Label>
+              <Input
+                required
+                placeholder="Ex: Reunião de Fechamento com Lead"
+                value={formData.titulo}
+                onChange={(e) => setFormData({ ...formData, titulo: e.target.value })}
+                className="h-9 text-xs"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Tipo</Label>
+                <Select
+                  value={formData.tipo}
+                  onValueChange={(val: any) => setFormData({ ...formData, tipo: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="reuniao">Reunião (Google Meet)</SelectItem>
+                    <SelectItem value="ligacao">Ligação</SelectItem>
+                    <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                    <SelectItem value="email">E-mail</SelectItem>
+                    <SelectItem value="retorno">Retorno</SelectItem>
+                    <SelectItem value="proposta">Apresentação Proposta</SelectItem>
+                    <SelectItem value="documento">Análise Documental</SelectItem>
+                    <SelectItem value="acompanhamento">Acompanhamento</SelectItem>
+                    <SelectItem value="outro">Outro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Prioridade</Label>
+                <Select
+                  value={formData.prioridade}
+                  onValueChange={(val: any) => setFormData({ ...formData, prioridade: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="baixa">Baixa</SelectItem>
+                    <SelectItem value="media">Média</SelectItem>
+                    <SelectItem value="alta">Alta</SelectItem>
+                    <SelectItem value="urgente">Urgente</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Data</Label>
+                <Input
+                  type="date"
+                  value={formData.data}
+                  onChange={(e) => setFormData({ ...formData, data: e.target.value })}
+                  className="h-9 text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Horário</Label>
+                <Input
+                  type="time"
+                  value={formData.horario}
+                  onChange={(e) => setFormData({ ...formData, horario: e.target.value })}
+                  className="h-9 text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">
+                  Responsável{' '}
+                  {formData.tipo === 'reuniao' && <span className="text-rose-500">*</span>}
+                </Label>
+                <Select
+                  value={formData.responsavel_id}
+                  onValueChange={(val) => setFormData({ ...formData, responsavel_id: val })}
+                  required={formData.tipo === 'reuniao'}
+                >
+                  <SelectTrigger
+                    className={`h-9 text-xs ${formData.tipo === 'reuniao' && !formData.responsavel_id ? 'border-rose-400' : ''}`}
+                  >
+                    <SelectValue placeholder="Selecione o responsável..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {users.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.name || u.email}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Vincular Lead</Label>
+                <Select
+                  value={formData.lead_id}
+                  onValueChange={(val) => setFormData({ ...formData, lead_id: val })}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Selecione..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {leads.map((l) => (
+                      <SelectItem key={l.id} value={l.id}>
+                        {l.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Participantes: lista de usuários sanitizados */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">
+                Participantes Adicionais (Usuários da Equipe)
+              </Label>
+              <div className="grid grid-cols-2 gap-2 p-2 border rounded-md max-h-32 overflow-y-auto bg-muted/20">
+                {users.map((u) => {
+                  const parts = formData.participantes
+                    .split(',')
+                    .map((p) => p.trim())
+                    .filter(Boolean)
+                  const isChecked = parts.includes(u.id)
+                  return (
+                    <label
+                      key={u.id}
+                      className="flex items-center gap-2 text-xs cursor-pointer select-none"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          let nextParts: string[]
+                          if (e.target.checked) {
+                            nextParts = [...parts, u.id]
+                          } else {
+                            nextParts = parts.filter((p) => p !== u.id)
+                          }
+                          setFormData({ ...formData, participantes: nextParts.join(', ') })
+                        }}
+                        className="rounded"
+                      />
+                      <span className="truncate">{u.name || u.email}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Meet Link */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Link do Google Meet</Label>
+              <Input
+                placeholder="https://meet.google.com/..."
+                value={formData.meet_link}
+                onChange={(e) => setFormData({ ...formData, meet_link: e.target.value })}
+                className="h-9 text-xs"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Pauta / Observações</Label>
+              <Textarea
+                rows={2}
+                placeholder="Detalhes e objetivos da reunião..."
+                value={formData.descricao}
+                onChange={(e) => setFormData({ ...formData, descricao: e.target.value })}
+                className="text-xs resize-none"
+              />
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setEditModalOpen(false)
+                  setEditingTask(null)
+                }}
+                disabled={updatingTask}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                className="bg-[#0A1F3F] text-white hover:bg-[#0e2a56]"
+                disabled={updatingTask}
+              >
+                {updatingTask ? 'Salvando...' : 'Salvar Alterações'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Confirmação de Exclusão (Admin e Gestor apenas) */}
+      <AlertDialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" /> Excluir Compromisso
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir o compromisso <strong>"{taskToDelete?.titulo}"</strong>
+              ?
+              {taskToDelete?.tipo === 'reuniao' && (
+                <span className="block mt-1 text-amber-600 dark:text-amber-400 font-medium">
+                  O evento correspondente também será cancelado no Google Calendar.
+                </span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingTask}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault()
+                handleDelete()
+              }}
+              disabled={deletingTask}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deletingTask ? 'Excluindo...' : 'Sim, excluir'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

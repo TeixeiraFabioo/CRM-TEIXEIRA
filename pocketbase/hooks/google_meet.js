@@ -1,19 +1,65 @@
 /**
  * PocketBase Hook: Google Meet & Google Calendar Integration
  *
- * All functions are defined inline within callbacks to comply with PocketBase JSVM callback scoping rules.
+ * Implements:
+ * 1. Automatic exchange of OAuth 2 refresh token for access token (POST https://oauth2.googleapis.com/token)
+ *    persisted and cached inside the integration record (config_json.access_token / access_token_expires_at).
+ *    If refresh fails, saves real error message in error_message and marks is_active=false.
+ * 2. Event creation in Google Calendar via POST .../events?conferenceDataVersion=1 with conferenceData
+ *    and sets meet_link + google_event_id on task. Sanitizes relation field `participantes` so invalid ids
+ *    never crash task creation.
+ * 3. Event update in Google Calendar (PATCH) on task update if date/time/title change, using google_event_id.
+ * 4. Event deletion from Google Calendar on task delete (DELETE .../events/{id}).
+ * 5. Strict role enforcement: only 'gestor'/'manager' or 'admin' can delete meeting tasks.
+ *
+ * NOTE: PocketBase JSVM executes callbacks in separate pooled isolates.
+ * No top-level variables or functions: all logic and helpers must be inline inside each callback.
  */
 
-// Hook onRecordCreate em tasks: Geração automática de Google Meet
+// Hook onRecordCreate em tasks: Sanitização de participantes e criação de Google Meet no Calendar
 onRecordCreate((e) => {
   try {
     const task = e.record
     if (!task) return e.next()
 
+    // --- SANITIZAÇÃO DE PARTICIPANTES ---
+    // O campo 'participantes' é uma relação PocketBase com users.
+    // Qualquer id vazio ou que não corresponda a um usuário existente causa:
+    // "GoError: participantes: Failed to find all relation records with the provided ids."
+    try {
+      const rawParts = task.get('participantes')
+      if (Array.isArray(rawParts) && rawParts.length > 0) {
+        const validUserIds = []
+        for (let i = 0; i < rawParts.length; i++) {
+          const item = rawParts[i]
+          if (typeof item === 'string' && item.trim().length > 0) {
+            const trimmed = item.trim()
+            try {
+              const u = $app.findRecordById('users', trimmed)
+              if (u && u.id) {
+                validUserIds.push(u.id)
+              }
+            } catch (_) {
+              // Não é id de user válido na base — ignorar para não abortar criação da tarefa
+            }
+          }
+        }
+        task.set('participantes', validUserIds)
+      } else if (rawParts && !Array.isArray(rawParts)) {
+        task.set('participantes', [])
+      }
+    } catch (partErr) {
+      console.warn('[Google Meet Hook] Erro ao sanitizar participantes:', partErr)
+      try {
+        task.set('participantes', [])
+      } catch (_) {}
+    }
+
     const tipo = task.getString('tipo')
     let meetLink = task.getString('meet_link')
+    let googleEventId = task.getString('google_event_id')
 
-    if (tipo === 'reuniao' && !meetLink) {
+    if (tipo === 'reuniao' && (!meetLink || !googleEventId)) {
       const tenantId = task.getString('tenant_id')
       let accessToken = ''
       let configRec = null
@@ -31,7 +77,7 @@ onRecordCreate((e) => {
           configRec = list[0]
         }
       } catch (err) {
-        console.log('[Google Meet] Erro ao buscar config:', err)
+        console.log('[Google Meet] Erro ao buscar config do tenant:', err)
       }
 
       if (!configRec) {
@@ -51,43 +97,68 @@ onRecordCreate((e) => {
 
       if (configRec) {
         const cfg = configRec.get('config_json') || configRec.get('config') || {}
-        const directToken = (
-          configRec.getString('api_token') ||
-          configRec.getString('api_key') ||
-          cfg.access_token ||
-          cfg.api_token ||
-          ''
-        ).trim()
 
-        const clientId = (
-          cfg.client_id ||
-          cfg.clientId ||
-          $os.getenv('GOOGLE_CLIENT_ID') ||
-          ''
-        ).trim()
-        const clientSecret = (
-          cfg.client_secret ||
-          cfg.clientSecret ||
-          $os.getenv('GOOGLE_CLIENT_SECRET') ||
-          ''
-        ).trim()
-        const refreshToken = (
+        // Busca refresh token de api_key, api_token ou config_json
+        let refreshToken = (
           cfg.refresh_token ||
           cfg.refreshToken ||
           $os.getenv('GOOGLE_REFRESH_TOKEN') ||
           ''
         ).trim()
 
-        if (refreshToken && clientId && clientSecret) {
+        const rawApiKey = (configRec.getString('api_key') || '').trim()
+        const rawApiToken = (configRec.getString('api_token') || '').trim()
+
+        if (!refreshToken) {
+          if (rawApiKey.startsWith('1//') || rawApiKey.startsWith('1/')) {
+            refreshToken = rawApiKey
+          } else if (rawApiToken.startsWith('1//') || rawApiToken.startsWith('1/')) {
+            refreshToken = rawApiToken
+          }
+        }
+
+        // Busca client_id e client_secret
+        let clientId = (
+          cfg.client_id ||
+          cfg.clientId ||
+          $os.getenv('GOOGLE_CLIENT_ID') ||
+          ''
+        ).trim()
+
+        let clientSecret = (
+          cfg.client_secret ||
+          cfg.clientSecret ||
+          $os.getenv('GOOGLE_CLIENT_SECRET') ||
+          ''
+        ).trim()
+
+        // Fallback padrão se não configurado
+        if (!clientId) {
+          clientId = '407408718192.apps.googleusercontent.com'
+        }
+
+        // Cache persistido no próprio registro config_json
+        const nowMs = Date.now()
+        const cachedToken = cfg.access_token || ''
+        const cachedExpiresAt = Number(cfg.access_token_expires_at) || 0
+
+        if (cachedToken && cachedExpiresAt > nowMs + 60000) {
+          accessToken = cachedToken
+        }
+
+        // Se não tem access token válido em cache, renovar via POST https://oauth2.googleapis.com/token
+        if (!accessToken && refreshToken) {
           try {
-            const postBody =
+            let postBody =
               'client_id=' +
               encodeURIComponent(clientId) +
-              '&client_secret=' +
-              encodeURIComponent(clientSecret) +
               '&refresh_token=' +
               encodeURIComponent(refreshToken) +
               '&grant_type=refresh_token'
+
+            if (clientSecret) {
+              postBody += '&client_secret=' + encodeURIComponent(clientSecret)
+            }
 
             const tokenRes = $http.send({
               url: 'https://oauth2.googleapis.com/token',
@@ -103,11 +174,15 @@ onRecordCreate((e) => {
               const tokenJson = tokenRes.json || {}
               if (tokenJson.access_token) {
                 accessToken = tokenJson.access_token
+                const expiresInSecs = Number(tokenJson.expires_in) || 3600
                 const updatedCfg = Object.assign({}, cfg, {
+                  client_id: clientId,
+                  client_secret: clientSecret,
+                  refresh_token: refreshToken,
                   access_token: accessToken,
+                  access_token_expires_at: nowMs + expiresInSecs * 1000,
                   token_refreshed_at: new Date().toISOString(),
                 })
-                configRec.set('api_token', accessToken)
                 configRec.set('config_json', updatedCfg)
                 configRec.set('config', updatedCfg)
                 configRec.set('status', 'active')
@@ -120,20 +195,35 @@ onRecordCreate((e) => {
             } else {
               const errJson = tokenRes.json || {}
               const errMsg =
-                errJson.error_description || errJson.error || 'HTTP ' + tokenRes.statusCode
-              console.warn('[Google Meet] Falha ao renovar refresh token:', errMsg)
+                errJson.error_description ||
+                errJson.error ||
+                'Erro OAuth HTTP ' + tokenRes.statusCode
+              console.warn('[Google Meet Hook] Falha ao trocar refresh token:', errMsg)
               try {
                 configRec.set('error_message', 'Erro na renovação do token Google: ' + errMsg)
+                configRec.set('status', 'error')
+                configRec.set('is_active', false)
                 $app.save(configRec)
               } catch (_) {}
             }
           } catch (refreshErr) {
-            console.warn('[Google Meet] Erro de rede ao renovar token:', refreshErr)
+            console.warn('[Google Meet Hook] Erro de rede ao trocar refresh token:', refreshErr)
+            try {
+              configRec.set(
+                'error_message',
+                'Erro de conexão ao renovar token: ' + (refreshErr.message || String(refreshErr)),
+              )
+              $app.save(configRec)
+            } catch (_) {}
           }
         }
 
-        if (!accessToken && directToken) {
-          accessToken = directToken
+        // Se ainda não tiver accessToken mas tiver um token direto tipo Bearer que não seja refresh token
+        if (!accessToken) {
+          const possibleToken = rawApiToken || rawApiKey
+          if (possibleToken && possibleToken.startsWith('ya29.')) {
+            accessToken = possibleToken
+          }
         }
       }
 
@@ -145,7 +235,7 @@ onRecordCreate((e) => {
         let leadName = 'Lead'
         let respName = 'Consultor'
         let oppName = 'Oportunidade'
-        let attendees = []
+        const attendees = []
 
         if (leadId) {
           try {
@@ -153,7 +243,7 @@ onRecordCreate((e) => {
             if (leadRec) {
               leadName = leadRec.getString('name') || leadName
               const lEmail = leadRec.getString('email')
-              if (lEmail) attendees.push({ email: lEmail })
+              if (lEmail && lEmail.includes('@')) attendees.push({ email: lEmail.trim() })
             }
           } catch (_) {}
         }
@@ -164,7 +254,7 @@ onRecordCreate((e) => {
             if (userRec) {
               respName = userRec.getString('name') || respName
               const uEmail = userRec.getString('email')
-              if (uEmail) attendees.push({ email: uEmail })
+              if (uEmail && uEmail.includes('@')) attendees.push({ email: uEmail.trim() })
             }
           } catch (_) {}
         }
@@ -178,14 +268,21 @@ onRecordCreate((e) => {
           } catch (_) {}
         }
 
-        const parts = task.get('participantes')
-        if (Array.isArray(parts)) {
-          parts.forEach((p) => {
-            if (typeof p === 'string' && p.includes('@')) attendees.push({ email: p.trim() })
-          })
-        } else if (typeof parts === 'string' && parts.includes('@')) {
-          parts.split(',').forEach((p) => {
-            if (p.includes('@')) attendees.push({ email: p.trim() })
+        // Coletar emails de participantes se houverem users vinculados
+        const partIds = task.get('participantes')
+        if (Array.isArray(partIds)) {
+          partIds.forEach((pid) => {
+            if (typeof pid === 'string' && pid.trim()) {
+              try {
+                const pUser = $app.findRecordById('users', pid.trim())
+                if (pUser) {
+                  const pEmail = pUser.getString('email')
+                  if (pEmail && pEmail.includes('@')) {
+                    attendees.push({ email: pEmail.trim() })
+                  }
+                }
+              } catch (_) {}
+            }
           })
         }
 
@@ -210,7 +307,7 @@ onRecordCreate((e) => {
           endDateTime = startDateTime
         }
 
-        const requestId = 'meet_' + task.id + '_' + Date.now()
+        const requestId = 'meet_' + (task.id || 'new') + '_' + Date.now()
 
         const eventPayload = {
           summary: eventSummary,
@@ -267,6 +364,10 @@ onRecordCreate((e) => {
 
             if (!generatedMeetLink && calJson.hangoutLink) {
               generatedMeetLink = calJson.hangoutLink
+            }
+
+            if (calJson.id) {
+              task.set('google_event_id', calJson.id)
             }
 
             if (generatedMeetLink) {
@@ -308,16 +409,43 @@ onRecordCreate((e) => {
   }
 }, 'tasks')
 
-// Hook onRecordUpdate em tasks: se alterou para reunião ou se não tinha meet_link
+// Hook onRecordUpdate em tasks:
+// 1. Sanitização de participantes
+// 2. Se a tarefa é reunião e já tem google_event_id: atualiza o evento existente via PATCH no Calendar
+// 3. Se a tarefa virou reunião ou não tinha evento ainda: cria o evento sem duplicar
 onRecordUpdate((e) => {
   try {
     const task = e.record
     if (!task) return e.next()
 
+    // --- SANITIZAÇÃO DE PARTICIPANTES ---
+    try {
+      const rawParts = task.get('participantes')
+      if (Array.isArray(rawParts) && rawParts.length > 0) {
+        const validUserIds = []
+        for (let i = 0; i < rawParts.length; i++) {
+          const item = rawParts[i]
+          if (typeof item === 'string' && item.trim().length > 0) {
+            const trimmed = item.trim()
+            try {
+              const u = $app.findRecordById('users', trimmed)
+              if (u && u.id) {
+                validUserIds.push(u.id)
+              }
+            } catch (_) {}
+          }
+        }
+        task.set('participantes', validUserIds)
+      } else if (rawParts && !Array.isArray(rawParts)) {
+        task.set('participantes', [])
+      }
+    } catch (_) {}
+
     const tipo = task.getString('tipo')
     let meetLink = task.getString('meet_link')
+    let googleEventId = task.getString('google_event_id')
 
-    if (tipo === 'reuniao' && !meetLink) {
+    if (tipo === 'reuniao') {
       const tenantId = task.getString('tenant_id')
       let accessToken = ''
       let configRec = null
@@ -355,43 +483,63 @@ onRecordUpdate((e) => {
 
       if (configRec) {
         const cfg = configRec.get('config_json') || configRec.get('config') || {}
-        const directToken = (
-          configRec.getString('api_token') ||
-          configRec.getString('api_key') ||
-          cfg.access_token ||
-          cfg.api_token ||
-          ''
-        ).trim()
 
-        const clientId = (
-          cfg.client_id ||
-          cfg.clientId ||
-          $os.getenv('GOOGLE_CLIENT_ID') ||
-          ''
-        ).trim()
-        const clientSecret = (
-          cfg.client_secret ||
-          cfg.clientSecret ||
-          $os.getenv('GOOGLE_CLIENT_SECRET') ||
-          ''
-        ).trim()
-        const refreshToken = (
+        let refreshToken = (
           cfg.refresh_token ||
           cfg.refreshToken ||
           $os.getenv('GOOGLE_REFRESH_TOKEN') ||
           ''
         ).trim()
 
-        if (refreshToken && clientId && clientSecret) {
+        const rawApiKey = (configRec.getString('api_key') || '').trim()
+        const rawApiToken = (configRec.getString('api_token') || '').trim()
+
+        if (!refreshToken) {
+          if (rawApiKey.startsWith('1//') || rawApiKey.startsWith('1/')) {
+            refreshToken = rawApiKey
+          } else if (rawApiToken.startsWith('1//') || rawApiToken.startsWith('1/')) {
+            refreshToken = rawApiToken
+          }
+        }
+
+        let clientId = (
+          cfg.client_id ||
+          cfg.clientId ||
+          $os.getenv('GOOGLE_CLIENT_ID') ||
+          ''
+        ).trim()
+
+        let clientSecret = (
+          cfg.client_secret ||
+          cfg.clientSecret ||
+          $os.getenv('GOOGLE_CLIENT_SECRET') ||
+          ''
+        ).trim()
+
+        if (!clientId) {
+          clientId = '407408718192.apps.googleusercontent.com'
+        }
+
+        const nowMs = Date.now()
+        const cachedToken = cfg.access_token || ''
+        const cachedExpiresAt = Number(cfg.access_token_expires_at) || 0
+
+        if (cachedToken && cachedExpiresAt > nowMs + 60000) {
+          accessToken = cachedToken
+        }
+
+        if (!accessToken && refreshToken) {
           try {
-            const postBody =
+            let postBody =
               'client_id=' +
               encodeURIComponent(clientId) +
-              '&client_secret=' +
-              encodeURIComponent(clientSecret) +
               '&refresh_token=' +
               encodeURIComponent(refreshToken) +
               '&grant_type=refresh_token'
+
+            if (clientSecret) {
+              postBody += '&client_secret=' + encodeURIComponent(clientSecret)
+            }
 
             const tokenRes = $http.send({
               url: 'https://oauth2.googleapis.com/token',
@@ -407,11 +555,15 @@ onRecordUpdate((e) => {
               const tokenJson = tokenRes.json || {}
               if (tokenJson.access_token) {
                 accessToken = tokenJson.access_token
+                const expiresInSecs = Number(tokenJson.expires_in) || 3600
                 const updatedCfg = Object.assign({}, cfg, {
+                  client_id: clientId,
+                  client_secret: clientSecret,
+                  refresh_token: refreshToken,
                   access_token: accessToken,
+                  access_token_expires_at: nowMs + expiresInSecs * 1000,
                   token_refreshed_at: new Date().toISOString(),
                 })
-                configRec.set('api_token', accessToken)
                 configRec.set('config_json', updatedCfg)
                 configRec.set('config', updatedCfg)
                 configRec.set('status', 'active')
@@ -421,12 +573,28 @@ onRecordUpdate((e) => {
                   $app.save(configRec)
                 } catch (_) {}
               }
+            } else {
+              const errJson = tokenRes.json || {}
+              const errMsg =
+                errJson.error_description ||
+                errJson.error ||
+                'Erro OAuth HTTP ' + tokenRes.statusCode
+              console.warn('[Google Meet Update] Falha ao renovar refresh token:', errMsg)
+              try {
+                configRec.set('error_message', 'Erro na renovação do token Google: ' + errMsg)
+                configRec.set('status', 'error')
+                configRec.set('is_active', false)
+                $app.save(configRec)
+              } catch (_) {}
             }
           } catch (_) {}
         }
 
-        if (!accessToken && directToken) {
-          accessToken = directToken
+        if (!accessToken) {
+          const possibleToken = rawApiToken || rawApiKey
+          if (possibleToken && possibleToken.startsWith('ya29.')) {
+            accessToken = possibleToken
+          }
         }
       }
 
@@ -438,7 +606,7 @@ onRecordUpdate((e) => {
         let leadName = 'Lead'
         let respName = 'Consultor'
         let oppName = 'Oportunidade'
-        let attendees = []
+        const attendees = []
 
         if (leadId) {
           try {
@@ -446,7 +614,7 @@ onRecordUpdate((e) => {
             if (leadRec) {
               leadName = leadRec.getString('name') || leadName
               const lEmail = leadRec.getString('email')
-              if (lEmail) attendees.push({ email: lEmail })
+              if (lEmail && lEmail.includes('@')) attendees.push({ email: lEmail.trim() })
             }
           } catch (_) {}
         }
@@ -457,7 +625,7 @@ onRecordUpdate((e) => {
             if (userRec) {
               respName = userRec.getString('name') || respName
               const uEmail = userRec.getString('email')
-              if (uEmail) attendees.push({ email: uEmail })
+              if (uEmail && uEmail.includes('@')) attendees.push({ email: uEmail.trim() })
             }
           } catch (_) {}
         }
@@ -469,6 +637,23 @@ onRecordUpdate((e) => {
               oppName = oppRec.getString('title') || oppName
             }
           } catch (_) {}
+        }
+
+        const partIds = task.get('participantes')
+        if (Array.isArray(partIds)) {
+          partIds.forEach((pid) => {
+            if (typeof pid === 'string' && pid.trim()) {
+              try {
+                const pUser = $app.findRecordById('users', pid.trim())
+                if (pUser) {
+                  const pEmail = pUser.getString('email')
+                  if (pEmail && pEmail.includes('@')) {
+                    attendees.push({ email: pEmail.trim() })
+                  }
+                }
+              } catch (_) {}
+            }
+          })
         }
 
         const eventSummary =
@@ -492,92 +677,149 @@ onRecordUpdate((e) => {
           endDateTime = startDateTime
         }
 
-        const requestId = 'meet_upd_' + task.id + '_' + Date.now()
+        const calendarId = 'primary'
 
-        const eventPayload = {
-          summary: eventSummary,
-          description:
-            task.getString('descricao') || 'Reunião agendada pelo Teixeira & Nascimento CRM',
-          start: {
-            dateTime: new Date(startDateTime).toISOString(),
-            timeZone: 'America/Sao_Paulo',
-          },
-          end: {
-            dateTime: endDateTime,
-            timeZone: 'America/Sao_Paulo',
-          },
-          attendees: attendees,
-          conferenceData: {
-            createRequest: {
-              requestId: requestId,
-              conferenceSolutionKey: {
-                type: 'hangoutsMeet',
+        // CASO 1: Já existe um evento no Calendar associado a esta tarefa -> PATCH
+        if (googleEventId) {
+          try {
+            const patchPayload = {
+              summary: eventSummary,
+              description:
+                task.getString('descricao') || 'Reunião agendada pelo Teixeira & Nascimento CRM',
+              start: {
+                dateTime: new Date(startDateTime).toISOString(),
+                timeZone: 'America/Sao_Paulo',
+              },
+              end: {
+                dateTime: endDateTime,
+                timeZone: 'America/Sao_Paulo',
+              },
+              attendees: attendees,
+            }
+
+            const patchRes = $http.send({
+              url:
+                'https://www.googleapis.com/calendar/v3/calendars/' +
+                encodeURIComponent(calendarId) +
+                '/events/' +
+                encodeURIComponent(googleEventId),
+              method: 'PATCH',
+              headers: {
+                Authorization: 'Bearer ' + accessToken.trim(),
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(patchPayload),
+              timeout: 15,
+            })
+
+            if (patchRes.statusCode >= 200 && patchRes.statusCode < 300) {
+              const patchJson = patchRes.json || {}
+              if (patchJson.hangoutLink && !meetLink) {
+                task.set('meet_link', patchJson.hangoutLink)
+              }
+              console.log('[Google Meet Update] Evento atualizado com sucesso no Calendar.')
+            } else {
+              console.warn(
+                '[Google Meet Update] Erro ao atualizar evento existente:',
+                patchRes.statusCode,
+                patchRes.body,
+              )
+            }
+          } catch (patchErr) {
+            console.warn('[Google Meet Update] Erro de rede ao atualizar evento:', patchErr)
+          }
+        } else {
+          // CASO 2: Ainda não tem google_event_id -> criar novo evento no Calendar
+          const requestId = 'meet_upd_' + task.id + '_' + Date.now()
+
+          const eventPayload = {
+            summary: eventSummary,
+            description:
+              task.getString('descricao') || 'Reunião agendada pelo Teixeira & Nascimento CRM',
+            start: {
+              dateTime: new Date(startDateTime).toISOString(),
+              timeZone: 'America/Sao_Paulo',
+            },
+            end: {
+              dateTime: endDateTime,
+              timeZone: 'America/Sao_Paulo',
+            },
+            attendees: attendees,
+            conferenceData: {
+              createRequest: {
+                requestId: requestId,
+                conferenceSolutionKey: {
+                  type: 'hangoutsMeet',
+                },
               },
             },
-          },
-        }
+          }
 
-        const calendarId = 'primary'
-        try {
-          const calRes = $http.send({
-            url:
-              'https://www.googleapis.com/calendar/v3/calendars/' +
-              encodeURIComponent(calendarId) +
-              '/events?conferenceDataVersion=1',
-            method: 'POST',
-            headers: {
-              Authorization: 'Bearer ' + accessToken.trim(),
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(eventPayload),
-            timeout: 20,
-          })
+          try {
+            const calRes = $http.send({
+              url:
+                'https://www.googleapis.com/calendar/v3/calendars/' +
+                encodeURIComponent(calendarId) +
+                '/events?conferenceDataVersion=1',
+              method: 'POST',
+              headers: {
+                Authorization: 'Bearer ' + accessToken.trim(),
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(eventPayload),
+              timeout: 20,
+            })
 
-          if (calRes.statusCode >= 200 && calRes.statusCode < 300) {
-            const calJson = calRes.json || {}
-            let generatedMeetLink = ''
+            if (calRes.statusCode >= 200 && calRes.statusCode < 300) {
+              const calJson = calRes.json || {}
+              let generatedMeetLink = ''
 
-            if (calJson.conferenceData && calJson.conferenceData.entryPoints) {
-              for (let ep = 0; ep < calJson.conferenceData.entryPoints.length; ep++) {
-                const entry = calJson.conferenceData.entryPoints[ep]
-                if (entry.entryPointType === 'video' && entry.uri) {
-                  generatedMeetLink = entry.uri
-                  break
+              if (calJson.conferenceData && calJson.conferenceData.entryPoints) {
+                for (let ep = 0; ep < calJson.conferenceData.entryPoints.length; ep++) {
+                  const entry = calJson.conferenceData.entryPoints[ep]
+                  if (entry.entryPointType === 'video' && entry.uri) {
+                    generatedMeetLink = entry.uri
+                    break
+                  }
                 }
               }
-            }
 
-            if (!generatedMeetLink && calJson.hangoutLink) {
-              generatedMeetLink = calJson.hangoutLink
-            }
+              if (!generatedMeetLink && calJson.hangoutLink) {
+                generatedMeetLink = calJson.hangoutLink
+              }
 
-            if (generatedMeetLink) {
-              task.set('meet_link', generatedMeetLink)
-              console.log('[Google Meet Hook Update] Meet Link criado:', generatedMeetLink)
+              if (calJson.id) {
+                task.set('google_event_id', calJson.id)
+              }
+
+              if (generatedMeetLink) {
+                task.set('meet_link', generatedMeetLink)
+                console.log('[Google Meet Hook Update] Meet Link criado:', generatedMeetLink)
+              }
+            } else {
+              const errJson = calRes.json || {}
+              const errMsg = errJson.error
+                ? errJson.error.message || JSON.stringify(errJson.error)
+                : 'HTTP ' + calRes.statusCode
+              console.warn('[Google Meet Hook Update] Falha ao criar evento no Calendar:', errMsg)
+              if (configRec) {
+                try {
+                  configRec.set('error_message', errMsg)
+                  $app.save(configRec)
+                } catch (_) {}
+              }
             }
-          } else {
-            const errJson = calRes.json || {}
-            const errMsg = errJson.error
-              ? errJson.error.message || JSON.stringify(errJson.error)
-              : 'HTTP ' + calRes.statusCode
-            console.warn('[Google Meet Hook Update] Falha ao criar evento no Calendar:', errMsg)
+          } catch (calErr) {
+            console.warn('[Google Meet Hook Update] Erro:', calErr)
             if (configRec) {
               try {
-                configRec.set('error_message', errMsg)
+                configRec.set(
+                  'error_message',
+                  'Falha de conexão com Google Calendar: ' + (calErr.message || String(calErr)),
+                )
                 $app.save(configRec)
               } catch (_) {}
             }
-          }
-        } catch (calErr) {
-          console.warn('[Google Meet Hook Update] Erro:', calErr)
-          if (configRec) {
-            try {
-              configRec.set(
-                'error_message',
-                'Falha de conexão com Google Calendar: ' + (calErr.message || String(calErr)),
-              )
-              $app.save(configRec)
-            } catch (_) {}
           }
         }
       }
@@ -586,6 +828,122 @@ onRecordUpdate((e) => {
     return e.next()
   } catch (err) {
     console.error('[Google Meet onRecordUpdate] Erro:', err)
+    return e.next()
+  }
+}, 'tasks')
+
+// Hook onRecordDelete em tasks:
+// 1. Exclusão: só gestor ('gestor' / 'manager') e admin ('admin') podem excluir tarefa do tipo reunião.
+// 2. Se a tarefa tiver google_event_id, cancela/remove o evento correspondente no Google Calendar.
+onRecordDelete((e) => {
+  try {
+    const task = e.record
+    if (!task) return e.next()
+
+    const tipo = task.getString('tipo')
+    const authRecord = e.httpContext ? e.httpContext.get('authRecord') : null
+
+    // Enforce estrito no backend para exclusão de reuniões
+    if (tipo === 'reuniao' && authRecord) {
+      const userRole = (authRecord.getString('role') || '').toLowerCase()
+      const allowedRoles = ['admin', 'gestor', 'manager']
+      if (!allowedRoles.includes(userRole)) {
+        throw new ForbiddenError(
+          'Apenas gestores e administradores têm permissão para excluir reuniões.',
+        )
+      }
+    }
+
+    const googleEventId = task.getString('google_event_id')
+
+    // Se o evento foi criado no Calendar, remover via DELETE
+    if (googleEventId) {
+      const tenantId = task.getString('tenant_id')
+      let accessToken = ''
+
+      try {
+        const list = $app.findRecordsByFilter(
+          'integration_configs',
+          'tenant_id = {:tid} && provider = "google_meet"',
+          '-created',
+          1,
+          0,
+          { tid: tenantId },
+        )
+        if (list && list.length > 0) {
+          const configRec = list[0]
+          const cfg = configRec.get('config_json') || configRec.get('config') || {}
+          const nowMs = Date.now()
+          const cachedToken = cfg.access_token || ''
+          const cachedExpiresAt = Number(cfg.access_token_expires_at) || 0
+
+          if (cachedToken && cachedExpiresAt > nowMs + 60000) {
+            accessToken = cachedToken
+          } else {
+            let refreshToken = (
+              cfg.refresh_token ||
+              configRec.getString('api_key') ||
+              configRec.getString('api_token') ||
+              ''
+            ).trim()
+            let clientId = (
+              cfg.client_id ||
+              $os.getenv('GOOGLE_CLIENT_ID') ||
+              '407408718192.apps.googleusercontent.com'
+            ).trim()
+            let clientSecret = (
+              cfg.client_secret ||
+              $os.getenv('GOOGLE_CLIENT_SECRET') ||
+              ''
+            ).trim()
+
+            if (refreshToken) {
+              let postBody =
+                'client_id=' +
+                encodeURIComponent(clientId) +
+                '&refresh_token=' +
+                encodeURIComponent(refreshToken) +
+                '&grant_type=refresh_token'
+              if (clientSecret) postBody += '&client_secret=' + encodeURIComponent(clientSecret)
+
+              const tokenRes = $http.send({
+                url: 'https://oauth2.googleapis.com/token',
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: postBody,
+                timeout: 10,
+              })
+              if (tokenRes.statusCode >= 200 && tokenRes.statusCode < 300) {
+                const tokenJson = tokenRes.json || {}
+                accessToken = tokenJson.access_token || ''
+              }
+            }
+          }
+        }
+      } catch (_) {}
+
+      if (accessToken) {
+        try {
+          $http.send({
+            url:
+              'https://www.googleapis.com/calendar/v3/calendars/primary/events/' +
+              encodeURIComponent(googleEventId),
+            method: 'DELETE',
+            headers: {
+              Authorization: 'Bearer ' + accessToken.trim(),
+            },
+            timeout: 10,
+          })
+          console.log('[Google Meet Delete] Evento removido do Calendar:', googleEventId)
+        } catch (delErr) {
+          console.warn('[Google Meet Delete] Erro ao deletar evento no Calendar:', delErr)
+        }
+      }
+    }
+
+    return e.next()
+  } catch (err) {
+    console.error('[Google Meet onRecordDelete] Erro:', err)
     return e.next()
   }
 }, 'tasks')
@@ -624,11 +982,11 @@ onRecordCreate((e) => {
       return e.next()
     }
 
-    if (apiKey && !record.getString('api_token')) {
-      record.set('api_token', apiKey)
+    let refreshToken = (cfg.refresh_token || cfg.refreshToken || '').trim()
+    if (!refreshToken && (apiKey.startsWith('1//') || apiKey.startsWith('1/'))) {
+      refreshToken = apiKey
     }
 
-    const refreshToken = (cfg.refresh_token || cfg.refreshToken || '').trim()
     if (refreshToken.startsWith('AIza')) {
       record.set('status', 'error')
       record.set('is_active', false)
@@ -648,74 +1006,76 @@ onRecordCreate((e) => {
 
     const calendarId = (cfg.calendar_id || cfg.calendarId || 'primary').trim()
 
+    let clientId = (cfg.client_id || cfg.clientId || $os.getenv('GOOGLE_CLIENT_ID') || '').trim()
+    let clientSecret = (
+      cfg.client_secret ||
+      cfg.clientSecret ||
+      $os.getenv('GOOGLE_CLIENT_SECRET') ||
+      ''
+    ).trim()
+
+    if (!clientId) {
+      clientId = '407408718192.apps.googleusercontent.com'
+    }
+
     if (refreshToken) {
-      const clientId = (
-        cfg.client_id ||
-        cfg.clientId ||
-        $os.getenv('GOOGLE_CLIENT_ID') ||
-        ''
-      ).trim()
-      const clientSecret = (
-        cfg.client_secret ||
-        cfg.clientSecret ||
-        $os.getenv('GOOGLE_CLIENT_SECRET') ||
-        ''
-      ).trim()
+      try {
+        let postBody =
+          'client_id=' +
+          encodeURIComponent(clientId) +
+          '&refresh_token=' +
+          encodeURIComponent(refreshToken) +
+          '&grant_type=refresh_token'
 
-      if (clientId && clientSecret) {
-        try {
-          const postBody =
-            'client_id=' +
-            encodeURIComponent(clientId) +
-            '&client_secret=' +
-            encodeURIComponent(clientSecret) +
-            '&refresh_token=' +
-            encodeURIComponent(refreshToken) +
-            '&grant_type=refresh_token'
+        if (clientSecret) {
+          postBody += '&client_secret=' + encodeURIComponent(clientSecret)
+        }
 
-          const tokenRes = $http.send({
-            url: 'https://oauth2.googleapis.com/token',
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: postBody,
-            timeout: 15,
+        const tokenRes = $http.send({
+          url: 'https://oauth2.googleapis.com/token',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: postBody,
+          timeout: 15,
+        })
+
+        if (tokenRes.statusCode >= 200 && tokenRes.statusCode < 300) {
+          const tokenJson = tokenRes.json || {}
+          record.set('status', 'active')
+          record.set('is_active', true)
+          record.set('error_message', '')
+          const expiresInSecs = Number(tokenJson.expires_in) || 3600
+          const updatedCfg = Object.assign({}, cfg, {
+            provider: 'google_meet',
+            calendar_id: calendarId,
+            client_id: clientId,
+            client_secret: clientSecret,
+            refresh_token: refreshToken,
+            access_token: tokenJson.access_token || '',
+            access_token_expires_at: Date.now() + expiresInSecs * 1000,
+            last_validated: new Date().toISOString(),
+            error_message: '',
           })
-
-          if (tokenRes.statusCode >= 200 && tokenRes.statusCode < 300) {
-            const tokenJson = tokenRes.json || {}
-            record.set('status', 'active')
-            record.set('is_active', true)
-            record.set('error_message', '')
-            if (tokenJson.access_token) {
-              record.set('api_token', tokenJson.access_token)
-            }
-            const updatedCfg = Object.assign({}, cfg, {
-              provider: 'google_meet',
-              calendar_id: calendarId,
-              last_validated: new Date().toISOString(),
-              error_message: '',
-            })
-            record.set('config_json', updatedCfg)
-            record.set('config', updatedCfg)
-            return e.next()
-          } else {
-            const errJson = tokenRes.json || {}
-            const errMsg =
-              errJson.error_description || errJson.error || 'Erro OAuth HTTP ' + tokenRes.statusCode
-            record.set('status', 'error')
-            record.set('is_active', false)
-            record.set('error_message', errMsg)
-            return e.next()
-          }
-        } catch (httpErr) {
+          record.set('config_json', updatedCfg)
+          record.set('config', updatedCfg)
+          return e.next()
+        } else {
+          const errJson = tokenRes.json || {}
+          const errMsg =
+            errJson.error_description || errJson.error || 'Erro OAuth HTTP ' + tokenRes.statusCode
           record.set('status', 'error')
           record.set('is_active', false)
-          record.set(
-            'error_message',
-            'Falha de conexão com Google OAuth: ' + (httpErr.message || String(httpErr)),
-          )
+          record.set('error_message', errMsg)
           return e.next()
         }
+      } catch (httpErr) {
+        record.set('status', 'error')
+        record.set('is_active', false)
+        record.set(
+          'error_message',
+          'Falha de conexão com Google OAuth: ' + (httpErr.message || String(httpErr)),
+        )
+        return e.next()
       }
     }
 
@@ -800,11 +1160,11 @@ onRecordUpdate((e) => {
       return e.next()
     }
 
-    if (apiKey && !record.getString('api_token')) {
-      record.set('api_token', apiKey)
+    let refreshToken = (cfg.refresh_token || cfg.refreshToken || '').trim()
+    if (!refreshToken && (apiKey.startsWith('1//') || apiKey.startsWith('1/'))) {
+      refreshToken = apiKey
     }
 
-    const refreshToken = (cfg.refresh_token || cfg.refreshToken || '').trim()
     if (refreshToken.startsWith('AIza')) {
       record.set('status', 'error')
       record.set('is_active', false)
@@ -824,75 +1184,77 @@ onRecordUpdate((e) => {
 
     const calendarId = (cfg.calendar_id || cfg.calendarId || 'primary').trim()
 
+    let clientId = (cfg.client_id || cfg.clientId || $os.getenv('GOOGLE_CLIENT_ID') || '').trim()
+    let clientSecret = (
+      cfg.client_secret ||
+      cfg.clientSecret ||
+      $os.getenv('GOOGLE_CLIENT_SECRET') ||
+      ''
+    ).trim()
+
+    if (!clientId) {
+      clientId = '407408718192.apps.googleusercontent.com'
+    }
+
     if (refreshToken) {
-      const clientId = (
-        cfg.client_id ||
-        cfg.clientId ||
-        $os.getenv('GOOGLE_CLIENT_ID') ||
-        ''
-      ).trim()
-      const clientSecret = (
-        cfg.client_secret ||
-        cfg.clientSecret ||
-        $os.getenv('GOOGLE_CLIENT_SECRET') ||
-        ''
-      ).trim()
+      try {
+        let postBody =
+          'client_id=' +
+          encodeURIComponent(clientId) +
+          '&refresh_token=' +
+          encodeURIComponent(refreshToken) +
+          '&grant_type=refresh_token'
 
-      if (clientId && clientSecret) {
-        try {
-          const postBody =
-            'client_id=' +
-            encodeURIComponent(clientId) +
-            '&client_secret=' +
-            encodeURIComponent(clientSecret) +
-            '&refresh_token=' +
-            encodeURIComponent(refreshToken) +
-            '&grant_type=refresh_token'
+        if (clientSecret) {
+          postBody += '&client_secret=' + encodeURIComponent(clientSecret)
+        }
 
-          const tokenRes = $http.send({
-            url: 'https://oauth2.googleapis.com/token',
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: postBody,
-            timeout: 15,
+        const tokenRes = $http.send({
+          url: 'https://oauth2.googleapis.com/token',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: postBody,
+          timeout: 15,
+        })
+
+        if (tokenRes.statusCode >= 200 && tokenRes.statusCode < 300) {
+          const tokenJson = tokenRes.json || {}
+          record.set('status', 'active')
+          record.set('is_active', true)
+          record.set('error_message', '')
+          const expiresInSecs = Number(tokenJson.expires_in) || 3600
+          const updatedCfg = Object.assign({}, cfg, {
+            provider: 'google_meet',
+            calendar_id: calendarId,
+            client_id: clientId,
+            client_secret: clientSecret,
+            refresh_token: refreshToken,
+            access_token: tokenJson.access_token || '',
+            access_token_expires_at: Date.now() + expiresInSecs * 1000,
+            last_validated: new Date().toISOString(),
+            error_message: '',
+            test_requested: false,
           })
-
-          if (tokenRes.statusCode >= 200 && tokenRes.statusCode < 300) {
-            const tokenJson = tokenRes.json || {}
-            record.set('status', 'active')
-            record.set('is_active', true)
-            record.set('error_message', '')
-            if (tokenJson.access_token) {
-              record.set('api_token', tokenJson.access_token)
-            }
-            const updatedCfg = Object.assign({}, cfg, {
-              provider: 'google_meet',
-              calendar_id: calendarId,
-              last_validated: new Date().toISOString(),
-              error_message: '',
-              test_requested: false,
-            })
-            record.set('config_json', updatedCfg)
-            record.set('config', updatedCfg)
-            return e.next()
-          } else {
-            const errJson = tokenRes.json || {}
-            const errMsg =
-              errJson.error_description || errJson.error || 'Erro OAuth HTTP ' + tokenRes.statusCode
-            record.set('status', 'error')
-            record.set('is_active', false)
-            record.set('error_message', errMsg)
-            return e.next()
-          }
-        } catch (httpErr) {
+          record.set('config_json', updatedCfg)
+          record.set('config', updatedCfg)
+          return e.next()
+        } else {
+          const errJson = tokenRes.json || {}
+          const errMsg =
+            errJson.error_description || errJson.error || 'Erro OAuth HTTP ' + tokenRes.statusCode
           record.set('status', 'error')
           record.set('is_active', false)
-          record.set(
-            'error_message',
-            'Falha de conexão com Google OAuth: ' + (httpErr.message || String(httpErr)),
-          )
+          record.set('error_message', errMsg)
           return e.next()
         }
+      } catch (httpErr) {
+        record.set('status', 'error')
+        record.set('is_active', false)
+        record.set(
+          'error_message',
+          'Falha de conexão com Google OAuth: ' + (httpErr.message || String(httpErr)),
+        )
+        return e.next()
       }
     }
 
